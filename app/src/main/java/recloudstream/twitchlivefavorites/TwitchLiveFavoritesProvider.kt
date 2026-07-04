@@ -1527,7 +1527,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         val channel = normalizeChannel(url)
         val info = fetchChannel(channel) ?: return statusResponse("channel-not-found")
         val statusTag = if (info.isLive) "LIVE NOW" else "OFFLINE"
-        val profileRecommendations = video?.user_login?.takeIf { it.isNotBlank() }?.let { fetchTwitchProfileRecommendations(it) } ?: emptyList()
+        val profileRecommendations = fetchTwitchProfileRecommendations(info.channel)
         val tagList = listOfNotNull(
             statusTag,
             info.gameName,
