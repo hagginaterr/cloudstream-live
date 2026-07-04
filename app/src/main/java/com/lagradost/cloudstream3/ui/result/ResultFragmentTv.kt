@@ -180,6 +180,10 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     private fun reloadViewModel(forceReload: Boolean) {
         if (!viewModel.hasLoaded() || forceReload) {
             val storedData = getStoredData() ?: return
+        val isTwitchResultPage =
+            storedData.apiName.equals("Twitch", ignoreCase = true) ||
+                storedData.apiName.equals("Twitch Live Favorites API", ignoreCase = true) ||
+                storedData.url.contains("twitch", ignoreCase = true)
             viewModel.load(
                 activity,
                 storedData.url,
@@ -274,6 +278,15 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         var comingSoon = false
 
         binding.apply {
+            if (isTwitchResultPage) {
+                resultBookmark.isGone = true
+                resultPlayMovieText.text = "Play"
+                resultPlayMovieButton.contentDescription = "Play"
+                resultPlayMovieButton.nextFocusRightId = R.id.result_favorite_Button
+                resultFavoriteButton.nextFocusLeftId = R.id.result_play_movie_button
+                resultFavoriteButton.nextFocusRightId = R.id.result_search_Button
+                resultSearchButton.nextFocusLeftId = R.id.result_favorite_Button
+            }
             //episodesShadow.rotationX = 180.0f//if(episodesShadow.isRtl()) 180.0f else 0.0f
 
             // parallax on background
@@ -567,6 +580,11 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         }
 
         observe(viewModel.watchStatus) { watchType ->
+            if (isTwitchResultPage) {
+                binding.resultBookmark.isGone = true
+                return@observe
+            }
+
             binding.apply {
                 resultBookmarkText.setText(watchType.stringRes)
 
@@ -677,7 +695,12 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
 
             binding.apply {
                 (data as? Resource.Success)?.value?.let { (_, ep) ->
-                    resultPlayMovieButton.setOnClickListener {
+                if (isTwitchResultPage) {
+                    resultPlayMovieText.text = "Play"
+                    resultPlayMovieButton.contentDescription = "Play"
+                }
+
+                resultPlayMovieButton.setOnClickListener {
                         viewModel.handleAction(
                             EpisodeClickEvent(ACTION_CLICK_DEFAULT, ep)
                         )
