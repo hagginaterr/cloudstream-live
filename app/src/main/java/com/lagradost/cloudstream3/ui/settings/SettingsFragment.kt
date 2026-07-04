@@ -221,6 +221,16 @@ class SettingsFragment : BaseFragment<MainSettingsBinding>(
         }
 
         binding.apply {
+            // Twitch-only settings cleanup.
+            settingsProviders.visibility = View.GONE
+            settingsCredits.visibility = View.GONE
+            settingsExtensions.visibility = View.GONE
+            settingsUpdates.text = getString(R.string.pref_category_backup)
+
+            settingsPlayer.nextFocusDownId = R.id.settings_ui
+            settingsUi.nextFocusUpId = R.id.settings_player
+            settingsUi.nextFocusDownId = R.id.settings_updates
+            settingsUpdates.nextFocusUpId = R.id.settings_ui
             listOf(
                 settingsGeneral to R.id.action_navigation_global_to_navigation_settings_general,
                 settingsPlayer to R.id.action_navigation_global_to_navigation_settings_player,

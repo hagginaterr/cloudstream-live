@@ -68,7 +68,7 @@
                 style="@style/SettingsItem"
 
                 android:nextFocusUp="@id/settings_general"
-                android:nextFocusDown="@id/settings_providers"
+                android:nextFocusDown="@id/settings_ui"
                 android:text="@string/category_player" />
 
             <TextView
@@ -83,7 +83,7 @@
                 android:id="@+id/settings_ui"
                 style="@style/SettingsItem"
 
-                android:nextFocusUp="@id/settings_providers"
+                android:nextFocusUp="@id/settings_player"
                 android:nextFocusDown="@id/settings_updates"
                 android:text="@string/category_ui" />
 
@@ -92,8 +92,8 @@
                 style="@style/SettingsItem"
 
                 android:nextFocusUp="@id/settings_ui"
-                android:nextFocusDown="@id/settings_credits"
-                android:text="@string/category_updates" />
+                android:nextFocusDown="@id/app_version_info"
+                android:text="@string/pref_category_backup" />
 
             <TextView
                 android:id="@+id/settings_credits"
