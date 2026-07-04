@@ -254,14 +254,11 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         fixSystemBarsPadding(view, padTop = false)
     }
 
-    $1val storedData = getStoredData() ?: return
-        val isTwitchResultPage =
-            storedData.apiName.equals("Twitch", ignoreCase = true) ||
-                storedData.apiName.equals("Twitch Live Favorites API", ignoreCase = true) ||
-                storedData.url.contains("twitch", ignoreCase = true)
-        val isTwitchDirectPlayPage =
-            isTwitchResultPage &&
-                storedData.url.contains("cloudstream_direct_play=1", ignoreCase = true) activity?.window?.decorView?.clearFocus()
+    @SuppressLint("SetTextI18n")
+    override fun onBindingCreated(binding: FragmentResultTvBinding) {
+        // ===== setup =====
+        val storedData = getStoredData() ?: return
+        activity?.window?.decorView?.clearFocus()
         activity?.loadCache()
         hideKeyboard()
         if (storedData.restart || !viewModel.hasLoaded())
@@ -275,18 +272,8 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
             )
         // ===== ===== =====
         var comingSoon = false
-        var hasAutoPlayedTwitchDirectHomeCard = false
 
         binding.apply {
-            if (isTwitchResultPage) {
-                resultBookmark.isGone = true
-                resultPlayMovieText.text = "Play"
-                resultPlayMovieButton.contentDescription = "Play"
-                resultPlayMovieButton.nextFocusRightId = R.id.result_favorite_Button
-                resultFavoriteButton.nextFocusLeftId = R.id.result_play_movie_button
-                resultFavoriteButton.nextFocusRightId = R.id.result_search_Button
-                resultSearchButton.nextFocusLeftId = R.id.result_favorite_Button
-            }
             //episodesShadow.rotationX = 180.0f//if(episodesShadow.isRtl()) 180.0f else 0.0f
 
             // parallax on background
@@ -496,14 +483,6 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
                 }
 
                 resultResumeSeries.isVisible = true
-                if (isTwitchDirectPlayPage && !hasAutoPlayedTwitchDirectHomeCard) {
-                    hasAutoPlayedTwitchDirectHomeCard = true
-                    android.util.Log.i("BuiltInTwitch", "Auto-playing Twitch Live Now home card: ${storedData.url}")
-                    resultPlayMovieButton.post {
-                        viewModel.handleAction(EpisodeClickEvent(ACTION_CLICK_DEFAULT, ep))
-                    }
-                }
-
                 resultPlayMovie.isVisible = false
                 resultPlaySeries.isVisible = false
 
@@ -588,11 +567,6 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         }
 
         observe(viewModel.watchStatus) { watchType ->
-            if (isTwitchResultPage) {
-                binding.resultBookmark.isGone = true
-                return@observe
-            }
-
             binding.apply {
                 resultBookmarkText.setText(watchType.stringRes)
 
@@ -703,12 +677,7 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
 
             binding.apply {
                 (data as? Resource.Success)?.value?.let { (_, ep) ->
-                if (isTwitchResultPage) {
-                    resultPlayMovieText.text = "Play"
-                    resultPlayMovieButton.contentDescription = "Play"
-                }
-
-                resultPlayMovieButton.setOnClickListener {
+                    resultPlayMovieButton.setOnClickListener {
                         viewModel.handleAction(
                             EpisodeClickEvent(ACTION_CLICK_DEFAULT, ep)
                         )

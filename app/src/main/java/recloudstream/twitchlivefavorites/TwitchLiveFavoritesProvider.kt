@@ -83,9 +83,11 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
 
                 when {
                     liveFavorites == null -> listOf(apiErrorCard(lastTwitchApiError.orEmpty()))
-                    liveFavorites.isNotEmpty() -> liveFavorites.map { it.toChannelCard(showOfflineLabel = false, directPlay = true) }
+                    liveFavorites.isNotEmpty() -> liveFavorites.map {
+                        it.toChannelCard(showOfflineLabel = false)
+                    }
                     usingStarterFavorites -> favorites.map {
-                        fallbackChannel(it).toChannelCard(showOfflineLabel = true, directPlay = true)
+                        fallbackChannel(it).toChannelCard(showOfflineLabel = true)
                     }
                     else -> listOf(statusCard("No saved favorites are live right now", "no-favorites"))
                 }
@@ -615,10 +617,6 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
 
     private fun twitchUrl(channel: String): String = "https://twitch.tv/${normalizeChannel(channel)}"
 
-    private fun directPlayUrl(channel: String): String {
-        return "$actionBase/play/${encode(normalizeChannel(channel))}"
-    }
-
     private fun formatViewerCount(count: Int?): String? {
         val value = count ?: return null
         val label = when {
@@ -642,13 +640,10 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         ).joinToString(" • ").ifBlank { null }
     }
 
-    private fun FavoriteChannel.toChannelCard(
-        showOfflineLabel: Boolean,
-        directPlay: Boolean = false,
-    ): LiveSearchResponse {
+    private fun FavoriteChannel.toChannelCard(showOfflineLabel: Boolean): LiveSearchResponse {
         val displayTitle = if (showOfflineLabel && !isLive) "$displayName (offline)" else displayName
-        val resultUrl = if (directPlay && isLive) directPlayUrl(channel) else channel
-        return newLiveSearchResponse(displayTitle, resultUrl, TvType.Live, fix = false) {
+
+        return newLiveSearchResponse(displayTitle, channel, TvType.Live, fix = false) {
             posterUrl = poster ?: image
             lang = subtitle() ?: language
         }
