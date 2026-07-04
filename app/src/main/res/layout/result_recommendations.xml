@@ -14,21 +14,33 @@
             android:id="@+id/result_recommendations_filter_button"
             style="@style/BlackButton"
             android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical|end"
             android:layout_marginStart="0dp"
             android:layout_marginTop="10dp"
             android:layout_marginEnd="0dp"
             android:layout_marginBottom="10dp"
-            android:layout_gravity="center_vertical|end"
             android:text="GogoAnime" />
 
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingTop="4dp"
-            android:paddingBottom="6dp"
+            android:paddingBottom="4dp"
             android:text="Past Broadcasts"
             android:textColor="?attr/textColor"
-            android:textSize="17sp" />
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/result_past_broadcasts_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp"
+            android:text="No past broadcasts available."
+            android:textColor="?attr/textColor"
+            android:visibility="gone"
+            tools:visibility="visible" />
 
         <com.lagradost.cloudstream3.ui.AutofitRecyclerView
             android:id="@+id/result_recommendations_list"
@@ -42,24 +54,24 @@
             tools:listitem="@layout/search_result_grid" />
 
         <TextView
-            android:id="@+id/result_past_broadcasts_empty"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingTop="8dp"
-            android:paddingBottom="14dp"
-            android:text="No past broadcasts available."
-            android:textColor="?attr/grayTextColor"
-            android:textSize="14sp"
-            android:visibility="gone" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
             android:paddingTop="12dp"
-            android:paddingBottom="6dp"
+            android:paddingBottom="4dp"
             android:text="Clips"
             android:textColor="?attr/textColor"
-            android:textSize="17sp" />
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/result_clips_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp"
+            android:text="No clips available."
+            android:textColor="?attr/textColor"
+            android:visibility="gone"
+            tools:visibility="visible" />
 
         <com.lagradost.cloudstream3.ui.AutofitRecyclerView
             android:id="@+id/result_clips_list"
@@ -73,24 +85,24 @@
             tools:listitem="@layout/search_result_grid" />
 
         <TextView
-            android:id="@+id/result_clips_empty"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingTop="8dp"
-            android:paddingBottom="14dp"
-            android:text="No clips available."
-            android:textColor="?attr/grayTextColor"
-            android:textSize="14sp"
-            android:visibility="gone" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
             android:paddingTop="12dp"
-            android:paddingBottom="6dp"
+            android:paddingBottom="4dp"
             android:text="Highlights"
             android:textColor="?attr/textColor"
-            android:textSize="17sp" />
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/result_highlights_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp"
+            android:text="No highlights available."
+            android:textColor="?attr/textColor"
+            android:visibility="gone"
+            tools:visibility="visible" />
 
         <com.lagradost.cloudstream3.ui.AutofitRecyclerView
             android:id="@+id/result_highlights_list"
@@ -103,15 +115,5 @@
             app:spanCount="3"
             tools:listitem="@layout/search_result_grid" />
 
-        <TextView
-            android:id="@+id/result_highlights_empty"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="8dp"
-            android:paddingBottom="14dp"
-            android:text="No highlights available."
-            android:textColor="?attr/grayTextColor"
-            android:textSize="14sp"
-            android:visibility="gone" />
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>

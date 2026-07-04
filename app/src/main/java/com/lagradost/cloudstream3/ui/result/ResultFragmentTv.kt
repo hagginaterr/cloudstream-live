@@ -202,7 +202,7 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     ) {
         setupTwitchProfileMediaRow(row, spanCount, clickCallback)
         row?.isVisible = items.isNotEmpty()
-        emptyText?.isVisible = items.isEmpty()
+        emptyText?.isVisible = isTwitchProfileMediaPage && items.isEmpty()
         (row?.adapter as? SearchAdapter)?.submitList(items)
     }
     // END TWITCH_PROFILE_MEDIA_ROWS

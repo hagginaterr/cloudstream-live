@@ -661,133 +661,134 @@ https://developer.android.com/design/ui/tv/samples/jet-fit
                 android:textStyle="bold"
                 android:visibility="gone"
                 tools:visibility="visible" />
+                <LinearLayout
+                    android:id="@+id/result_recommendations_holder"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:descendantFocusability="afterDescendants"
+                    android:orientation="vertical"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp">
 
                     <LinearLayout
-            android:id="@+id/result_recommendations_holder"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:descendantFocusability="afterDescendants"
-            android:orientation="vertical"
-            android:paddingTop="10dp"
-            android:paddingBottom="10dp">
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:descendantFocusability="afterDescendants"
+                        android:orientation="horizontal"
+                        android:paddingTop="4dp"
+                        android:paddingBottom="6dp">
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:descendantFocusability="afterDescendants"
-                android:orientation="horizontal"
-                android:paddingTop="4dp"
-                android:paddingBottom="6dp">
+                        <androidx.recyclerview.widget.RecyclerView
+                            android:id="@+id/result_recommendations_filter_selection"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="10dp"
+                            android:descendantFocusability="afterDescendants"
+                            android:nextFocusUp="@id/result_cast_items"
+                            android:nextFocusDown="@id/result_recommendations_list"
+                            android:orientation="horizontal"
+                            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                            tools:itemCount="2"
+                            tools:listitem="@layout/result_selection" />
 
-                <androidx.recyclerview.widget.RecyclerView
-                    android:id="@+id/result_recommendations_filter_selection"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="10dp"
-                    android:descendantFocusability="afterDescendants"
-                    android:nextFocusUp="@id/result_cast_items"
-                    android:nextFocusDown="@id/result_recommendations_list"
-                    android:orientation="horizontal"
-                    app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
-                    tools:itemCount="2"
-                    tools:listitem="@layout/result_selection" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center_vertical"
+                            android:gravity="center_vertical"
+                            android:text="Past Broadcasts"
+                            android:textColor="?attr/textColor"
+                            android:textSize="17sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    android:gravity="center_vertical"
-                    android:text="Past Broadcasts"
-                    android:textColor="?attr/textColor"
-                    android:textSize="17sp" />
-            </LinearLayout>
+                    <TextView
+                        android:id="@+id/result_past_broadcasts_empty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingBottom="8dp"
+                        android:text="No past broadcasts available."
+                        android:textColor="?attr/textColor"
+                        android:visibility="gone"
+                        tools:visibility="visible" />
 
-            <com.lagradost.cloudstream3.ui.AutofitRecyclerView
-                android:id="@+id/result_recommendations_list"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:clipToPadding="false"
-                android:descendantFocusability="afterDescendants"
-                android:nextFocusUp="@id/result_cast_items"
-                android:orientation="horizontal"
-                app:spanCount="4"
-                tools:listitem="@layout/search_result_grid" />
+                    <com.lagradost.cloudstream3.ui.AutofitRecyclerView
+                        android:id="@+id/result_recommendations_list"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:clipToPadding="false"
+                        android:descendantFocusability="afterDescendants"
+                        android:nextFocusUp="@id/result_cast_items"
+                        android:orientation="horizontal"
+                        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                        app:spanCount="4"
+                        tools:listitem="@layout/search_result_grid" />
 
-            <TextView
-                android:id="@+id/result_past_broadcasts_empty"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="8dp"
-                android:paddingBottom="14dp"
-                android:text="No past broadcasts available."
-                android:textColor="?attr/grayTextColor"
-                android:textSize="14sp"
-                android:visibility="gone" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingTop="12dp"
+                        android:paddingBottom="4dp"
+                        android:text="Clips"
+                        android:textColor="?attr/textColor"
+                        android:textSize="17sp"
+                        android:textStyle="bold" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingTop="12dp"
-                android:paddingBottom="6dp"
-                android:text="Clips"
-                android:textColor="?attr/textColor"
-                android:textSize="17sp" />
+                    <TextView
+                        android:id="@+id/result_clips_empty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingBottom="8dp"
+                        android:text="No clips available."
+                        android:textColor="?attr/textColor"
+                        android:visibility="gone"
+                        tools:visibility="visible" />
 
-            <com.lagradost.cloudstream3.ui.AutofitRecyclerView
-                android:id="@+id/result_clips_list"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:clipToPadding="false"
-                android:descendantFocusability="afterDescendants"
-                android:nextFocusUp="@id/result_recommendations_list"
-                android:orientation="horizontal"
-                app:spanCount="4"
-                tools:listitem="@layout/search_result_grid" />
+                    <com.lagradost.cloudstream3.ui.AutofitRecyclerView
+                        android:id="@+id/result_clips_list"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:clipToPadding="false"
+                        android:descendantFocusability="afterDescendants"
+                        android:nextFocusUp="@id/result_recommendations_list"
+                        android:orientation="horizontal"
+                        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                        app:spanCount="4"
+                        tools:listitem="@layout/search_result_grid" />
 
-            <TextView
-                android:id="@+id/result_clips_empty"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="8dp"
-                android:paddingBottom="14dp"
-                android:text="No clips available."
-                android:textColor="?attr/grayTextColor"
-                android:textSize="14sp"
-                android:visibility="gone" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingTop="12dp"
+                        android:paddingBottom="4dp"
+                        android:text="Highlights"
+                        android:textColor="?attr/textColor"
+                        android:textSize="17sp"
+                        android:textStyle="bold" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingTop="12dp"
-                android:paddingBottom="6dp"
-                android:text="Highlights"
-                android:textColor="?attr/textColor"
-                android:textSize="17sp" />
+                    <TextView
+                        android:id="@+id/result_highlights_empty"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingBottom="8dp"
+                        android:text="No highlights available."
+                        android:textColor="?attr/textColor"
+                        android:visibility="gone"
+                        tools:visibility="visible" />
 
-            <com.lagradost.cloudstream3.ui.AutofitRecyclerView
-                android:id="@+id/result_highlights_list"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:clipToPadding="false"
-                android:descendantFocusability="afterDescendants"
-                android:nextFocusUp="@id/result_clips_list"
-                android:orientation="horizontal"
-                app:spanCount="4"
-                tools:listitem="@layout/search_result_grid" />
-
-            <TextView
-                android:id="@+id/result_highlights_empty"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingTop="8dp"
-                android:paddingBottom="14dp"
-                android:text="No highlights available."
-                android:textColor="?attr/grayTextColor"
-                android:textSize="14sp"
-                android:visibility="gone" />
-        </LinearLayout>
+                    <com.lagradost.cloudstream3.ui.AutofitRecyclerView
+                        android:id="@+id/result_highlights_list"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:clipToPadding="false"
+                        android:descendantFocusability="afterDescendants"
+                        android:nextFocusUp="@id/result_clips_list"
+                        android:orientation="horizontal"
+                        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                        app:spanCount="4"
+                        tools:listitem="@layout/search_result_grid" />
+                </LinearLayout>        </LinearLayout>
     </androidx.core.widget.NestedScrollView>
-
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/episodes_shadow"
         android:layout_width="match_parent"
