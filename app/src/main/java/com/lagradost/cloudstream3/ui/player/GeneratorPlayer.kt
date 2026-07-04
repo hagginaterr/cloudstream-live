@@ -1022,32 +1022,75 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     private fun twitchQualityLabel(link: ExtractorLink?): String {
-        if (link == null) return "Unknown"
+    if (link == null) return "Unknown"
 
-        val rawName = link.name
-            .replace(link.source, "", ignoreCase = true)
-            .replace("Twitch", "", ignoreCase = true)
-            .replace("VOD", "", ignoreCase = true)
-            .trim()
-            .ifBlank { null }
-
-        val quality = Qualities.getStringByInt(link.quality)
-            .trim()
-            .ifBlank { null }
-
-        val isAudioOnly = link.url.contains("audio_only", ignoreCase = true) ||
-            rawName?.contains("audio", ignoreCase = true) == true ||
-            quality?.contains("audio", ignoreCase = true) == true
+    fun cleanQualityLabel(value: String?): String? {
+        val label = value
+            ?.replace("%20", " ")
+            ?.replace("_", " ")
+            ?.replace("-", " ")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
 
         return when {
-            isAudioOnly -> "Audio Only"
-            !rawName.isNullOrBlank() -> rawName
-            !quality.isNullOrBlank() -> quality
-            else -> "Auto"
+            label.equals("chunked", ignoreCase = true) ||
+                    label.equals("source", ignoreCase = true) -> "Source"
+
+            label.equals("audio only", ignoreCase = true) ||
+                    label.equals("audio_only", ignoreCase = true) -> "Audio Only"
+
+            else -> label
         }
     }
 
-    private fun showTwitchQualityDialog(): Boolean {
+    fun parseQualityToken(value: String?): String? {
+        val text = value
+            ?.replace("%20", " ")
+            ?.replace("%2F", "/", ignoreCase = true)
+            ?.replace("%3D", "=", ignoreCase = true)
+            ?.replace("%26", "&", ignoreCase = true)
+            ?.replace("_", " ")
+            ?: return null
+
+        if (text.contains("audio only", ignoreCase = true) ||
+                text.contains("audio_only", ignoreCase = true)
+        ) {
+            return "Audio Only"
+        }
+
+        if (Regex("""(?i)(?:quality|q|stream|variant)=source""").containsMatchIn(text) ||
+                Regex("""(?i)(^|[/_.-])source($|[/_.-])""").containsMatchIn(text) ||
+                Regex("""(?i)(^|[?&/_=.-])chunked($|[&/_=.-])""").containsMatchIn(text)
+        ) {
+            return "Source"
+        }
+
+        val qualityMatch = Regex(
+            """(?i)(^|[^0-9a-z])((?:2160|1440|1080|936|900|720|540|480|360|240|160)p(?:60|30)?)([^0-9a-z]|$)"""
+        ).find(text)
+
+        return qualityMatch?.groupValues?.getOrNull(2)?.lowercase()
+    }
+
+    val qualityFromInt = cleanQualityLabel(Qualities.getStringByInt(link.quality))
+        ?.takeUnless {
+            it.equals("unknown", ignoreCase = true) ||
+                    it.equals("auto", ignoreCase = true) ||
+                    it == "0"
+        }
+
+    if (qualityFromInt != null && !qualityFromInt.equals(link.name, ignoreCase = true)) {
+        return qualityFromInt
+    }
+
+    for (candidate in listOf(link.url, link.name)) {
+        parseQualityToken(candidate)?.let { return it }
+    }
+
+    return "Auto"
+}
+private fun showTwitchQualityDialog(): Boolean {
         if (!isTwitchPlayback()) return false
 
         val links = viewModel.state
