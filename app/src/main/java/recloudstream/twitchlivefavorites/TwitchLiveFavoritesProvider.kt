@@ -25,7 +25,9 @@ import java.net.URLEncoder
 
 class TwitchApiLiveFavoritesProvider : MainAPI() {
     override var mainUrl = "https://twitch.tv"
-    override var name = "Twitch Live Favorites API"
+    override var name = "Twitch"
+    private val legacyProviderNames = setOf("twitch live favorites api")
+    private val starterFavoriteChannels = listOf("monstercat", "nasa")
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "uni"
     override val hasMainPage = true
@@ -68,17 +70,26 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val favorites = getSavedFavoriteChannels()
+        val savedFavorites = getSavedFavoriteChannels()
+        val usingStarterFavorites = savedFavorites.isEmpty()
+        val favorites = if (usingStarterFavorites) starterFavoriteChannels else savedFavorites
+
         val items = when {
             !hasTwitchCredentials() -> listOf(setupRequiredCard())
-            favorites.isEmpty() -> emptyList()
+            favorites.isEmpty() -> listOf(statusCard("Search Twitch to add favorites", "no-favorites"))
             else -> {
                 val liveFavorites = fetchLiveFavoriteChannels(favorites)
                 maybeScheduleAutoRefresh(favoritesCacheKey(favorites))
+
                 when {
                     liveFavorites == null -> listOf(apiErrorCard(lastTwitchApiError.orEmpty()))
-                    liveFavorites.isNotEmpty() -> liveFavorites.map { it.toChannelCard(showOfflineLabel = false) }
-                    else -> emptyList()
+                    liveFavorites.isNotEmpty() -> liveFavorites.map {
+                        it.toChannelCard(showOfflineLabel = false)
+                    }
+                    usingStarterFavorites -> favorites.map {
+                        fallbackChannel(it).toChannelCard(showOfflineLabel = true)
+                    }
+                    else -> listOf(statusCard("No saved favorites are live right now", "no-favorites"))
                 }
             }
         }
@@ -191,7 +202,7 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
                 .filter { favorite ->
                     val url = favorite.url.lowercase()
                     val api = favorite.apiName.lowercase()
-                    (api == "twitch" || api == name.lowercase() || url.contains("twitch") || url.contains("twitchtracker")) &&
+                    (api == "twitch" || api == name.lowercase() || api in legacyProviderNames || url.contains("twitch") || url.contains("twitchtracker")) &&
                         !url.contains(actionMarker) && !url.contains(legacyApiActionMarker) && !url.contains(legacyApiActionMarkerV33) && !url.contains(olderApiActionMarker) && !url.contains(oldestApiActionMarker) && !url.contains(legacyActionMarker)
                 }
                 .mapNotNull { favorite ->
