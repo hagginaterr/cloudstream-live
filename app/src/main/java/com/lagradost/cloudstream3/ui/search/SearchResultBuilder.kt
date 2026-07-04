@@ -86,6 +86,30 @@ object SearchResultBuilder {
         val showHd = showCache[textQuality?.context?.getString(R.string.show_hd_key)] ?: false
         val showRatingView =
             showCache[textQuality?.context?.getString(R.string.show_rating_key)] ?: false
+        val isTwitchVodCard = card.url.contains("cloudstream_twitch_vod=1", ignoreCase = true)
+
+        fun twitchVodParam(key: String): String? {
+            if (!isTwitchVodCard) return null
+
+            val query = card.url.substringAfter("?", "")
+            if (query.isBlank() || query == card.url) return null
+
+            return query
+                .split("&")
+                .firstOrNull { it.substringBefore("=") == key }
+                ?.substringAfter("=", "")
+                ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                ?.ifBlank { null }
+        }
+
+        val twitchVodTitle = twitchVodParam("cs_title") ?: card.name
+        val twitchVodAge = twitchVodParam("cs_age")
+        val twitchVodCategory = twitchVodParam("cs_category")
+        val twitchVodViews = twitchVodParam("cs_views")
+        val twitchVodDuration = twitchVodParam("cs_duration")
+        val twitchVodSubtitle = listOfNotNull(twitchVodAge, twitchVodCategory)
+            .joinToString(" - ")
+            .ifBlank { null }
         if (card is SyncAPI.LibraryItem) {
             val ratingText = card.personalRating?.toStringNull(0.1, 10, 1)
             val showRating = !ratingText.isNullOrBlank()
@@ -102,7 +126,7 @@ object SearchResultBuilder {
             }
         }
 
-        shadow?.isVisible = showTitle
+        shadow?.isVisible = if (isTwitchVodCard) true else showTitle
 
         when (card.quality) {
             SearchQuality.BlueRay -> R.string.quality_blueray
@@ -129,8 +153,24 @@ object SearchResultBuilder {
             textQuality?.isVisible = false
         }
 
-        cardText?.text = card.name
-        cardText?.isVisible = showTitle
+        cardText?.text = if (isTwitchVodCard) {
+            listOfNotNull(twitchVodTitle, twitchVodSubtitle).joinToString("\n")
+        } else {
+            card.name
+        }
+        cardText?.isVisible = if (isTwitchVodCard) true else showTitle
+
+        if (isTwitchVodCard) {
+            rating?.apply {
+                text = twitchVodViews.orEmpty()
+                isVisible = !twitchVodViews.isNullOrBlank()
+            }
+
+            textQuality?.apply {
+                text = twitchVodDuration.orEmpty()
+                isVisible = !twitchVodDuration.isNullOrBlank()
+            }
+        }
         cardView.isVisible = true
         if (!card.posterUrl.isNullOrEmpty()) {
             cardView.loadImage(card.posterUrl, card.posterHeaders) {

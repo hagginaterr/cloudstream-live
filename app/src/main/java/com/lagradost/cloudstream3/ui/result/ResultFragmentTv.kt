@@ -429,11 +429,12 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
             //    activity?.popCurrentPage()
             //}
 
-            resultRecommendationsList.spanCount = 8
+            resultRecommendationsList.spanCount = 4
             resultRecommendationsList.setRecycledViewPool(SearchAdapter.sharedPool)
             resultRecommendationsList.adapter =
                 SearchAdapter(
                     resultRecommendationsList,
+                    isHorizontal = true,
                 ) { callback ->
                     if (callback.action == SEARCH_ACTION_FOCUSED) {
                         toggleEpisodes(false)
