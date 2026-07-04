@@ -131,6 +131,7 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         val description: String?,
         val gameName: String? = null,
         val viewerCount: Int? = null,
+        val userId: String? = null,
     )
 
     private data class TwitchTokenResponse(
@@ -171,7 +172,28 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         val thumbnail_url: String = "",
     )
 
-    private data class TwitchSearchResponse(
+        private data class TwitchVideosResponse(
+        val data: List<TwitchVideo> = emptyList(),
+    )
+
+    private data class TwitchVideo(
+        val id: String = "",
+        val user_id: String = "",
+        val user_login: String = "",
+        val user_name: String = "",
+        val title: String = "",
+        val description: String = "",
+        val created_at: String = "",
+        val published_at: String = "",
+        val url: String = "",
+        val thumbnail_url: String = "",
+        val viewable: String = "",
+        val view_count: Int = 0,
+        val language: String = "",
+        val type: String = "",
+        val duration: String = "",
+    )
+private data class TwitchSearchResponse(
         val data: List<TwitchSearchChannel> = emptyList(),
     )
 
@@ -648,7 +670,8 @@ private fun getSavedFavoriteChannels(): List<String> {
             description = stream?.title?.ifBlank { null } ?: user?.description?.ifBlank { null },
             gameName = stream?.game_name?.ifBlank { null },
             viewerCount = stream?.viewer_count,
-        )
+        
+        userId = user?.id?.ifBlank { null } ?: stream?.user_id?.ifBlank { null },)
     }
 
     private fun fallbackChannel(channel: String): FavoriteChannel {
@@ -668,6 +691,8 @@ private fun getSavedFavoriteChannels(): List<String> {
     private fun resizeTwitchImage(url: String?, width: Int, height: Int): String? {
         return url
             ?.ifBlank { null }
+            ?.replace("%{width}", width.toString())
+            ?.replace("%{height}", height.toString())
             ?.replace("{width}", width.toString())
             ?.replace("{height}", height.toString())
     }
@@ -697,7 +722,113 @@ private fun normalizeChannel(value: String): String {
         return "${twitchUrl(channel)}?cloudstream_direct_play=1"
     }
 
-    private fun formatViewerCount(count: Int?): String? {
+        private fun twitchVideoUrl(id: String): String {
+        val cleanId = id.filter { it.isDigit() }
+        return "https://www.twitch.tv/videos/$cleanId"
+    }
+
+    private fun extractVideoId(value: String): String {
+        val clean = value
+            .substringBefore("?")
+            .substringBefore("#")
+            .trim()
+            .trimEnd('/')
+
+        if (clean.all { it.isDigit() }) return clean
+
+        return clean
+            .substringAfterLast("/videos/", "")
+            .substringAfterLast("/")
+            .filter { it.isDigit() }
+    }
+
+    private fun isTwitchVideoUrl(url: String): Boolean {
+        val clean = url.substringBefore("?").substringBefore("#").trim().trimEnd('/')
+        return clean.contains("/videos/", ignoreCase = true) ||
+            clean.all { it.isDigit() }
+    }
+
+    private suspend fun fetchVideo(videoId: String): TwitchVideo? {
+        val cleanId = videoId.filter { it.isDigit() }
+        if (cleanId.isBlank()) return null
+
+        val response = twitchGet<TwitchVideosResponse>(
+            buildHelixUrl("videos", repeatedKey = "id", repeatedValues = listOf(cleanId)),
+        ) ?: return null
+
+        return response.data.firstOrNull()
+    }
+
+    private suspend fun fetchRecentPastBroadcasts(
+        channel: String,
+        userId: String?,
+    ): List<LiveSearchResponse> {
+        if (!hasTwitchCredentials()) return emptyList()
+
+        val normalized = normalizeChannel(channel)
+        val resolvedUserId = userId?.ifBlank { null }
+            ?: fetchUsers(listOf(normalized))[normalized]?.id?.ifBlank { null }
+            ?: return emptyList()
+
+        val response = twitchGet<TwitchVideosResponse>(
+            buildHelixUrl(
+                "videos",
+                extra = mapOf(
+                    "user_id" to resolvedUserId,
+                    "first" to "12",
+                    "type" to "archive",
+                ),
+            ),
+        ) ?: return emptyList()
+
+        return response.data
+            .mapNotNull { it.toPastBroadcastCard() }
+            .distinctBy { it.url }
+    }
+
+    private fun TwitchVideo.toPastBroadcastCard(): LiveSearchResponse? {
+        val videoId = id.filter { it.isDigit() }
+        if (videoId.isBlank()) return null
+
+        val displayTitle = cleanTwitchText(title) ?: "Past broadcast"
+        val meta = listOfNotNull(
+            "Past Broadcast",
+            duration.ifBlank { null },
+            formatTwitchVideoDate(published_at),
+            formatViewCount(view_count),
+        ).joinToString(" - ").ifBlank { null }
+
+        return newLiveSearchResponse(displayTitle, twitchVideoUrl(videoId), TvType.Live, fix = false) {
+            posterUrl = cacheBustImage(resizeTwitchImage(thumbnail_url, 640, 360), nowMs())
+            lang = meta
+        }
+    }
+
+    private fun formatTwitchVideoDate(value: String?): String? {
+        val clean = value?.ifBlank { null } ?: return null
+        val fallback = clean.substringBefore("T").ifBlank { clean }
+
+        return runCatching {
+            val parser = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+            parser.timeZone = java.util.TimeZone.getTimeZone("UTC")
+            val date = parser.parse(clean) ?: return@runCatching fallback
+            java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()).format(date)
+        }.getOrDefault(fallback)
+    }
+
+    private fun formatViewCount(count: Int?): String? {
+        val value = count ?: return null
+        if (value <= 0) return null
+
+        val label = when {
+            value >= 1_000_000 -> formatOneDecimal(value / 1_000_000.0) + "M"
+            value >= 1_000 -> formatOneDecimal(value / 1_000.0) + "K"
+            else -> value.toString()
+        }
+
+        return "$label views"
+    }
+private fun formatViewerCount(count: Int?): String? {
         val value = count ?: return null
         val label = when {
             value >= 1_000_000 -> formatOneDecimal(value / 1_000_000.0) + "M"
@@ -804,7 +935,7 @@ private fun normalizeChannel(value: String): String {
         return when (action?.first) {
             "add", "remove" -> statusResponse("built-in-favorites")
             "status" -> statusResponse(action.second)
-            else -> channelLoadResponse(url)
+            else -> if (isTwitchVideoUrl(url)) videoLoadResponse(url) else channelLoadResponse(url)
         }
     }
 
@@ -883,7 +1014,34 @@ private fun normalizeChannel(value: String): String {
         }
     }
 
-    private suspend fun channelLoadResponse(url: String): LoadResponse {
+        private suspend fun videoLoadResponse(url: String): LoadResponse {
+        val videoId = extractVideoId(url)
+        if (videoId.isBlank()) return statusResponse("channel-not-found")
+
+        val video = fetchVideo(videoId)
+        val videoUrl = twitchVideoUrl(videoId)
+        val title = cleanTwitchText(video?.title) ?: "Past broadcast"
+        val poster = cacheBustImage(resizeTwitchImage(video?.thumbnail_url, 640, 360), nowMs())
+        val tagList = listOfNotNull(
+            "Past Broadcast",
+            video?.duration?.ifBlank { null },
+            formatTwitchVideoDate(video?.published_at),
+            formatViewCount(video?.view_count),
+            video?.language?.ifBlank { null },
+        )
+
+        return newLiveStreamLoadResponse(title, videoUrl, videoUrl) {
+            plot = listOfNotNull(
+                "Past broadcast",
+                cleanTwitchText(video?.description),
+            ).joinToString("\n\n").ifBlank { null }
+            posterUrl = poster
+            backgroundPosterUrl = poster
+            this@newLiveStreamLoadResponse.tags = tagList
+            this@newLiveStreamLoadResponse.recommendations = fetchRecentPastBroadcasts(info.channel, info.userId)
+        }
+    }
+private suspend fun channelLoadResponse(url: String): LoadResponse {
         val channel = normalizeChannel(url)
         val info = fetchChannel(channel) ?: return statusResponse("channel-not-found")
         val statusTag = if (info.isLive) "LIVE NOW" else "OFFLINE"
