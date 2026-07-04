@@ -509,6 +509,7 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         uiReset()
         currentSelectedLink = link
+        updateTwitchPlayerControls()
         //  setEpisodes(viewModel.getAllMeta() ?: emptyList())
         setPlayerDimen(null)
         setTitle()
@@ -994,7 +995,86 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
 
 
-    override fun showMirrorsDialogue() {
+        private fun isTwitchExtractorLink(link: ExtractorLink?): Boolean {
+        if (link == null) return false
+
+        return listOf(
+            link.source,
+            link.name,
+            link.url,
+            link.referer,
+        ).any { value ->
+            value?.contains("twitch", ignoreCase = true) == true ||
+                value?.contains("ttvnw.net", ignoreCase = true) == true
+        }
+    }
+
+    private fun isTwitchPlayback(): Boolean {
+        return isTwitchExtractorLink(currentSelectedLink?.first)
+    }
+
+    override fun allowResizeShortcut(): Boolean {
+        return !isTwitchPlayback()
+    }
+
+    private fun updateTwitchPlayerControls() {
+        playerBinding?.playerResizeBtt?.isVisible = playerResizeEnabled && !isTwitchPlayback()
+    }
+
+    private fun twitchQualityLabel(link: ExtractorLink?): String {
+        if (link == null) return "Unknown"
+
+        val rawName = link.name
+            .removePrefix(name)
+            .replace(name, "", ignoreCase = true)
+            .replace("VOD", "", ignoreCase = true)
+            .trim()
+            .ifBlank { null }
+
+        val quality = Qualities.getStringByInt(link.quality)
+            .trim()
+            .ifBlank { null }
+
+        val isAudioOnly = link.url.contains("audio_only", ignoreCase = true) ||
+            rawName?.contains("audio", ignoreCase = true) == true ||
+            quality?.contains("audio", ignoreCase = true) == true
+
+        return when {
+            isAudioOnly -> "Audio Only"
+            !rawName.isNullOrBlank() -> rawName
+            !quality.isNullOrBlank() -> quality
+            else -> "Auto"
+        }
+    }
+
+    private fun showTwitchQualityDialog(): Boolean {
+        if (!isTwitchPlayback()) return false
+
+        val links = viewModel.state
+            .sortLinks(currentQualityProfile)
+            .filter { isTwitchExtractorLink(it.first) }
+
+        if (links.isEmpty()) return false
+
+        val labels = links.map { twitchQualityLabel(it.first) }
+        val selectedIndex = links.indexOf(currentSelectedLink).coerceAtLeast(0)
+
+        activity?.showDialog(
+            labels,
+            selectedIndex,
+            "Twitch quality",
+            true,
+            {},
+        ) { index ->
+            links.getOrNull(index)?.let { selected ->
+                loadLink(selected, true)
+            }
+        }
+
+        return true
+    }
+override fun showMirrorsDialogue() {
+        if (showTwitchQualityDialog()) return
         try {
             currentSelectedSubtitles = player.getCurrentPreferredSubtitle()
             //println("CURRENT SELECTED :$currentSelectedSubtitles of $currentSubs")

@@ -226,6 +226,8 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
         super.onDestroyView()
     }
 
+    open fun allowResizeShortcut(): Boolean = true
+
     open fun showMirrorsDialogue() {
         throw NotImplementedError()
     }
@@ -898,16 +900,31 @@ private fun updateUIVisibility() {
         playerHostView?.requestUpdateBrightnessOverlayOnNextLayout()
     }
 
-    private fun handleKeyDownEvent(keyCode: Int): Boolean? {
+        private fun acceleratedSeekAmount(baseMs: Long, repeatCount: Int): Long {
+        val multiplier = when {
+            repeatCount >= 36 -> 12L
+            repeatCount >= 24 -> 8L
+            repeatCount >= 12 -> 4L
+            repeatCount >= 5 -> 2L
+            else -> 1L
+        }
+
+        return (baseMs * multiplier).coerceAtMost(10 * 60 * 1000L)
+    }
+
+    private fun seekWithAcceleration(baseMs: Long, repeatCount: Int, forward: Boolean) {
+        val amount = acceleratedSeekAmount(baseMs, repeatCount)
+        player.seekTime(if (forward) amount else -amount)
+    }
+private fun handleKeyDownEvent(event: KeyEvent): Boolean? {
+        val keyCode = event.keyCode
+        val repeatCount = event.repeatCount
+
         // adb shell input keyevent [INT]
         when (keyCode) {
-            KeyEvent.KEYCODE_FORWARD, KeyEvent.KEYCODE_D, KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                player.handleEvent(CSPlayerEvent.SeekForward)
-            }
+            KeyEvent.KEYCODE_FORWARD, KeyEvent.KEYCODE_D, KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekWithAcceleration(androidTVInterfaceOffSeekTime, repeatCount, forward = true) }
 
-            KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                player.handleEvent(CSPlayerEvent.SeekBack)
-            }
+            KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD, KeyEvent.KEYCODE_MEDIA_REWIND -> { seekWithAcceleration(androidTVInterfaceOffSeekTime, repeatCount, forward = false) }
 
             KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_N, KeyEvent.KEYCODE_NUMPAD_2, KeyEvent.KEYCODE_CHANNEL_UP -> {
                 player.handleEvent(CSPlayerEvent.NextEpisode)
@@ -956,9 +973,7 @@ private fun updateUIVisibility() {
                 player.handleEvent(CSPlayerEvent.JumpToLive)
             }
 
-            KeyEvent.KEYCODE_R, KeyEvent.KEYCODE_NUMPAD_0, KeyEvent.KEYCODE_0 -> {
-                nextResize()
-            }
+            KeyEvent.KEYCODE_R, KeyEvent.KEYCODE_NUMPAD_0, KeyEvent.KEYCODE_0 -> { if (allowResizeShortcut()) nextResize() }
 
             KeyEvent.KEYCODE_C, KeyEvent.KEYCODE_NUMPAD_4, KeyEvent.KEYCODE_4 -> {
                 skipOp()
@@ -1001,10 +1016,10 @@ private fun updateUIVisibility() {
 
             KeyEvent.KEYCODE_DPAD_LEFT -> {
                 if (!isShowing && !isLocked && !isShowingEpisodeOverlay) {
-                    player.seekTime(-androidTVInterfaceOffSeekTime)
+                    seekWithAcceleration(androidTVInterfaceOffSeekTime, repeatCount, forward = false)
                     return true
                 } else if (playerBinding?.playerPausePlay?.isFocused == true) {
-                    player.seekTime(-androidTVInterfaceOnSeekTime)
+                    seekWithAcceleration(androidTVInterfaceOnSeekTime, repeatCount, forward = false)
                     return true
                 } else {
                     return null
@@ -1013,9 +1028,9 @@ private fun updateUIVisibility() {
 
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 if (!isShowing && !isLocked && !isShowingEpisodeOverlay) {
-                    player.seekTime(androidTVInterfaceOffSeekTime)
+                    seekWithAcceleration(androidTVInterfaceOffSeekTime, repeatCount, forward = true)
                 } else if (playerBinding?.playerPausePlay?.isFocused == true) {
-                    player.seekTime(androidTVInterfaceOnSeekTime)
+                    seekWithAcceleration(androidTVInterfaceOnSeekTime, repeatCount, forward = true)
                 } else {
                     return null
                 }
@@ -1050,7 +1065,7 @@ private fun updateUIVisibility() {
         val keyCode = event.keyCode
 
         if (event.action == KeyEvent.ACTION_DOWN) {
-            val value = handleKeyDownEvent(keyCode)
+            val value = handleKeyDownEvent(event)
             if (value != null) {
                 return value
             }

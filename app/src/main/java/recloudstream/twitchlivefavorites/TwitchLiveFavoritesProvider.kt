@@ -33,9 +33,9 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     override var mainUrl = "https://twitch.tv"
     override var name = "Twitch"
     private val legacyProviderNames = setOf("twitch live favorites api")
-    private val starterFavoriteChannels = listOf("zfg247", "monstercat", "nasa")
-    private val startupFavoriteChannels = listOf("zfg247")
-    private val startupFavoriteSeedKey = "twitch_startup_favorites_seeded_v1"
+    private val starterFavoriteChannels = listOf("zfg247", "liam", "monstercat", "nasa")
+    private val startupFavoriteChannels = listOf("zfg247", "liam")
+    private val startupFavoriteSeedKey = "twitch_startup_favorites_seeded_v2"
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "uni"
     override val hasMainPage = true
@@ -304,6 +304,7 @@ private data class ApiResponse(
         val now = nowMs()
         val displayName = when (normalized) {
             "zfg247" -> "zfg247"
+            "liam" -> "Liam"
             else -> normalized
         }
 
