@@ -1038,8 +1038,7 @@ private fun formatViewerCount(count: Int?): String? {
             posterUrl = poster
             backgroundPosterUrl = poster
             this@newLiveStreamLoadResponse.tags = tagList
-            this@newLiveStreamLoadResponse.recommendations = fetchRecentPastBroadcasts(info.channel, info.userId)
-        }
+}
     }
 private suspend fun channelLoadResponse(url: String): LoadResponse {
         val channel = normalizeChannel(url)
@@ -1058,6 +1057,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             posterUrl = cacheBustImage(info.image, nowMs())
             backgroundPosterUrl = cacheBustImage(info.poster, nowMs())
             this@newLiveStreamLoadResponse.tags = tagList
+            this@newLiveStreamLoadResponse.recommendations = fetchRecentPastBroadcasts(info.channel, info.userId)
         }
     }
 
