@@ -360,6 +360,8 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
     override fun onBindingCreated(binding: FragmentResultTvBinding) {
         // ===== setup =====
         val storedData = getStoredData() ?: return
+        isTwitchProfileMediaPage = storedData.apiName.equals("Twitch", ignoreCase = true) || storedData.apiName.equals("Twitch Live Favorites API", ignoreCase = true) || storedData.url.contains("twitch", ignoreCase = true)
+
         val isTwitchResultPage =
             storedData.apiName.equals("Twitch", ignoreCase = true) ||
                 storedData.apiName.equals("Twitch Live Favorites API", ignoreCase = true) ||
@@ -367,7 +369,8 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
         val isTwitchDirectPlayPage =
             isTwitchResultPage &&
                 storedData.url.contains("cloudstream_direct_play=1", ignoreCase = true)
-        activity?.window?.decorView?.clearFocus()
+                isTwitchProfileMediaPage = isTwitchResultPage
+activity?.window?.decorView?.clearFocus()
         activity?.loadCache()
         hideKeyboard()
         if (storedData.restart || !viewModel.hasLoaded())

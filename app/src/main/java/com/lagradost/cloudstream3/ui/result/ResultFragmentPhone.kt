@@ -458,6 +458,8 @@ open class ResultFragmentPhone : BaseFragment<FragmentResultSwipeBinding>(
 
         // ===== setup =====
         val storedData = getStoredData() ?: return
+        isTwitchProfileMediaPage = storedData.apiName.equals("Twitch", ignoreCase = true) || storedData.apiName.equals("Twitch Live Favorites API", ignoreCase = true) || storedData.url.contains("twitch", ignoreCase = true)
+
         activity?.window?.decorView?.clearFocus()
         activity?.loadCache()
         context?.updateHasTrailers()

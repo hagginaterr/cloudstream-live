@@ -86,7 +86,7 @@ object SearchResultBuilder {
         val showHd = showCache[textQuality?.context?.getString(R.string.show_hd_key)] ?: false
         val showRatingView =
             showCache[textQuality?.context?.getString(R.string.show_rating_key)] ?: false
-        val isTwitchVodCard = card.url.contains("cloudstream_twitch_vod=1", ignoreCase = true)
+        val isTwitchVodCard = card.url.contains("cloudstream_twitch_vod=1", ignoreCase = true) || card.url.contains("cloudstream_twitch_media=", ignoreCase = true)
 
         fun twitchVodParam(key: String): String? {
             if (!isTwitchVodCard) return null
