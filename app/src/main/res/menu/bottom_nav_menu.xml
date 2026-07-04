@@ -10,8 +10,8 @@
             android:title="@string/title_search" />
         <item
             android:id="@+id/navigation_library"
-            android:icon="@drawable/library_icon_selector"
-            android:title="@string/library" />
+            android:icon="@drawable/ic_baseline_favorite_24"
+            android:title="@string/favorites_list_name" />
         <item
             android:id="@+id/navigation_downloads"
             android:icon="@drawable/netflix_download"

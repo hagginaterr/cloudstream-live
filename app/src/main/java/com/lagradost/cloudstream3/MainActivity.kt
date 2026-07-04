@@ -1,4 +1,4 @@
-﻿package com.lagradost.cloudstream3
+package com.lagradost.cloudstream3
 
 import recloudstream.twitchlivefavorites.BuiltInTwitchLiveFavorites
 
@@ -1639,11 +1639,7 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
                 libraryViewModel?.currentApiName?.observe(this@MainActivity) {
                     val syncAPI = libraryViewModel?.currentSyncApi
                     Log.i("SYNC_API", "${syncAPI?.name}, ${syncAPI?.idPrefix}")
-                    val icon = if (syncAPI?.idPrefix == localListApi.idPrefix) {
-                        R.drawable.library_icon_selector
-                    } else {
-                        syncAPI?.icon ?: R.drawable.library_icon_selector
-                    }
+                    val icon = if (syncAPI?.idPrefix == localListApi.idPrefix) { R.drawable.ic_baseline_favorite_24 } else { syncAPI?.icon ?: R.drawable.ic_baseline_favorite_24 }
 
                     binding?.apply {
                         navRailView.menu.findItem(R.id.navigation_library)?.setIcon(icon)
