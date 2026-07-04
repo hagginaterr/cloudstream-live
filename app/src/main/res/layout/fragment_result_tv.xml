@@ -702,9 +702,10 @@ https://developer.android.com/design/ui/tv/samples/jet-fit
                 android:clipToPadding="false"
                 android:descendantFocusability="afterDescendants"
                 android:nextFocusUp="@id/result_cast_items"
-                android:orientation="vertical"
-                app:spanCount="8"
-                tools:listitem="@layout/search_result_grid" />
+                android:orientation="horizontal"
+                app:spanCount="4"
+                tools:listitem="@layout/search_result_grid"
+        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 

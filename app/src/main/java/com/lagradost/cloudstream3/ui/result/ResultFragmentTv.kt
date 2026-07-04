@@ -430,6 +430,12 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
             //}
 
             resultRecommendationsList.spanCount = 4
+            resultRecommendationsList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(
+                resultRecommendationsList.context,
+                androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL,
+                false
+            )
+            resultRecommendationsList.isNestedScrollingEnabled = false
             resultRecommendationsList.setRecycledViewPool(SearchAdapter.sharedPool)
             resultRecommendationsList.adapter =
                 SearchAdapter(
