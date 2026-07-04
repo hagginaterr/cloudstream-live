@@ -180,10 +180,6 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     private fun reloadViewModel(forceReload: Boolean) {
         if (!viewModel.hasLoaded() || forceReload) {
             val storedData = getStoredData() ?: return
-        val isTwitchResultPage =
-            storedData.apiName.equals("Twitch", ignoreCase = true) ||
-                storedData.apiName.equals("Twitch Live Favorites API", ignoreCase = true) ||
-                storedData.url.contains("twitch", ignoreCase = true)
             viewModel.load(
                 activity,
                 storedData.url,
@@ -262,6 +258,10 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     override fun onBindingCreated(binding: FragmentResultTvBinding) {
         // ===== setup =====
         val storedData = getStoredData() ?: return
+        val isTwitchResultPage =
+            storedData.apiName.equals("Twitch", ignoreCase = true) ||
+                storedData.apiName.equals("Twitch Live Favorites API", ignoreCase = true) ||
+                storedData.url.contains("twitch", ignoreCase = true)
         activity?.window?.decorView?.clearFocus()
         activity?.loadCache()
         hideKeyboard()
