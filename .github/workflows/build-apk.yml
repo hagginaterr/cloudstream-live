@@ -2,6 +2,15 @@ name: Build CloudStream Live APK
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Build mode
+        required: true
+        default: apk
+        type: choice
+        options:
+          - apk
+          - check
   push:
     branches:
       - master
@@ -32,6 +41,8 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref_name != 'built-in-twitch-provider' && github.ref_name != 'main' && github.ref_name != 'master' }}
 
       - name: Make Gradle executable
         run: chmod +x ./gradlew
@@ -69,14 +80,20 @@ jobs:
           print(f"Generated {out}")
           PY
 
+      - name: Fast Kotlin and resource check
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'check' }}
+        run: ./gradlew :app:processStableDebugResources :app:compileStableDebugKotlin --build-cache --no-daemon --stacktrace
+
       - name: Build stable debug APK
-        run: ./gradlew :app:assembleStableDebug --no-daemon --stacktrace
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'apk' }}
+        run: ./gradlew :app:assembleStableDebug --build-cache --no-daemon --stacktrace
 
       - name: List APK outputs
         if: always()
         run: find app/build/outputs/apk -type f -name "*.apk" -print || true
 
       - name: Upload APK artifact
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'apk' }}
         uses: actions/upload-artifact@v4
         with:
           name: CloudStream-Live-stable-debug
