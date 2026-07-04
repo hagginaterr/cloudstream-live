@@ -12,12 +12,14 @@ import com.lagradost.cloudstream3.ui.result.START_ACTION_LOAD_EP
 import com.lagradost.cloudstream3.utils.AppContextUtils.loadSearchResult
 import com.lagradost.cloudstream3.utils.DataStoreHelper
 import com.lagradost.cloudstream3.utils.downloader.DownloadObjects
+import recloudstream.twitchlivefavorites.TwitchDirectPlayHelper
 
 object SearchHelper {
     fun handleSearchClickCallback(callback: SearchClickCallback) {
         val card = callback.card
         when (callback.action) {
             SEARCH_ACTION_LOAD -> {
+                if (TwitchDirectPlayHelper.tryOpen(card)) return
                 loadSearchResult(card)
             }
 

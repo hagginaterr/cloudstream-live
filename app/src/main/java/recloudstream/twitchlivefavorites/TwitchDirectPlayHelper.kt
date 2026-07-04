@@ -1,0 +1,87 @@
+package recloudstream.twitchlivefavorites
+
+import android.widget.Toast
+import com.lagradost.cloudstream3.CommonActivity.activity
+import com.lagradost.cloudstream3.CommonActivity.showToast
+import com.lagradost.cloudstream3.R
+import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.ui.player.ExtractorLinkGenerator
+import com.lagradost.cloudstream3.ui.player.GeneratorPlayer
+import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.UIHelper.navigate
+import com.lagradost.cloudstream3.utils.getQualityFromName
+import com.lagradost.cloudstream3.utils.newExtractorLink
+
+object TwitchDirectPlayHelper {
+    private const val DIRECT_PLAY_MARKER = "cloudstream_direct_play=1"
+    private const val STREAM_API = "https://pwn.sh/tools/streamapi.py?url="
+
+    private data class ApiResponse(
+        val success: Boolean = false,
+        val urls: Map<String, String>? = null,
+    )
+
+    fun tryOpen(card: SearchResponse): Boolean {
+        if (!isDirectPlayCard(card)) return false
+
+        val twitchUrl = card.url
+            .substringBefore("?")
+            .substringBefore("#")
+            .ifBlank { return false }
+
+        val title = card.name.ifBlank { "Twitch" }
+
+        ioSafe {
+            val links = fetchLinks(twitchUrl, title)
+
+            activity?.runOnUiThread {
+                if (links.isEmpty()) {
+                    showToast("Could not open Twitch stream", Toast.LENGTH_SHORT)
+                    return@runOnUiThread
+                }
+
+                activity?.navigate(
+                    R.id.global_to_navigation_player,
+                    GeneratorPlayer.newInstance(
+                        ExtractorLinkGenerator(links, emptyList()),
+                        0,
+                    ),
+                )
+            }
+        }
+
+        return true
+    }
+
+    private fun isDirectPlayCard(card: SearchResponse): Boolean {
+        val api = card.apiName.lowercase()
+        return (api == "twitch" || api == "twitch live favorites api") &&
+            card.url.contains(DIRECT_PLAY_MARKER, ignoreCase = true)
+    }
+
+    private suspend fun fetchLinks(twitchUrl: String, title: String): List<ExtractorLink> {
+        val response = runCatching {
+            app.get("$STREAM_API$twitchUrl").parsed<ApiResponse>()
+        }.getOrNull() ?: return emptyList()
+
+        return response.urls
+            .orEmpty()
+            .mapNotNull { (qualityName, streamUrl) ->
+                if (streamUrl.isBlank()) return@mapNotNull null
+
+                val quality = getQualityFromName(qualityName.substringBefore("p"))
+                newExtractorLink(
+                    "Twitch",
+                    "$title ${qualityName.replace("${quality}p", "")}".trim(),
+                    streamUrl,
+                ) {
+                    this.type = ExtractorLinkType.M3U8
+                    this.quality = quality
+                    this.referer = ""
+                }
+            }
+    }
+}
