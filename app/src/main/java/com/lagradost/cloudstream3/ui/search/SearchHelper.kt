@@ -58,6 +58,7 @@ object SearchHelper {
             }
 
             SEARCH_ACTION_SHOW_METADATA -> {
+                if (TwitchDirectPlayHelper.tryOpenProfile(card)) return
                 (activity as? MainActivity?)?.apply {
                     loadPopup(callback.card)
                 } ?: kotlin.run {

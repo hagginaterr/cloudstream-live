@@ -3,11 +3,13 @@ package recloudstream.twitchlivefavorites
 import android.widget.Toast
 import com.lagradost.cloudstream3.CommonActivity.activity
 import com.lagradost.cloudstream3.CommonActivity.showToast
+import com.lagradost.cloudstream3.LiveSearchResponse
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.ui.player.ExtractorLinkGenerator
 import com.lagradost.cloudstream3.ui.player.GeneratorPlayer
+import com.lagradost.cloudstream3.utils.AppContextUtils.loadSearchResult
 import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -27,9 +29,7 @@ object TwitchDirectPlayHelper {
     fun tryOpen(card: SearchResponse): Boolean {
         if (!isDirectPlayCard(card)) return false
 
-        val twitchUrl = card.url
-            .substringBefore("?")
-            .substringBefore("#")
+        val twitchUrl = cleanProfileUrl(card.url)
             .ifBlank { return false }
 
         val title = card.name.ifBlank { "Twitch" }
@@ -56,10 +56,29 @@ object TwitchDirectPlayHelper {
         return true
     }
 
+    fun tryOpenProfile(card: SearchResponse): Boolean {
+        if (!isDirectPlayCard(card)) return false
+
+        val profileUrl = cleanProfileUrl(card.url)
+            .ifBlank { return false }
+
+        val profileCard = when (card) {
+            is LiveSearchResponse -> card.copy(url = profileUrl)
+            else -> return false
+        }
+
+        loadSearchResult(profileCard)
+        return true
+    }
+
     private fun isDirectPlayCard(card: SearchResponse): Boolean {
         val api = card.apiName.lowercase()
         return (api == "twitch" || api == "twitch live favorites api") &&
             card.url.contains(DIRECT_PLAY_MARKER, ignoreCase = true)
+    }
+
+    private fun cleanProfileUrl(url: String): String {
+        return url.substringBefore("?").substringBefore("#")
     }
 
     private suspend fun fetchLinks(twitchUrl: String, title: String): List<ExtractorLink> {
