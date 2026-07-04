@@ -123,13 +123,13 @@ import kotlin.uuid.toJavaUuid
 const val TAG = "CS3ExoPlayer"
 const val PREFERRED_AUDIO_LANGUAGE_KEY = "preferred_audio_language"
 
-private const val TWITCH_LIVE_TARGET_OFFSET_MS = 7_250L
+private const val TWITCH_LIVE_TARGET_OFFSET_MS = 8_000L
 private const val TWITCH_LIVE_MIN_OFFSET_MS = 4_000L
-private const val TWITCH_LIVE_MAX_OFFSET_MS = 22_000L
+private const val TWITCH_LIVE_MAX_OFFSET_MS = 20_000L
 private const val TWITCH_MIN_BUFFER_MS = 8_000
-private const val TWITCH_MAX_BUFFER_MS = 32_000
-private const val TWITCH_BUFFER_FOR_PLAYBACK_MS = 2_000
-private const val TWITCH_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 4_000
+private const val TWITCH_MAX_BUFFER_MS = 30_000
+private const val TWITCH_BUFFER_FOR_PLAYBACK_MS = 1_500
+private const val TWITCH_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000
 private const val TWITCH_LIVE_DELAY_LOG_INTERVAL_MS = 5_000L
 
 /** toleranceBeforeUs – The maximum time that the actual position seeked to may precede the
