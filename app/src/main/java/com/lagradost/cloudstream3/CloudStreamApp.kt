@@ -1,5 +1,6 @@
 package com.lagradost.cloudstream3
 
+import recloudstream.twitchlivefavorites.BuiltInTwitchLiveFavorites
 import android.app.Activity
 import android.app.Application
 import android.content.Context
@@ -84,6 +85,7 @@ class CloudStreamApp : Application(), SingletonImageLoader.Factory {
         }
 
         AppDebug.isDebug = BuildConfig.DEBUG
+	BuiltInTwitchLiveFavorites.register()
     }
 
     override fun attachBaseContext(base: Context?) {
