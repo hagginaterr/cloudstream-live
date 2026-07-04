@@ -1,4 +1,6 @@
-package com.lagradost.cloudstream3
+﻿package com.lagradost.cloudstream3
+
+import recloudstream.twitchlivefavorites.BuiltInTwitchLiveFavorites
 
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
@@ -810,6 +812,7 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
     private fun onAllPluginsLoaded(success: Boolean = false) {
         ioSafe {
             pluginsLock.withLock {
+            BuiltInTwitchLiveFavorites.register(forceHomepage = true)
                 allProviders.withLock {
                     // Load cloned sites after plugins have been loaded since clones depend on plugins.
                     try {
@@ -1318,7 +1321,7 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
                     biometricPrompt?.authenticate(prompt)
                 }
 
-                // hide background while authenticating, Sorry moms & dads 🙏
+                // hide background while authenticating, Sorry moms & dads ðŸ™
                 binding?.navHostFragment?.isInvisible = true
             }
         }
@@ -2072,3 +2075,4 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
         }
     }
 }
+
