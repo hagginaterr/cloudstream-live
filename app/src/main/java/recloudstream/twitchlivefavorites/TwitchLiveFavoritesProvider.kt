@@ -400,7 +400,7 @@ private fun getSavedFavoriteChannels(): List<String> {
     }
 
     private fun liveFavoritesRowTitle(): String {
-        return updatedAtText()?.let { "$liveFavoritesNowName • $it" } ?: liveFavoritesNowName
+        return updatedAtText()?.let { "$liveFavoritesNowName - $it" } ?: liveFavoritesNowName
     }
 
     private suspend fun getAppAccessToken(): String? {
@@ -717,28 +717,54 @@ private fun normalizeChannel(value: String): String {
         return listOfNotNull(
             gameName?.ifBlank { null },
             formatViewerCount(viewerCount),
-        ).joinToString(" • ").ifBlank { null }
+        ).joinToString(" - ").ifBlank { null }
     }
 
-        private fun FavoriteChannel.profileStatusText(): String {
+            private fun twitchMojibake(vararg codes: Int): String {
+        return codes.map { it.toChar() }.joinToString("")
+    }
+
+    private fun cleanTwitchText(value: String?): String? {
+        val bullet = 0x2022.toChar().toString()
+        val badBullet = twitchMojibake(0x00E2, 0x20AC, 0x00A2)
+        val badEnDash = twitchMojibake(0x00E2, 0x20AC, 0x201C)
+        val badEmDash = twitchMojibake(0x00E2, 0x20AC, 0x201D)
+        val badLeftQuote = twitchMojibake(0x00E2, 0x20AC, 0x0153)
+        val badRightQuote = twitchMojibake(0x00E2, 0x20AC, 0x009D)
+        val badApostrophe = twitchMojibake(0x00E2, 0x20AC, 0x2122)
+        val badReplacement = 0xFFFD.toChar().toString()
+
+        return value
+            ?.ifBlank { null }
+            ?.replace(badBullet, "-")
+            ?.replace(badEnDash, "-")
+            ?.replace(badEmDash, "-")
+            ?.replace(badLeftQuote, "\"")
+            ?.replace(badRightQuote, "\"")
+            ?.replace(badApostrophe, "'")
+            ?.replace(bullet, "-")
+            ?.replace(badReplacement, "")
+            ?.replace(0x00A0.toChar().toString(), " ")
+            ?.trim()
+    }
+    private fun FavoriteChannel.profileStatusText(): String {
         return if (isLive) {
             listOfNotNull(
                 "Live now",
-                gameName?.ifBlank { null },
+                cleanTwitchText(gameName),
                 formatViewerCount(viewerCount),
-            ).joinToString(" â€¢ ")
+            ).joinToString(" - ")
         } else {
             "Offline"
         }
     }
-
-    private fun FavoriteChannel.profilePlot(): String? {
+        private fun FavoriteChannel.profilePlot(): String? {
         return listOfNotNull(
             "Status: ${profileStatusText()}",
-            description?.ifBlank { null },
+            cleanTwitchText(description),
         ).joinToString("\n\n").ifBlank { null }
     }
-private fun FavoriteChannel.toChannelCard(
+    private fun FavoriteChannel.toChannelCard(
         showOfflineLabel: Boolean,
         directPlay: Boolean = false,
     ): LiveSearchResponse {
