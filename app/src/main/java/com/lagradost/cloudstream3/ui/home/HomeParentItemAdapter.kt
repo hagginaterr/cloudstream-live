@@ -25,6 +25,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.PHONE
 import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.AppContextUtils.isRecyclerScrollable
+import recloudstream.twitchlivefavorites.TwitchHomeRefreshFocus
 
 class LoadClickCallback(
     val action: Int = 0,
@@ -127,6 +128,16 @@ open class ParentItemAdapter(
             )
             homeChildMoreInfo.text = info.name
 
+            if (TwitchHomeRefreshFocus.consumeForRow(info.name)) {
+                homeChildRecyclerview.post {
+                    homeChildRecyclerview.scrollToPosition(0)
+                    homeChildRecyclerview.post {
+                        homeChildRecyclerview.findViewHolderForAdapterPosition(0)
+                            ?.itemView
+                            ?.requestFocus()
+                    }
+                }
+            }
             homeChildRecyclerview.addOnScrollListener(object :
                 RecyclerView.OnScrollListener() {
                 var expandCount = 0

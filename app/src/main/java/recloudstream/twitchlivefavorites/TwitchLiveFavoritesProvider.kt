@@ -283,6 +283,8 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
      * These are CloudStream internals, so every call is deliberately guarded.
      */
     private fun requestUiRefresh() {
+        TwitchHomeRefreshFocus.requestFocusFirstLiveNow()
+
         runCatching { MainActivity.reloadHomeEvent(true) }
     }
 
@@ -600,7 +602,14 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
             ?.replace("{height}", height.toString())
     }
 
-    private fun normalizeChannel(value: String): String {
+        private fun cacheBustImage(url: String?, version: Long = cachedLiveUpdatedAtMs): String? {
+        val clean = url?.ifBlank { null } ?: return null
+        if (version <= 0L) return clean
+
+        val separator = if (clean.contains("?")) "&" else "?"
+        return "$clean${separator}t=$version"
+    }
+private fun normalizeChannel(value: String): String {
         val trimmed = value
             .trim()
             .removePrefix("@")
@@ -641,7 +650,25 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         ).joinToString(" • ").ifBlank { null }
     }
 
-    private fun FavoriteChannel.toChannelCard(
+        private fun FavoriteChannel.profileStatusText(): String {
+        return if (isLive) {
+            listOfNotNull(
+                "Live now",
+                gameName?.ifBlank { null },
+                formatViewerCount(viewerCount),
+            ).joinToString(" â€¢ ")
+        } else {
+            "Offline"
+        }
+    }
+
+    private fun FavoriteChannel.profilePlot(): String? {
+        return listOfNotNull(
+            "Status: ${profileStatusText()}",
+            description?.ifBlank { null },
+        ).joinToString("\n\n").ifBlank { null }
+    }
+private fun FavoriteChannel.toChannelCard(
         showOfflineLabel: Boolean,
         directPlay: Boolean = false,
     ): LiveSearchResponse {
@@ -649,7 +676,7 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         val resultUrl = if (directPlay && isLive) directPlayUrl(channel) else channel
 
         return newLiveSearchResponse(displayTitle, resultUrl, TvType.Live, fix = false) {
-            posterUrl = poster ?: image
+            posterUrl = cacheBustImage(poster ?: image)
             lang = subtitle() ?: language
         }
     }
@@ -763,7 +790,9 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     private suspend fun channelLoadResponse(url: String): LoadResponse {
         val channel = normalizeChannel(url)
         val info = fetchChannel(channel) ?: return statusResponse("channel-not-found")
+        val statusTag = if (info.isLive) "LIVE NOW" else "OFFLINE"
         val tagList = listOfNotNull(
+            statusTag,
             info.gameName,
             formatViewerCount(info.viewerCount),
             info.language,
@@ -771,9 +800,9 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         val streamUrl = twitchUrl(info.channel)
 
         return newLiveStreamLoadResponse(info.displayName, streamUrl, streamUrl) {
-            plot = info.description
-            posterUrl = info.image
-            backgroundPosterUrl = info.poster
+            plot = info.profilePlot()
+            posterUrl = cacheBustImage(info.image, nowMs())
+            backgroundPosterUrl = cacheBustImage(info.poster, nowMs())
             this@newLiveStreamLoadResponse.tags = tagList
         }
     }
