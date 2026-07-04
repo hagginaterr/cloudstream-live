@@ -697,7 +697,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             ?.replace("{height}", height.toString())
     }
 
-        private fun cacheBustImage(url: String?, version: Long = cachedLiveUpdatedAtMs): String? {
+    private fun cacheBustImage(url: String?, version: Long = cachedLiveUpdatedAtMs): String? {
         val clean = url?.ifBlank { null } ?: return null
         if (version <= 0L) return clean
 
@@ -1058,7 +1058,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             backgroundPosterUrl = cacheBustImage(info.poster, nowMs())
             this@newLiveStreamLoadResponse.tags = tagList
             this@newLiveStreamLoadResponse.recommendations = fetchRecentPastBroadcasts(info.channel, info.userId)
-        }
+}
     }
 
     private suspend fun searchChannels(query: String): List<ChannelSummary> {
