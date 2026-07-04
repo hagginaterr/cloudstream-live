@@ -1253,7 +1253,31 @@ private fun formatViewerCount(count: Int?): String? {
         return "$url${separator}cloudstream_twitch_media=$marker"
     }
 
-    private fun twitchProfileMediaCardUrl(
+        private fun appendTwitchProfileQueryParam(url: String, name: String, value: String?): String {
+        val cleanValue = value?.ifBlank { null } ?: return url
+        val separator = if (url.contains("?")) "&" else "?"
+        return "$url$separator${encode(name)}=${encode(cleanValue)}"
+    }
+    private fun twitchProfileMediaParam(url: String, key: String): String? {
+        val query = url.substringAfter("?", "")
+        if (query.isBlank() || query == url) return null
+        return query
+            .split("&")
+            .firstOrNull { it.substringBefore("=") == key }
+            ?.substringAfter("=", "")
+            ?.let { decode(it) }
+            ?.ifBlank { null }
+    }
+    private fun twitchClipDirectVideoUrl(thumbnailUrl: String?): String? {
+        val clean = thumbnailUrl?.ifBlank { null } ?: return null
+        val base = clean.substringBefore("-preview", missingDelimiterValue = "")
+        return if (base.isBlank()) null else "$base.mp4"
+    }
+    private fun isTwitchClipDirectVideoUrl(url: String): Boolean {
+        val clean = url.substringBefore("?").lowercase()
+        return clean.startsWith("http") && clean.contains("clips") && clean.endsWith(".mp4")
+    }
+private fun twitchProfileMediaCardUrl(
     url: String,
     marker: String,
     title: String?,
@@ -1337,7 +1361,8 @@ private suspend fun fetchTwitchClipRecommendations(user: TwitchUser): List<LiveS
         val age = formatTwitchVideoAge(clip.created_at) ?: formatTwitchVideoDate(clip.created_at)
         val views = formatViewCount(clip.view_count)
         val durationText = if (clip.duration > 0f) "${clip.duration.toInt()}s" else null
-        val cardUrl = twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, null, views, durationText)
+        val clipVideoUrl = twitchClipDirectVideoUrl(clip.thumbnail_url)
+        val cardUrl = appendTwitchProfileQueryParam(twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, null, views, durationText), "cs_clip_video", clipVideoUrl)
         newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(clip.thumbnail_url.ifBlank { null }, nowMs())
             lang = age
@@ -1368,7 +1393,12 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
 
     private suspend fun twitchProfileMediaLoadResponse(url: String): LoadResponse {
         val marker = twitchProfileMediaMarker(url).orEmpty()
-        val cleanUrl = stripTwitchProfileMediaMarker(url)
+        val clipVideoUrl = twitchProfileMediaParam(url, "cs_clip_video")
+        val cleanUrl = if (marker == "clip") {
+            clipVideoUrl ?: stripTwitchProfileMediaMarker(url)
+        } else {
+            stripTwitchProfileMediaMarker(url)
+        }
         val title = when (marker) {
             "clip" -> "Twitch Clip"
             "highlight" -> "Twitch Highlight"
@@ -1593,7 +1623,22 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         if (!data.startsWith("http", ignoreCase = true)) return false
-        if (isTwitchVideoUrl(data)) {
+        if (isTwitchClipDirectVideoUrl(data)) {
+        callback.invoke(
+            newExtractorLink(
+                name,
+                "$name Clip",
+                data,
+            ) {
+                this.type = ExtractorLinkType.VIDEO
+                this.quality = getQualityFromName("720p")
+                this.referer = "https://clips.twitch.tv/"
+            },
+        )
+        return true
+    }
+
+    if (isTwitchVideoUrl(data)) {
             val vodLinks = fetchTwitchVodLinks(extractVideoId(data))
             vodLinks.forEach { callback.invoke(it) }
             return vodLinks.isNotEmpty()

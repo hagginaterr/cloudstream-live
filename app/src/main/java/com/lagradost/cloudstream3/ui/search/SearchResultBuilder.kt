@@ -107,9 +107,7 @@ object SearchResultBuilder {
         val twitchVodCategory = twitchVodParam("cs_category")
         val twitchVodViews = twitchVodParam("cs_views")
         val twitchVodDuration = twitchVodParam("cs_duration")
-        val twitchVodSubtitle = listOfNotNull(twitchVodAge, twitchVodCategory)
-            .joinToString(" - ")
-            .ifBlank { null }
+        val twitchVodSubtitle = listOfNotNull(twitchVodAge, twitchVodCategory).joinToString(" - ").ifBlank { (card as? LiveSearchResponse)?.lang?.ifBlank { null } }
         if (card is SyncAPI.LibraryItem) {
             val ratingText = card.personalRating?.toStringNull(0.1, 10, 1)
             val showRating = !ratingText.isNullOrBlank()
@@ -160,8 +158,7 @@ object SearchResultBuilder {
         }
         cardText?.isVisible = if (isTwitchVodCard) true else showTitle
 
-        if (isTwitchVodCard) {
-            rating?.apply {
+        if (isTwitchVodCard) { textFlag?.apply { text = twitchVodAge.orEmpty() isVisible = !twitchVodAge.isNullOrBlank() } rating?.apply {
                 text = twitchVodViews.orEmpty()
                 isVisible = !twitchVodViews.isNullOrBlank()
             }
