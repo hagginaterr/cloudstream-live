@@ -10,6 +10,8 @@ import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
+import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newHomePageResponse
@@ -28,6 +30,8 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     override var name = "Twitch"
     private val legacyProviderNames = setOf("twitch live favorites api")
     private val starterFavoriteChannels = listOf("zfg247", "monstercat", "nasa")
+    private val startupFavoriteChannels = listOf("zfg247")
+    private val startupFavoriteSeedKey = "twitch_startup_favorites_seeded_v1"
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "uni"
     override val hasMainPage = true
@@ -70,6 +74,7 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        ensureStartupFavoritesSaved()
         val savedFavorites = getSavedFavoriteChannels()
         val usingStarterFavorites = savedFavorites.isEmpty()
         val favorites = if (usingStarterFavorites) starterFavoriteChannels else savedFavorites
@@ -223,7 +228,72 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
      * simple: search/open a streamer, use CloudStream's normal favorite button, and Live Now
      * imports those favorites automatically. Offline channels are still hidden by getMainPage().
      */
-    private fun getSavedFavoriteChannels(): List<String> {
+        private fun startupFavoriteSeedKeyForAccount(): String {
+        return "${DataStoreHelper.currentAccount}/$startupFavoriteSeedKey"
+    }
+
+    private fun twitchFavoriteId(channel: String): Int {
+        return normalizeChannel(channel).hashCode()
+    }
+
+    private fun seedCloudStreamFavorite(channel: String) {
+        val normalized = normalizeChannel(channel)
+        if (normalized.isBlank()) return
+
+        val id = twitchFavoriteId(normalized)
+        val current = DataStoreHelper.getFavoritesData(id)
+        val now = nowMs()
+        val displayName = when (normalized) {
+            "zfg247" -> "zfg247"
+            else -> normalized
+        }
+
+        DataStoreHelper.setFavoritesData(
+            id,
+            DataStoreHelper.FavoritesData(
+                favoritesTime = current?.favoritesTime ?: now,
+                id = id,
+                latestUpdatedTime = now,
+                name = displayName,
+                url = twitchUrl(normalized),
+                apiName = name,
+                type = TvType.Live,
+                posterUrl = current?.posterUrl,
+                year = null,
+                plot = current?.plot ?: "Twitch streamer",
+                tags = current?.tags ?: listOf("Twitch"),
+            ),
+        )
+    }
+
+    private fun ensureStartupFavoritesSaved() {
+        val currentChannels = getCloudStreamTwitchFavoriteChannels()
+            .map { normalizeChannel(it) }
+            .toSet()
+
+        val missing = startupFavoriteChannels
+            .map { normalizeChannel(it) }
+            .filter { it.isNotBlank() && it !in currentChannels }
+            .distinct()
+
+        val seedKey = startupFavoriteSeedKeyForAccount()
+
+        if (missing.isEmpty()) {
+            setKey(seedKey, true)
+            return
+        }
+
+        // One-time seed per CloudStream account. This fixes existing installs,
+        // but does not keep re-adding zfg247 if the user removes him later.
+        if (getKey(seedKey, false) == true) return
+
+        missing.forEach { seedCloudStreamFavorite(it) }
+        setKey(seedKey, true)
+
+        runCatching { MainActivity.bookmarksUpdatedEvent(true) }
+        runCatching { MainActivity.reloadLibraryEvent(true) }
+    }
+private fun getSavedFavoriteChannels(): List<String> {
         return getCloudStreamTwitchFavoriteChannels()
             .map { normalizeChannel(it) }
             .filter { it.isNotBlank() }
