@@ -1025,8 +1025,8 @@ class GeneratorPlayer : FullScreenPlayer() {
         if (link == null) return "Unknown"
 
         val rawName = link.name
-            .removePrefix(name)
-            .replace(name, "", ignoreCase = true)
+            .replace(link.source, "", ignoreCase = true)
+            .replace("Twitch", "", ignoreCase = true)
             .replace("VOD", "", ignoreCase = true)
             .trim()
             .ifBlank { null }
