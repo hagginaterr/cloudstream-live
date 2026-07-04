@@ -796,7 +796,7 @@ private fun normalizeChannel(value: String): String {
         return response.data.firstOrNull()
     }
 
-        private suspend inline fun <reified T> twitchGqlPost(body: Map<String, Any?>): T? {
+        private suspend inline fun <reified T : Any> twitchGqlPost(body: Map<String, Any?>): T? {
         val requestBody = body
             .toJson()
             .toRequestBody(RequestBodyTypes.JSON.toMediaTypeOrNull())
@@ -840,8 +840,6 @@ private fun normalizeChannel(value: String): String {
     }
 
     private suspend fun fetchTwitchVideoCategory(video: TwitchVideo): String? {
-        cleanTwitchText(video.game_name)?.let { return it }
-
         val videoId = video.id.filter { it.isDigit() }
         if (videoId.isBlank()) return null
 
@@ -991,7 +989,7 @@ private fun normalizeChannel(value: String): String {
         return "$base/$clean"
     }
 
-    private fun parseTwitchVodMasterPlaylist(masterUrl: String, body: String): List<ExtractorLink> {
+    private suspend fun parseTwitchVodMasterPlaylist(masterUrl: String, body: String): List<ExtractorLink> {
         val links = mutableListOf<ExtractorLink>()
         var streamInfo: String? = null
 
