@@ -1225,6 +1225,117 @@ private fun formatViewerCount(count: Int?): String? {
         }
     }
 
+
+    // BEGIN TWITCH_PROFILE_MEDIA_PROVIDER_ROWS
+    private fun appendTwitchProfileMediaMarker(url: String, marker: String): String {
+        val separator = if (url.contains("?")) "&" else "?"
+        return "$url${separator}cloudstream_twitch_media=$marker"
+    }
+
+    private fun twitchProfileVideoThumbnail(url: String): String? {
+        return url
+            .replace("%{width}", "640")
+            .replace("%{height}", "360")
+            .replace("{width}", "640")
+            .replace("{height}", "360")
+            .ifBlank { null }
+    }
+
+    private fun twitchProfileDateLabel(createdAt: String, suffix: String?): String? {
+        val date = createdAt.substringBefore("T").takeIf { it.isNotBlank() }
+        return listOfNotNull(date, suffix?.takeIf { it.isNotBlank() }).joinToString(" - ").ifBlank { null }
+    }
+
+    private suspend fun fetchTwitchVideoRecommendations(user: TwitchUser, type: String, marker: String): List<SearchResponse> {
+        if (user.id.isBlank()) return emptyList()
+        val json = twitchGet<TwitchVideosResponse>(
+            buildHelixUrl(
+                "videos",
+                extra = mapOf("user_id" to user.id, "type" to type, "first" to "20"),
+            ),
+        ) ?: return emptyList()
+
+        return json.data.mapNotNull { video ->
+            val watchUrl = video.url.ifBlank {
+                if (video.id.isBlank()) return@mapNotNull null
+                "https://www.twitch.tv/videos/${video.id}"
+            }
+            newLiveSearchResponse(
+                video.title.ifBlank { user.display_name.ifBlank { user.login } },
+                appendTwitchProfileMediaMarker(watchUrl, marker),
+                TvType.Live,
+                fix = false,
+            ) {
+                posterUrl = twitchProfileVideoThumbnail(video.thumbnail_url)
+                lang = twitchProfileDateLabel(video.created_at, video.duration)
+            }
+        }
+    }
+
+    private suspend fun fetchTwitchClipRecommendations(user: TwitchUser): List<SearchResponse> {
+        if (user.id.isBlank()) return emptyList()
+        val json = twitchGet<TwitchClipsResponse>(
+            buildHelixUrl(
+                "clips",
+                extra = mapOf("broadcaster_id" to user.id, "first" to "20"),
+            ),
+        ) ?: return emptyList()
+
+        return json.data.mapNotNull { clip ->
+            val watchUrl = clip.url.ifBlank { return@mapNotNull null }
+            newLiveSearchResponse(
+                clip.title.ifBlank { user.display_name.ifBlank { user.login } },
+                appendTwitchProfileMediaMarker(watchUrl, "clip"),
+                TvType.Live,
+                fix = false,
+            ) {
+                posterUrl = clip.thumbnail_url.ifBlank { null }
+                lang = twitchProfileDateLabel(clip.created_at, if (clip.duration > 0.0) "${clip.duration.toInt()}s" else null)
+            }
+        }
+    }
+
+    private suspend fun fetchTwitchProfileRecommendations(channel: String): List<SearchResponse> {
+        if (!hasTwitchCredentials()) return emptyList()
+        val normalized = normalizeChannel(channel)
+        if (normalized.isBlank()) return emptyList()
+        val user = fetchUsers(listOf(normalized))[normalized] ?: return emptyList()
+        val pastBroadcasts = fetchTwitchVideoRecommendations(user, "archive", "past_broadcast")
+        val clips = fetchTwitchClipRecommendations(user)
+        val highlights = fetchTwitchVideoRecommendations(user, "highlight", "highlight")
+        return pastBroadcasts + clips + highlights
+    }
+
+    private fun twitchProfileMediaMarker(url: String): String? {
+        return Regex("[?&]cloudstream_twitch_media=([^&#]+)").find(url)?.groupValues?.getOrNull(1)
+    }
+
+    private fun stripTwitchProfileMediaMarker(url: String): String {
+        return url
+            .replace(Regex("([?&])cloudstream_twitch_media=[^&#]*&?"), "$1")
+            .replace("?&", "?")
+            .trimEnd('?', '&')
+    }
+
+    private suspend fun twitchProfileMediaLoadResponse(url: String): LoadResponse {
+        val marker = twitchProfileMediaMarker(url).orEmpty()
+        val cleanUrl = stripTwitchProfileMediaMarker(url)
+        val title = when (marker) {
+            "clip" -> "Twitch Clip"
+            "highlight" -> "Twitch Highlight"
+            else -> "Twitch Past Broadcast"
+        }
+        val mediaTag = when (marker) {
+            "clip" -> "Clip"
+            "highlight" -> "Highlight"
+            else -> "Past Broadcast"
+        }
+        return newLiveStreamLoadResponse(title, cleanUrl, cleanUrl) {
+            plot = "Open this Twitch $mediaTag."
+            this@newLiveStreamLoadResponse.tags = listOf("Twitch", mediaTag)
+        }
+    }
+    // END TWITCH_PROFILE_MEDIA_PROVIDER_ROWS
     private fun ChannelSummary.toChannelCard(): LiveSearchResponse {
         return newLiveSearchResponse(displayName, channel, TvType.Live, fix = false) {
             posterUrl = image
@@ -1339,6 +1450,7 @@ private fun formatViewerCount(count: Int?): String? {
         val videoUrl = twitchVideoUrl(videoId)
         val title = cleanTwitchText(video?.title) ?: "Past broadcast"
         val poster = cacheBustImage(resizeTwitchImage(video?.thumbnail_url, 640, 360), nowMs())
+        val profileRecommendations = fetchTwitchProfileRecommendations(info.channel)
         val tagList = listOfNotNull(
             "Past Broadcast",
             video?.duration?.ifBlank { null },
@@ -1355,12 +1467,14 @@ private fun formatViewerCount(count: Int?): String? {
             posterUrl = poster
             backgroundPosterUrl = poster
             this@newLiveStreamLoadResponse.tags = tagList
+            recommendations = profileRecommendations
 }
     }
 private suspend fun channelLoadResponse(url: String): LoadResponse {
         val channel = normalizeChannel(url)
         val info = fetchChannel(channel) ?: return statusResponse("channel-not-found")
         val statusTag = if (info.isLive) "LIVE NOW" else "OFFLINE"
+        val profileRecommendations = fetchTwitchProfileRecommendations(info.channel)
         val tagList = listOfNotNull(
             statusTag,
             info.gameName,
@@ -1374,6 +1488,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             posterUrl = cacheBustImage(info.image, nowMs())
             backgroundPosterUrl = cacheBustImage(info.poster, nowMs())
             this@newLiveStreamLoadResponse.tags = tagList
+            recommendations = profileRecommendations
             this@newLiveStreamLoadResponse.recommendations = fetchRecentPastBroadcasts(info.channel, info.userId)
 }
     }

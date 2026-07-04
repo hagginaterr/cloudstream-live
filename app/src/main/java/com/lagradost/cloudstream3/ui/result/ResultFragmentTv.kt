@@ -73,6 +73,7 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
 
     private lateinit var viewModel: ResultViewModel2
     private var hasAutoPlayedTwitchDirectPlay = false
+    private var isTwitchProfileMediaPage = false
 
     override fun onDestroyView() {
         updateUIEvent -= ::updateUI
@@ -150,24 +151,119 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         binding?.resultResumeSeriesButton?.requestFocus()
     }
 
-    private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?) {
+            // BEGIN TWITCH_PROFILE_MEDIA_ROWS
+    private enum class TwitchProfileMediaKind {
+        PAST_BROADCAST,
+        CLIP,
+        HIGHLIGHT,
+    }
+
+    private fun SearchResponse.twitchProfileMediaKind(): TwitchProfileMediaKind {
+        val text = "${name} ${url}".lowercase()
+        return when {
+            text.contains("cloudstream_twitch_media=clip") || text.contains("cloudstream_section=clip") || text.contains("clips.twitch.tv") || text.contains("/clip/") -> TwitchProfileMediaKind.CLIP
+            text.contains("cloudstream_twitch_media=highlight") || text.contains("cloudstream_section=highlight") || text.contains("highlight") -> TwitchProfileMediaKind.HIGHLIGHT
+            else -> TwitchProfileMediaKind.PAST_BROADCAST
+        }
+    }
+
+    private fun splitTwitchProfileMediaRows(items: List<SearchResponse>): Triple<List<SearchResponse>, List<SearchResponse>, List<SearchResponse>> {
+        val pastBroadcasts = items.filter { it.twitchProfileMediaKind() == TwitchProfileMediaKind.PAST_BROADCAST }
+        val clips = items.filter { it.twitchProfileMediaKind() == TwitchProfileMediaKind.CLIP }
+        val highlights = items.filter { it.twitchProfileMediaKind() == TwitchProfileMediaKind.HIGHLIGHT }
+        return Triple(pastBroadcasts, clips, highlights)
+    }
+
+    private fun setupTwitchProfileMediaRow(
+        row: com.lagradost.cloudstream3.ui.AutofitRecyclerView?,
+        spanCount: Int,
+        clickCallback: (com.lagradost.cloudstream3.ui.search.SearchClickCallback) -> Unit,
+    ) {
+        if (row == null) return
+        row.spanCount = spanCount
+        row.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(row.context, androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL, false)
+        row.isNestedScrollingEnabled = false
+        row.setRecycledViewPool(SearchAdapter.sharedPool)
+        if (row.adapter !is SearchAdapter) {
+            row.adapter = SearchAdapter(
+                row,
+                isHorizontal = true,
+                clickCallback = clickCallback,
+            )
+        }
+    }
+
+    private fun submitTwitchProfileMediaRow(
+        row: com.lagradost.cloudstream3.ui.AutofitRecyclerView?,
+        emptyText: View?,
+        items: List<SearchResponse>,
+        spanCount: Int,
+        clickCallback: (com.lagradost.cloudstream3.ui.search.SearchClickCallback) -> Unit,
+    ) {
+        setupTwitchProfileMediaRow(row, spanCount, clickCallback)
+        row?.isVisible = items.isNotEmpty()
+        emptyText?.isVisible = items.isEmpty()
+        (row?.adapter as? SearchAdapter)?.submitList(items)
+    }
+    // END TWITCH_PROFILE_MEDIA_ROWS
+private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?) {
         currentRecommendations = rec ?: emptyList()
-        val isInvalid = rec.isNullOrEmpty()
+        val matchAgainst = validApiName ?: rec?.firstOrNull()?.apiName
+        val filteredRecommendations = if (matchAgainst == null) {
+            rec ?: emptyList()
+        } else {
+            rec?.filter { it.apiName == matchAgainst } ?: emptyList()
+        }
+        val (pastBroadcasts, clips, highlights) = if (isTwitchProfileMediaPage) {
+            splitTwitchProfileMediaRows(filteredRecommendations)
+        } else {
+            Triple(filteredRecommendations, emptyList(), emptyList())
+        }
+        val showTwitchEmptyRows = isTwitchProfileMediaPage && rec != null
+        val hasRowsToShow = filteredRecommendations.isNotEmpty() || showTwitchEmptyRows
+
         binding?.apply {
-            resultRecommendationsList.isGone = isInvalid
-            resultRecommendationsHolder.isGone = isInvalid
-            val matchAgainst = validApiName ?: rec?.firstOrNull()?.apiName
-            (resultRecommendationsList.adapter as? SearchAdapter)?.submitList(rec?.filter { it.apiName == matchAgainst }
-                ?: emptyList())
+            resultRecommendationsHolder.isGone = !hasRowsToShow
+            submitTwitchProfileMediaRow(
+                resultRecommendationsList,
+                root.findViewById(R.id.result_past_broadcasts_empty),
+                pastBroadcasts,
+                4,
+            ) { callback ->
+                if (callback.action == SEARCH_ACTION_FOCUSED) {
+                    toggleEpisodes(false)
+                } else {
+                    SearchHelper.handleSearchClickCallback(callback)
+                }
+            }
+            submitTwitchProfileMediaRow(
+                root.findViewById(R.id.result_clips_list),
+                root.findViewById(R.id.result_clips_empty),
+                clips,
+                4,
+            ) { callback ->
+                if (callback.action == SEARCH_ACTION_FOCUSED) {
+                    toggleEpisodes(false)
+                } else {
+                    SearchHelper.handleSearchClickCallback(callback)
+                }
+            }
+            submitTwitchProfileMediaRow(
+                root.findViewById(R.id.result_highlights_list),
+                root.findViewById(R.id.result_highlights_empty),
+                highlights,
+                4,
+            ) { callback ->
+                if (callback.action == SEARCH_ACTION_FOCUSED) {
+                    toggleEpisodes(false)
+                } else {
+                    SearchHelper.handleSearchClickCallback(callback)
+                }
+            }
 
             rec?.map { it.apiName }?.distinct()?.let { apiNames ->
-                // very dirty selection
                 resultRecommendationsFilterSelection.isVisible = apiNames.size > 1
-                resultRecommendationsFilterSelection.update(apiNames.map {
-                    txt(
-                        it
-                    ) to it
-                })
+                resultRecommendationsFilterSelection.update(apiNames.map { txt(it) to it })
                 resultRecommendationsFilterSelection.select(apiNames.indexOf(matchAgainst))
             } ?: run {
                 resultRecommendationsFilterSelection.isVisible = false
@@ -175,12 +271,17 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         }
     }
 
+
     var loadingDialog: Dialog? = null
     var popupDialog: Dialog? = null
 
     private fun reloadViewModel(forceReload: Boolean) {
         if (!viewModel.hasLoaded() || forceReload) {
             val storedData = getStoredData() ?: return
+        isTwitchProfileMediaPage =
+            storedData.apiName.equals("Twitch", ignoreCase = true) ||
+            storedData.apiName.equals("Twitch Live Favorites API", ignoreCase = true) ||
+            storedData.url.contains("twitch", ignoreCase = true)
             viewModel.load(
                 activity,
                 storedData.url,
