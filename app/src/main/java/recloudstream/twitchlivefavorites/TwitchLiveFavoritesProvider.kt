@@ -27,7 +27,7 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     override var mainUrl = "https://twitch.tv"
     override var name = "Twitch"
     private val legacyProviderNames = setOf("twitch live favorites api")
-    private val starterFavoriteChannels = listOf("monstercat", "nasa")
+    private val starterFavoriteChannels = listOf("zfg247", "monstercat", "nasa")
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "uni"
     override val hasMainPage = true

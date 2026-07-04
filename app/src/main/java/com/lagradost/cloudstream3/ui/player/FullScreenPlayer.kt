@@ -752,7 +752,25 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
         updateLockUI()
     }
 
-    private fun updateUIVisibility() {
+    private fun updateTwitchJumpToLiveButtonLabel() {
+        playerBinding?.apply {
+            if (player.isTwitchLiveStream()) {
+                val delaySuffix = player.getLiveDelayMs()
+                    ?.takeIf { it >= 0L }
+                    ?.let { " (${it / 1000}s)" }
+                    .orEmpty()
+
+                playerRestartText.text = "Jump Live$delaySuffix"
+                playerRestart.contentDescription = "Jump to Live$delaySuffix"
+            } else {
+                val restartText = getString(R.string.restart)
+                playerRestartText.text = restartText
+                playerRestart.contentDescription = restartText
+            }
+        }
+    }
+
+private fun updateUIVisibility() {
         val isGone = isLocked || !isShowing
         var togglePlayerTitleGone = isGone
         context?.let {
@@ -849,6 +867,7 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
 
     override fun playerStatusChanged() {
         super.playerStatusChanged()
+        updateTwitchJumpToLiveButtonLabel()
         scheduleMetadataVisibility()
     }
 
@@ -931,6 +950,10 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
 
             KeyEvent.KEYCODE_E, KeyEvent.KEYCODE_NUMPAD_3, KeyEvent.KEYCODE_3 -> {
                 showSpeedDialog()
+            }
+
+            KeyEvent.KEYCODE_J -> {
+                player.handleEvent(CSPlayerEvent.JumpToLive)
             }
 
             KeyEvent.KEYCODE_R, KeyEvent.KEYCODE_NUMPAD_0, KeyEvent.KEYCODE_0 -> {
@@ -1239,6 +1262,7 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
             playerRestart.setOnClickListener {
                 autoHide()
                 player.handleEvent(CSPlayerEvent.Restart)
+                updateTwitchJumpToLiveButtonLabel()
             }
 
             playerLock.setOnClickListener {

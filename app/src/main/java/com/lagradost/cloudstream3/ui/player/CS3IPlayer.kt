@@ -123,6 +123,15 @@ import kotlin.uuid.toJavaUuid
 const val TAG = "CS3ExoPlayer"
 const val PREFERRED_AUDIO_LANGUAGE_KEY = "preferred_audio_language"
 
+private const val TWITCH_LIVE_TARGET_OFFSET_MS = 2_000L
+private const val TWITCH_LIVE_MIN_OFFSET_MS = 1_000L
+private const val TWITCH_LIVE_MAX_OFFSET_MS = 8_000L
+private const val TWITCH_MIN_BUFFER_MS = 2_500
+private const val TWITCH_MAX_BUFFER_MS = 10_000
+private const val TWITCH_BUFFER_FOR_PLAYBACK_MS = 500
+private const val TWITCH_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 1_000
+private const val TWITCH_LIVE_DELAY_LOG_INTERVAL_MS = 5_000L
+
 /** toleranceBeforeUs – The maximum time that the actual position seeked to may precede the
  * requested seek position, in microseconds. Must be non-negative. */
 const val toleranceBeforeUs = 300_000L
@@ -164,6 +173,8 @@ class CS3IPlayer : IPlayer {
     private var lastMuteVolume: Float = 1.0f
 
     private var currentLink: ExtractorLink? = null
+    private var currentIsTwitchStream = false
+    private var lastTwitchLiveDelayLogMs = 0L
     private var currentDownloadedFile: ExtractorUri? = null
     private var hasUsedFirstRender = false
 
@@ -657,7 +668,80 @@ class CS3IPlayer : IPlayer {
         playBackSpeed = speed
     }
 
-    companion object {
+    override fun isTwitchLiveStream(): Boolean = currentIsTwitchStream
+
+    override fun getLiveDelayMs(): Long? {
+        val liveOffset = exoPlayer?.currentLiveOffset ?: return null
+        return if (liveOffset == TIME_UNSET) null else liveOffset
+    }
+
+    private fun ExtractorLink.isTwitchLowLatencyCandidate(): Boolean {
+        val markerText = listOf(
+            source,
+            name,
+            url,
+            referer,
+            headers["User-Agent"].orEmpty()
+        ).joinToString(" ").lowercase()
+
+        return markerText.contains("twitch") ||
+            markerText.contains("ttvnw.net") ||
+            markerText.contains("pwn.sh") ||
+            markerText.contains("streamapi.py")
+    }
+
+    private fun maybeLogTwitchLiveDelay(reason: String) {
+        if (!currentIsTwitchStream) return
+
+        val player = exoPlayer ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastTwitchLiveDelayLogMs < TWITCH_LIVE_DELAY_LOG_INTERVAL_MS) return
+        lastTwitchLiveDelayLogMs = now
+
+        val liveOffset = player.currentLiveOffset
+        val liveDelayText = if (liveOffset == TIME_UNSET) {
+            "unknown"
+        } else {
+            "${liveOffset}ms (${liveOffset / 1000.0}s)"
+        }
+
+        val bufferedAheadMs = player.bufferedPosition - player.currentPosition
+        Log.i(
+            TAG,
+            "Twitch live delay [$reason]: $liveDelayText, " +
+                "bufferedAhead=${bufferedAheadMs}ms, " +
+                "target=${TWITCH_LIVE_TARGET_OFFSET_MS}ms"
+        )
+    }
+
+    private fun ExoPlayer.jumpToLive(source: PlayerEventSource) {
+        val liveOffset = currentLiveOffset
+        val liveDelayText = if (liveOffset == TIME_UNSET) {
+            "unknown"
+        } else {
+            "${liveOffset}ms (${liveOffset / 1000.0}s)"
+        }
+
+        Log.i(
+            TAG,
+            "Jump to Live requested. " +
+                "isTwitch=$currentIsTwitchStream, " +
+                "isLive=$isCurrentMediaItemLive, " +
+                "isDynamic=$isCurrentMediaItemDynamic, " +
+                "liveDelay=$liveDelayText"
+        )
+
+        if (isCurrentMediaItemLive || isCurrentMediaItemDynamic) {
+            seekToDefaultPosition()
+            play()
+            maybeLogTwitchLiveDelay("jump-to-live")
+            updatedTime(source = source)
+        } else {
+            Log.i(TAG, "Jump to Live ignored because current media is not live.")
+        }
+    }
+
+companion object {
         private const val CRONET_TIMEOUT_MS = 15_000
 
         /**
@@ -868,6 +952,21 @@ class CS3IPlayer : IPlayer {
             return getMediaItemBuilder(mimeType).setUri(url).build()
         }
 
+        private fun getTwitchLowLatencyMediaItem(mimeType: String, url: String): MediaItem {
+            return getMediaItemBuilder(mimeType)
+                .setUri(url)
+                .setLiveConfiguration(
+                    MediaItem.LiveConfiguration.Builder()
+                        .setTargetOffsetMs(TWITCH_LIVE_TARGET_OFFSET_MS)
+                        .setMinOffsetMs(TWITCH_LIVE_MIN_OFFSET_MS)
+                        .setMaxOffsetMs(TWITCH_LIVE_MAX_OFFSET_MS)
+                        .setMinPlaybackSpeed(0.97f)
+                        .setMaxPlaybackSpeed(1.06f)
+                        .build()
+                )
+                .build()
+        }
+
         private fun getTrackSelector(context: Context, maxVideoHeight: Int?): TrackSelector {
             val trackSelector = DefaultTrackSelector(context)
             trackSelector.parameters = trackSelector.buildUponParameters()
@@ -898,6 +997,7 @@ class CS3IPlayer : IPlayer {
         source: PlayerEventSource = PlayerEventSource.Player
     ) {
         val position = writePosition ?: exoPlayer?.currentPosition
+        maybeLogTwitchLiveDelay("position")
 
         getCurrentTimestamp(position)?.let { timestamp ->
             event(TimestampInvokedEvent(timestamp, source))
@@ -992,7 +1092,13 @@ class CS3IPlayer : IPlayer {
 
                     CSPlayerEvent.SeekBack -> seekTime(-seekActionTime, source)
 
-                    CSPlayerEvent.Restart -> seekTo(0, source)
+                    CSPlayerEvent.Restart -> {
+                        if (currentIsTwitchStream && (isCurrentMediaItemLive || isCurrentMediaItemDynamic)) {
+                            jumpToLive(source)
+                        } else {
+                            seekTo(0, source)
+                        }
+                    }
 
                     CSPlayerEvent.NextEpisode -> event(
                         EpisodeSeekEvent(
@@ -1020,6 +1126,7 @@ class CS3IPlayer : IPlayer {
                         }
                     }
 
+                    CSPlayerEvent.JumpToLive -> jumpToLive(source)
                     CSPlayerEvent.PlayAsAudio -> {
                         isAudioOnlyBackground = true
                         activity?.moveTaskToBack(false)
@@ -1070,6 +1177,7 @@ class CS3IPlayer : IPlayer {
         subtitleOffset: Long,
         cacheSize: Long,
         videoBufferMs: Long,
+        isTwitchLowLatency: Boolean = false,
         onlineSource: HttpDataSource.Factory? = null,
         playWhenReady: Boolean = true,
         trackSelector: TrackSelector? = null,
@@ -1085,8 +1193,8 @@ class CS3IPlayer : IPlayer {
             ExoPlayer.Builder(context)
                 .setMediaSourceFactory(
                     DefaultMediaSourceFactory(context).setLiveTargetOffsetMs(
-                        PREFERRED_LIVE_OFFSET
-                    )
+                    if (isTwitchLowLatency) TWITCH_LIVE_TARGET_OFFSET_MS else PREFERRED_LIVE_OFFSET
+                )
                 )
                 .setLivePlaybackSpeedControl(
                     DefaultLivePlaybackSpeedControl.Builder()
@@ -1237,15 +1345,17 @@ class CS3IPlayer : IPlayer {
                             true
                         )
                         .setBufferDurationsMs(
-                            DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
-                            if (videoBufferMs <= 0) {
-                                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS
-                            } else {
-                                videoBufferMs.toInt()
-                            },
-                            DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
-                            DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
-                        ).build()
+                    if (isTwitchLowLatency) TWITCH_MIN_BUFFER_MS else DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                    if (isTwitchLowLatency) {
+                        TWITCH_MAX_BUFFER_MS
+                    } else if (videoBufferMs <= 0) {
+                        DefaultLoadControl.DEFAULT_MAX_BUFFER_MS
+                    } else {
+                        videoBufferMs.toInt()
+                    },
+                    if (isTwitchLowLatency) TWITCH_BUFFER_FOR_PLAYBACK_MS else DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                    if (isTwitchLowLatency) TWITCH_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS else DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
+                ).build()
                 )
 
         // Because "Java rules" the media3 team hates to do open classes so we have to copy paste the entire thing to add a custom extractor
@@ -1382,6 +1492,7 @@ class CS3IPlayer : IPlayer {
         subSources: List<SingleSampleMediaSource>,
         audioSources: List<MediaSource> = emptyList(),
         onlineSource: HttpDataSource.Factory? = null,
+        isTwitchLowLatency: Boolean = currentIsTwitchStream,
     ) {
         Log.i(TAG, "loadExo")
         val settingsManager = PreferenceManager.getDefaultSharedPreferences(context)
@@ -1409,6 +1520,7 @@ class CS3IPlayer : IPlayer {
                 maxVideoHeight = maxVideoHeight,
                 audioSources = audioSources,
                 onlineSource = onlineSource,
+                isTwitchLowLatency = isTwitchLowLatency,
             )
 
             event(PlayerAttachedEvent(exoPlayer))
@@ -1632,6 +1744,7 @@ class CS3IPlayer : IPlayer {
                 override fun onRenderedFirstFrame() {
                     super.onRenderedFirstFrame()
                     onRenderFirst()
+                    maybeLogTwitchLiveDelay("first-frame")
                     updatedTime(source = PlayerEventSource.Player)
                 }
             }.also { playerListener = it })
@@ -1889,6 +2002,10 @@ class CS3IPlayer : IPlayer {
             }
 
             currentLink = link
+            currentIsTwitchStream = link.isTwitchLowLatencyCandidate()
+            if (currentIsTwitchStream) {
+                Log.i(TAG, "Twitch low-latency mode enabled for source=${link.source}, name=${link.name}, url=${link.url}")
+            }
 
             if (ignoreSSL) {
                 // Disables ssl check
@@ -1902,16 +2019,24 @@ class CS3IPlayer : IPlayer {
             }
 
 
+            fun mediaItemForUrl(url: String): MediaItem {
+                return if (currentIsTwitchStream) {
+                    getTwitchLowLatencyMediaItem(mime, url)
+                } else {
+                    getMediaItem(mime, url)
+                }
+            }
+
             val mediaItems = when (link) {
                 is ExtractorLinkPlayList -> link.playlist.map {
-                    MediaItemSlice(getMediaItem(mime, it.url), it.durationUs)
+                    MediaItemSlice(mediaItemForUrl(it.url), it.durationUs)
                 }
 
                 is DrmExtractorLink -> {
                     listOf(
                         // Single sliced list with unset length
                         MediaItemSlice(
-                            getMediaItem(mime, link.url), Long.MIN_VALUE,
+                            mediaItemForUrl(link.url), Long.MIN_VALUE,
                             drm = DrmMetadata(
                                 kid = link.kid,
                                 key = link.key,
@@ -1926,7 +2051,7 @@ class CS3IPlayer : IPlayer {
 
                 else -> listOf(
                     // Single sliced list with unset length
-                    MediaItemSlice(getMediaItem(mime, link.url), Long.MIN_VALUE)
+                    MediaItemSlice(mediaItemForUrl(link.url), Long.MIN_VALUE)
                 )
             }
 

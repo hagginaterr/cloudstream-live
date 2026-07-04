@@ -21,7 +21,7 @@ enum class CSPlayerEvent(val value: Int) {
     PlayPauseToggle(7),
     ToggleMute(8),
     Restart(9),
-    PlayAsAudio(10),
+    PlayAsAudio(10), JumpToLive(11),
 }
 
 enum class CSPlayerLoading {
@@ -209,6 +209,8 @@ const val EXTRA_CONTROL_TYPE = "control_type"
 interface IPlayer {
     fun getPlaybackSpeed(): Float
     fun setPlaybackSpeed(speed: Float)
+    fun isTwitchLiveStream(): Boolean = false
+    fun getLiveDelayMs(): Long? = null
 
     fun getIsPlaying(): Boolean
     /** Current player duration in milliseconds */
