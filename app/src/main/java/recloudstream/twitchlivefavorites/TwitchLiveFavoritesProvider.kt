@@ -201,6 +201,27 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         val type: String = "",
         val duration: String = "",
     )
+    private data class TwitchClipsResponse(
+        val data: List<TwitchClip> = emptyList(),
+    )
+
+    private data class TwitchClip(
+        val id: String = "",
+        val url: String = "",
+        val embed_url: String = "",
+        val broadcaster_id: String = "",
+        val broadcaster_name: String = "",
+        val creator_id: String = "",
+        val creator_name: String = "",
+        val video_id: String = "",
+        val game_id: String = "",
+        val language: String = "",
+        val title: String = "",
+        val view_count: Int = 0,
+        val created_at: String = "",
+        val thumbnail_url: String = "",
+        val duration: Double = 0.0,
+    )
 private data class TwitchSearchResponse(
         val data: List<TwitchSearchChannel> = emptyList(),
     )
@@ -1363,7 +1384,11 @@ private fun formatViewerCount(count: Int?): String? {
         return when (action?.first) {
             "add", "remove" -> statusResponse("built-in-favorites")
             "status" -> statusResponse(action.second)
-            else -> if (isTwitchVideoUrl(url)) videoLoadResponse(url) else channelLoadResponse(url)
+            else -> when {
+                twitchProfileMediaMarker(url) != null && !isTwitchVideoUrl(url) -> twitchProfileMediaLoadResponse(url)
+                isTwitchVideoUrl(url) -> videoLoadResponse(url)
+                else -> channelLoadResponse(url)
+            }
         }
     }
 
@@ -1450,7 +1475,7 @@ private fun formatViewerCount(count: Int?): String? {
         val videoUrl = twitchVideoUrl(videoId)
         val title = cleanTwitchText(video?.title) ?: "Past broadcast"
         val poster = cacheBustImage(resizeTwitchImage(video?.thumbnail_url, 640, 360), nowMs())
-        val profileRecommendations = fetchTwitchProfileRecommendations(info.channel)
+        val profileRecommendations = fetchTwitchProfileRecommendations(video?.user_login.orEmpty())
         val tagList = listOfNotNull(
             "Past Broadcast",
             video?.duration?.ifBlank { null },
