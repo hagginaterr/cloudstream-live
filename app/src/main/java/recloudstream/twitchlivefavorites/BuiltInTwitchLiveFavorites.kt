@@ -1,4 +1,4 @@
-package recloudstream.twitchlivefavorites
+﻿package recloudstream.twitchlivefavorites
 
 import com.lagradost.cloudstream3.APIHolder
 
