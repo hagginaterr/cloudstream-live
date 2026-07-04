@@ -4,12 +4,15 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
       - master
-      - twitch-low-latency-v1
+      - main
 
 permissions:
   contents: read
+
+concurrency:
+  group: cloudstream-live-apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -24,7 +27,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: "17"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -32,12 +35,17 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
-      - name: Build APK
+      - name: Build stable debug APK
         run: ./gradlew :app:assembleStableDebug --no-daemon --stacktrace
 
-      - name: Upload APK
+      - name: List APK outputs
+        if: always()
+        run: find app/build/outputs/apk -type f -name "*.apk" -print || true
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: CloudStream-Live-stable-debug
           path: app/build/outputs/apk/stable/debug/*.apk
-          retention-days: 7
+          if-no-files-found: error
+          retention-days: 14
