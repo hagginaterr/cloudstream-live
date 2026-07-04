@@ -25,6 +25,7 @@ import androidx.core.widget.NestedScrollView
 import androidx.core.widget.doOnTextChanged
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.discord.panels.OverlappingPanelsLayout
 import com.discord.panels.PanelState
 import com.discord.panels.PanelsChildGestureRegionObserver
@@ -702,11 +703,15 @@ open class ResultFragmentPhone : BaseFragment<FragmentResultSwipeBinding>(
 
         recommendationBinding?.apply {
             resultRecommendationsList.apply {
+                // One horizontally scrollable row for recommended videos / past broadcasts.
+                // Keep spanCount at 3 so the horizontal cards stay compact on phone.
                 spanCount = 3
+                layoutManager = LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
                 setRecycledViewPool(SearchAdapter.sharedPool)
                 adapter =
                     SearchAdapter(
                         this,
+                        isHorizontal = true,
                     ) { callback ->
                         SearchHelper.handleSearchClickCallback(callback)
                     }

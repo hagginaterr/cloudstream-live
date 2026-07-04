@@ -84,6 +84,15 @@ class SearchAdapter(
             is SearchResultGridBinding -> binding.imageView
             else -> null
         }
+        if (isHorizontal) {
+            holder.view.root.layoutParams = (holder.view.root.layoutParams ?: ViewGroup.LayoutParams(
+                resView.itemWidth,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )).apply {
+                width = resView.itemWidth
+            }
+        }
+
 
         if (imageView != null) {
             val params = FrameLayout.LayoutParams(
