@@ -72,6 +72,7 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
 ) {
 
     private lateinit var viewModel: ResultViewModel2
+    private var hasAutoPlayedTwitchDirectPlay = false
 
     override fun onDestroyView() {
         updateUIEvent -= ::updateUI
@@ -279,8 +280,6 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
             )
         // ===== ===== =====
         var comingSoon = false
-        var hasAutoPlayedTwitchDirectPlay = false
-
         binding.apply {
             // Twitch TV profile cleanup: streamer pages should show Play, Favorite, Search.
             if (isTwitchResultPage) {
