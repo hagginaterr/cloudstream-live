@@ -158,7 +158,13 @@ object SearchResultBuilder {
         }
         cardText?.isVisible = if (isTwitchVodCard) true else showTitle
 
-        if (isTwitchVodCard) { textFlag?.apply { text = twitchVodAge.orEmpty() isVisible = !twitchVodAge.isNullOrBlank() } rating?.apply {
+        if (isTwitchVodCard) {
+            textFlag?.apply {
+                text = twitchVodAge.orEmpty()
+                isVisible = !twitchVodAge.isNullOrBlank()
+            }
+
+            rating?.apply {
                 text = twitchVodViews.orEmpty()
                 isVisible = !twitchVodViews.isNullOrBlank()
             }
