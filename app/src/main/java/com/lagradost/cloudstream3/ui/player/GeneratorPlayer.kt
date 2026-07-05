@@ -1205,8 +1205,8 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     private fun twitchPlayerChatOverlayHeight(host: View): Int {
-        val maxHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 150 else 130)
-        val minHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 105 else 95)
+        val maxHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 180 else 156)
+        val minHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 126 else 114)
         val scaledHeight = if (host.height > 0) {
             (host.height * 0.22f).toInt().coerceAtLeast(minHeight)
         } else {

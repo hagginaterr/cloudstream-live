@@ -1018,11 +1018,10 @@
                                                         android:background="@drawable/twitch_player_profile_button_bg"
                                                         android:clickable="true"
                                                         android:contentDescription="Open streamer profile"
-                                                        android:focusable="true" android:nextFocusLeft="@id/twitch_player_streamer_chip" android:nextFocusRight="@id/twitch_player_chat_button" android:nextFocusUp="@id/exo_progress" android:nextFocusDown="@id/twitch_player_streamer_chip"
-                                                        android:padding="0dp"
-                                                        android:scaleType="centerCrop"
+                                                        android:focusable="true" android:nextFocusLeft="@id/twitch_player_streamer_chip" android:nextFocusRight="@id/twitch_player_chat_button" android:nextFocusUp="@id/exo_progress" android:nextFocusDown="@id/twitch_player_streamer_chip" android:padding="0dp" android:scaleType="centerCrop"
                                                         android:src="@drawable/twitch_player_streamer_avatar_placeholder" android:visibility="gone"
-                                                        android:layout_gravity="center_vertical" />
+                                                        android:layout_gravity="center_vertical"
+                                                        android:adjustViewBounds="false" />
 
         <Space
             android:layout_width="0dp"
@@ -1166,7 +1165,7 @@
                 </HorizontalScrollView>
             </LinearLayout>
     <LinearLayout
-        android:id="@+id/twitch_player_chat_overlay" android:layout_width="260dp" android:layout_height="150dp"
+        android:id="@+id/twitch_player_chat_overlay" android:layout_width="260dp" android:layout_height="180dp"
         android:background="@drawable/twitch_player_chat_overlay_bg"
         android:clickable="true"
         android:descendantFocusability="blocksDescendants"
