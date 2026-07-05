@@ -1057,6 +1057,7 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     private var twitchPlayerChatVisible = false
     private var twitchPlayerChatCorner = TwitchPlayerChatCorner.TOP_END
+    private val twitchPlayerChatOverlayHostTag = "twitch_player_chat_overlay_host"
 
     private fun cleanTwitchPlayerChatLabel(value: String?): String {
         return value
@@ -1125,121 +1126,193 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
     }
 
-    private fun setTwitchPlayerChatOverlaySize(overlay: View) {
-        val parentView = overlay.parent as? View
-        val parentWidth = parentView?.width ?: 0
-        val parentHeight = parentView?.height ?: 0
+    private fun twitchPlayerChatOverlayRoot(): android.view.ViewGroup? {
+        val binding = playerBinding ?: return null
+        val holder = binding.playerHolder as? android.view.ViewGroup
+        val root = binding.root as? android.view.ViewGroup
+        val target = holder ?: root
 
-        val maxWidth = overlay.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
-        val maxHeight = overlay.twitchPlayerChatDp(if (isLayout(TV)) 150 else 130)
-        val minWidth = overlay.twitchPlayerChatDp(if (isLayout(TV)) 180 else 160)
-        val minHeight = overlay.twitchPlayerChatDp(if (isLayout(TV)) 105 else 95)
+        target?.clipChildren = false
+        target?.clipToPadding = false
 
-        val scaledWidth = if (parentWidth > 0) {
-            minOf(maxWidth, (parentWidth * 0.30f).toInt().coerceAtLeast(minWidth))
+        return target
+    }
+
+    private fun twitchPlayerChatHostLayoutParams(
+        parent: android.view.ViewGroup,
+    ): android.view.ViewGroup.LayoutParams {
+        val match = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+
+        return when (parent) {
+            is androidx.constraintlayout.widget.ConstraintLayout -> {
+                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(0, 0).apply {
+                    val parentId =
+                        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+                    startToStart = parentId
+                    endToEnd = parentId
+                    topToTop = parentId
+                    bottomToBottom = parentId
+                }
+            }
+            is android.widget.FrameLayout -> {
+                android.widget.FrameLayout.LayoutParams(match, match)
+            }
+            else -> {
+                android.view.ViewGroup.LayoutParams(match, match)
+            }
+        }
+    }
+
+    private fun ensureTwitchPlayerChatOverlayHost(): android.widget.FrameLayout? {
+        val root = twitchPlayerChatOverlayRoot() ?: return null
+
+        for (index in 0 until root.childCount) {
+            val child = root.getChildAt(index)
+            if (
+                child is android.widget.FrameLayout &&
+                child.tag == twitchPlayerChatOverlayHostTag
+            ) {
+                child.bringToFront()
+                return child
+            }
+        }
+
+        val host = android.widget.FrameLayout(root.context).apply {
+            tag = twitchPlayerChatOverlayHostTag
+            isClickable = false
+            isFocusable = false
+            clipChildren = false
+            clipToPadding = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+        root.addView(host, twitchPlayerChatHostLayoutParams(root))
+        host.bringToFront()
+
+        return host
+    }
+
+    private fun twitchPlayerChatOverlayWidth(host: View): Int {
+        val maxWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
+        val minWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 180 else 160)
+        val scaledWidth = if (host.width > 0) {
+            (host.width * 0.30f).toInt().coerceAtLeast(minWidth)
         } else {
             maxWidth
         }
 
-        val scaledHeight = if (parentHeight > 0) {
-            minOf(maxHeight, (parentHeight * 0.22f).toInt().coerceAtLeast(minHeight))
+        return minOf(maxWidth, scaledWidth)
+    }
+
+    private fun twitchPlayerChatOverlayHeight(host: View): Int {
+        val maxHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 150 else 130)
+        val minHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 105 else 95)
+        val scaledHeight = if (host.height > 0) {
+            (host.height * 0.22f).toInt().coerceAtLeast(minHeight)
         } else {
             maxHeight
         }
 
-        val params = overlay.layoutParams ?: return
-        params.width = scaledWidth
-        params.height = scaledHeight
-        overlay.layoutParams = params
+        return minOf(maxHeight, scaledHeight)
     }
 
-    private fun positionTwitchPlayerChatOverlayNow(overlay: View) {
-        val parentView = overlay.parent as? View ?: return
-        val parentWidth = parentView.width
-        val parentHeight = parentView.height
-
-        if (parentWidth <= 0 || parentHeight <= 0) return
-
-        val overlayWidth = overlay.width.takeIf { it > 0 }
-            ?: overlay.layoutParams?.width?.takeIf { it > 0 }
-            ?: overlay.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
-
-        val overlayHeight = overlay.height.takeIf { it > 0 }
-            ?: overlay.layoutParams?.height?.takeIf { it > 0 }
-            ?: overlay.twitchPlayerChatDp(if (isLayout(TV)) 150 else 130)
-
-        val targetLeft = if (twitchPlayerChatCorner.isStart) {
-            0
+    private fun twitchPlayerChatOverlayGravity(): Int {
+        val horizontal = if (twitchPlayerChatCorner.isStart) {
+            android.view.Gravity.START
         } else {
-            (parentWidth - overlayWidth).coerceAtLeast(0)
+            android.view.Gravity.END
         }
 
-        val targetTop = if (twitchPlayerChatCorner.isTop) {
-            0
+        val vertical = if (twitchPlayerChatCorner.isTop) {
+            android.view.Gravity.TOP
         } else {
-            (parentHeight - overlayHeight).coerceAtLeast(0)
+            android.view.Gravity.BOTTOM
         }
 
-        overlay.translationX = targetLeft.toFloat() - overlay.left.toFloat()
-        overlay.translationY = targetTop.toFloat() - overlay.top.toFloat()
+        return horizontal or vertical
+    }
+
+    private fun attachTwitchPlayerChatOverlayToHost(
+        overlay: View,
+    ): android.widget.FrameLayout? {
+        val host = ensureTwitchPlayerChatOverlayHost() ?: return null
+
+        if (overlay.parent != host) {
+            (overlay.parent as? android.view.ViewGroup)?.removeView(overlay)
+            host.addView(
+                overlay,
+                android.widget.FrameLayout.LayoutParams(
+                    twitchPlayerChatOverlayWidth(host),
+                    twitchPlayerChatOverlayHeight(host),
+                    twitchPlayerChatOverlayGravity(),
+                ),
+            )
+        }
+
+        host.bringToFront()
         overlay.bringToFront()
+
+        return host
     }
 
     private fun applyTwitchPlayerChatCorner(overlay: View) {
-        setTwitchPlayerChatOverlaySize(overlay)
-
-        val params = overlay.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
-        val parent = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-        val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-
-        if (params != null) {
-            params.startToStart = unset
-            params.startToEnd = unset
-            params.endToStart = unset
-            params.endToEnd = unset
-            params.topToTop = unset
-            params.topToBottom = unset
-            params.bottomToTop = unset
-            params.bottomToBottom = unset
-
-            params.leftMargin = 0
-            params.rightMargin = 0
-            params.topMargin = 0
-            params.bottomMargin = 0
-            params.marginStart = 0
-            params.marginEnd = 0
-
-            if (twitchPlayerChatCorner.isStart) {
-                params.startToStart = parent
-            } else {
-                params.endToEnd = parent
-            }
-
-            if (twitchPlayerChatCorner.isTop) {
-                params.topToTop = parent
-            } else {
-                params.bottomToBottom = parent
-            }
-
-            params.horizontalBias = if (twitchPlayerChatCorner.isStart) 0f else 1f
-            params.verticalBias = if (twitchPlayerChatCorner.isTop) 0f else 1f
-            overlay.layoutParams = params
-        }
+        val host = attachTwitchPlayerChatOverlayToHost(overlay) ?: return
 
         overlay.translationX = 0f
         overlay.translationY = 0f
-        overlay.post {
-            setTwitchPlayerChatOverlaySize(overlay)
-            positionTwitchPlayerChatOverlayNow(overlay)
+
+        val width = twitchPlayerChatOverlayWidth(host)
+        val height = twitchPlayerChatOverlayHeight(host)
+        val gravity = twitchPlayerChatOverlayGravity()
+
+        val params = overlay.layoutParams as? android.widget.FrameLayout.LayoutParams
+            ?: android.widget.FrameLayout.LayoutParams(width, height, gravity)
+
+        params.width = width
+        params.height = height
+        params.gravity = gravity
+        params.leftMargin = 0
+        params.topMargin = 0
+        params.rightMargin = 0
+        params.bottomMargin = 0
+
+        overlay.layoutParams = params
+        host.bringToFront()
+        overlay.bringToFront()
+
+        host.post {
+            val refreshedParams = overlay.layoutParams as? android.widget.FrameLayout.LayoutParams
+                ?: return@post
+            refreshedParams.width = twitchPlayerChatOverlayWidth(host)
+            refreshedParams.height = twitchPlayerChatOverlayHeight(host)
+            refreshedParams.gravity = twitchPlayerChatOverlayGravity()
+            refreshedParams.leftMargin = 0
+            refreshedParams.topMargin = 0
+            refreshedParams.rightMargin = 0
+            refreshedParams.bottomMargin = 0
+            overlay.layoutParams = refreshedParams
+            overlay.translationX = 0f
+            overlay.translationY = 0f
+            host.bringToFront()
+            overlay.bringToFront()
         }
-        overlay.postDelayed({
-            setTwitchPlayerChatOverlaySize(overlay)
-            positionTwitchPlayerChatOverlayNow(overlay)
-        }, 80L)
-        overlay.postDelayed({
-            setTwitchPlayerChatOverlaySize(overlay)
-            positionTwitchPlayerChatOverlayNow(overlay)
-        }, 250L)
+
+        host.postDelayed({
+            val refreshedParams = overlay.layoutParams as? android.widget.FrameLayout.LayoutParams
+                ?: return@postDelayed
+            refreshedParams.width = twitchPlayerChatOverlayWidth(host)
+            refreshedParams.height = twitchPlayerChatOverlayHeight(host)
+            refreshedParams.gravity = twitchPlayerChatOverlayGravity()
+            refreshedParams.leftMargin = 0
+            refreshedParams.topMargin = 0
+            refreshedParams.rightMargin = 0
+            refreshedParams.bottomMargin = 0
+            overlay.layoutParams = refreshedParams
+            overlay.translationX = 0f
+            overlay.translationY = 0f
+            host.bringToFront()
+            overlay.bringToFront()
+        }, 120L)
     }
 
     private fun formatTwitchPlayerChatTarget(target: TwitchPlayerChatTarget): String {
@@ -1400,7 +1473,7 @@ class GeneratorPlayer : FullScreenPlayer() {
             }
         } else if (overlayView.isVisible) {
             overlayView.post {
-                positionTwitchPlayerChatOverlayNow(overlayView)
+                applyTwitchPlayerChatCorner(overlayView)
             }
         } else if (button.hasFocus()) {
             focusTwitchPlayerChatButton()
