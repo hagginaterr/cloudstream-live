@@ -808,7 +808,8 @@ private fun getSavedFavoriteChannels(): List<String> {
             twitchProfileMediaCardUrl(watchUrl, marker, displayTitle, age, null, views, durationText)
         }
 
-        val cardUrl = appendDirectPlayMarker(mediaCardUrl)
+        val metaCardUrl = appendTwitchStreamerMeta(mediaCardUrl, channelDisplayName, user_login, null)
+        val cardUrl = appendDirectPlayMarker(metaCardUrl)
         return newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(twitchProfileVideoThumbnail(thumbnail_url), nowMs())
             lang = listOfNotNull(channelDisplayName.ifBlank { null }, age, views)
@@ -864,7 +865,8 @@ private fun getSavedFavoriteChannels(): List<String> {
             "cs_clip_video",
             clipVideoUrl,
         )
-        val cardUrl = appendDirectPlayMarker(mediaCardUrl)
+        val metaCardUrl = appendTwitchStreamerMeta(mediaCardUrl, channelDisplayName, broadcaster_name, null)
+        val cardUrl = appendDirectPlayMarker(metaCardUrl)
 
         return newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(thumbnail_url.ifBlank { null }, nowMs())
@@ -1574,7 +1576,8 @@ private fun formatViewerCount(count: Int?): String? {
         directPlay: Boolean = false,
     ): LiveSearchResponse {
         val displayTitle = if (showOfflineLabel && !isLive) "$displayName (offline)" else displayName
-        val resultUrl = if (directPlay && isLive) directPlayUrl(channel) else channel
+        val baseResultUrl = if (directPlay && isLive) directPlayUrl(channel) else channel
+        val resultUrl = appendTwitchStreamerMeta(baseResultUrl, displayName, channel, image)
 
         return newLiveSearchResponse(displayTitle, resultUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(poster ?: image)
@@ -1594,6 +1597,23 @@ private fun formatViewerCount(count: Int?): String? {
         val separator = if (url.contains("?")) "&" else "?"
         return "$url$separator${encode(name)}=${encode(cleanValue)}"
     }
+    // BEGIN TwitchStreamerMetadataUrlPatch
+    private fun appendTwitchStreamerMeta(
+        url: String,
+        displayName: String?,
+        channel: String?,
+        avatarUrl: String?,
+    ): String {
+        var out = url
+        val cleanName = displayName?.ifBlank { null }
+        val cleanChannel = channel?.let { normalizeChannel(it) }?.ifBlank { null }
+        val cleanAvatar = avatarUrl?.ifBlank { null }
+        if (cleanName != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_name", cleanName)
+        if (cleanChannel != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_login", cleanChannel)
+        if (cleanAvatar != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_avatar", cleanAvatar)
+        return out
+    }
+    // END TwitchStreamerMetadataUrlPatch
     private fun twitchProfileMediaParam(url: String, key: String): String? {
         val query = url.substringAfter("?", "")
         if (query.isBlank() || query == url) return null
@@ -1688,7 +1708,8 @@ private fun twitchProfileVideoThumbnail(url: String): String? {
         } else {
             twitchProfileMediaCardUrl(watchUrl, marker, displayTitle, age, category, views, durationText)
         }
-        val cardUrl = appendDirectPlayMarker(mediaCardUrl)
+        val metaCardUrl = appendTwitchStreamerMeta(mediaCardUrl, user.display_name.ifBlank { user.login }, user.login, user.profile_image_url)
+        val cardUrl = appendDirectPlayMarker(metaCardUrl)
         newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(twitchProfileVideoThumbnail(video.thumbnail_url), nowMs())
             lang = listOfNotNull(age, category).joinToString(" - ").ifBlank { null }
@@ -1712,7 +1733,8 @@ private suspend fun fetchTwitchClipRecommendations(user: TwitchUser): List<LiveS
         val durationText = if (clip.duration > 0f) "${clip.duration.toInt()}s" else null
         val clipVideoUrl = twitchClipDirectVideoUrl(clip.thumbnail_url)
         val mediaCardUrl = appendTwitchProfileQueryParam(twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, null, views, durationText), "cs_clip_video", clipVideoUrl)
-        val cardUrl = appendDirectPlayMarker(mediaCardUrl)
+        val metaCardUrl = appendTwitchStreamerMeta(mediaCardUrl, user.display_name.ifBlank { user.login }, user.login, user.profile_image_url)
+        val cardUrl = appendDirectPlayMarker(metaCardUrl)
         newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(clip.thumbnail_url.ifBlank { null }, nowMs())
             lang = age
@@ -1767,7 +1789,8 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
 
 // END TWITCH_PROFILE_MEDIA_PROVIDER_ROWS
     private fun ChannelSummary.toChannelCard(): LiveSearchResponse {
-        return newLiveSearchResponse(displayName, channel, TvType.Live, fix = false) {
+        val resultUrl = appendTwitchStreamerMeta(channel, displayName, channel, image)
+        return newLiveSearchResponse(displayName, resultUrl, TvType.Live, fix = false) {
             posterUrl = image
             lang = language
         }
@@ -1881,7 +1904,12 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
         if (videoId.isBlank()) return statusResponse("channel-not-found")
 
         val video = fetchVideo(videoId)
-        val videoUrl = twitchVideoUrl(videoId)
+        val videoUrl = appendTwitchStreamerMeta(
+            twitchVideoUrl(videoId),
+            video?.user_name?.takeIf { it.isNotBlank() } ?: video?.user_login,
+            video?.user_login,
+            null,
+        )
         val title = cleanTwitchText(video?.title) ?: "Past broadcast"
         val poster = cacheBustImage(resizeTwitchImage(video?.thumbnail_url, 640, 360), nowMs())
         val profileRecommendations = fetchTwitchProfileRecommendations(video?.user_login.orEmpty())
@@ -1915,7 +1943,12 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             formatViewerCount(info.viewerCount),
             info.language,
         )
-        val streamUrl = twitchUrl(info.channel)
+        val streamUrl = appendTwitchStreamerMeta(
+            twitchUrl(info.channel),
+            info.displayName,
+            info.channel,
+            cacheBustImage(info.image, nowMs()),
+        )
 
         return newLiveStreamLoadResponse(info.displayName, streamUrl, streamUrl) {
             plot = info.profilePlot()
