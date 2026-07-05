@@ -6,6 +6,7 @@ import android.app.Dialog
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.os.Build
@@ -510,6 +511,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         uiReset()
         currentSelectedLink = link
         updateTwitchPlayerControls()
+        updateTwitchStreamerOverlay()
         //  setEpisodes(viewModel.getAllMeta() ?: emptyList())
         setPlayerDimen(null)
         setTitle()
@@ -1020,6 +1022,105 @@ class GeneratorPlayer : FullScreenPlayer() {
     private fun updateTwitchPlayerControls() {
         playerBinding?.playerResizeBtt?.isVisible = playerResizeEnabled && !isTwitchPlayback()
     }
+
+    // BEGIN TwitchPlayerStreamerOverlayPatch
+    private data class TwitchPlayerStreamerOverlay(
+        val displayName: String,
+        val avatarUrl: String?,
+        val profileUrl: String
+    )
+
+    private fun twitchChannelFromUrl(value: String?): String? {
+        val raw = value?.trim()?.ifBlank { null } ?: return null
+        val clean = raw.substringBefore("?").substringBefore("#").trim().trimEnd('/')
+        val lower = clean.lowercase()
+        if (!lower.contains("twitch.tv/")) return null
+
+        val afterHost = clean.substringAfter("twitch.tv/", "")
+        val firstPathPart = afterHost.substringBefore("/").trim().removePrefix("@")
+        val channel = firstPathPart.filter { it.isLetterOrDigit() || it == '_' }.lowercase()
+        return channel.ifBlank { null }
+    }
+
+    private fun twitchChannelFromName(value: String?): String? {
+        val channel = value
+            ?.trim()
+            ?.removePrefix("@")
+            ?.filter { it.isLetterOrDigit() || it == '_' }
+            ?.lowercase()
+            ?.ifBlank { null }
+        return channel
+    }
+
+    private fun currentTwitchStreamerOverlay(): TwitchPlayerStreamerOverlay? {
+        if (!isTwitchPlayback()) return null
+
+        val meta = currentMeta
+        val displayName = when (meta) {
+            is ResultEpisode -> meta.headerName.ifBlank { meta.name.orEmpty() }
+            is ExtractorUri -> meta.headerName?.takeIf { it.isNotBlank() }
+                ?: meta.displayName?.takeIf { it.isNotBlank() }
+                ?: meta.name.takeIf { it.isNotBlank() }
+            else -> null
+        }?.trim()?.ifBlank { null } ?: return null
+
+        val profileChannel = when (meta) {
+            is ResultEpisode -> twitchChannelFromUrl(meta.data)
+            is ExtractorUri -> twitchChannelFromUrl(meta.uri.toString())
+            else -> null
+        } ?: twitchChannelFromName(displayName) ?: return null
+
+        val avatarUrl = when (meta) {
+            is ResultEpisode -> meta.poster?.takeIf { it.isNotBlank() }
+            else -> null
+        }
+
+        return TwitchPlayerStreamerOverlay(
+            displayName = displayName,
+            avatarUrl = avatarUrl,
+            profileUrl = "https://www.twitch.tv/$profileChannel"
+        )
+    }
+
+    private fun updateTwitchStreamerOverlay() {
+        val overlay = currentTwitchStreamerOverlay()
+        val chip = playerBinding?.twitchPlayerStreamerChip ?: return
+        val name = playerBinding?.twitchPlayerStreamerName
+        val avatar = playerBinding?.twitchPlayerStreamerAvatar
+
+        chip.isVisible = overlay != null
+        if (overlay == null) {
+            name?.text = null
+            avatar?.setImageDrawable(null)
+            chip.contentDescription = null
+            chip.setOnClickListener(null)
+            return
+        }
+
+        name?.text = overlay.displayName
+        chip.contentDescription = "Open ${overlay.displayName} on Twitch"
+        chip.setOnClickListener {
+            runCatching {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(overlay.profileUrl)))
+            }.onFailure { error ->
+                logError(error)
+            }
+        }
+
+        val avatarUrl = overlay.avatarUrl
+        avatar?.setImageDrawable(null)
+        if (avatarUrl != null) {
+            ioSafe {
+                val bitmap = context?.getImageBitmapFromUrl(avatarUrl)
+                runOnMainThread {
+                    if (currentTwitchStreamerOverlay()?.avatarUrl == avatarUrl) {
+                        avatar?.setImageBitmap(bitmap)
+                    }
+                }
+            }
+        }
+    }
+    // END TwitchPlayerStreamerOverlayPatch
 
     private fun twitchQualityLabel(link: ExtractorLink?): String {
     if (link == null) return "Unknown"
@@ -2284,6 +2385,7 @@ override fun showMirrorsDialogue() {
         binding?.overlayLoadingSkipButton?.isVisible = false
         binding?.playerLoadingOverlay?.isVisible = true
         uiReset()
+        updateTwitchStreamerOverlay()
     }
 
     fun exitPlayer() {
