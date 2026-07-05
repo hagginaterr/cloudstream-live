@@ -5,6 +5,10 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
+import android.os.Build
+import android.graphics.Shader
+import android.graphics.RenderEffect
 import androidx.preference.PreferenceManager
 import androidx.viewbinding.ViewBinding
 import com.lagradost.cloudstream3.R
@@ -26,6 +30,50 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.UIHelper.isBottomLayout
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
 
+object TwitchHomeFocusedBackground {
+    private fun findPosterImage(view: View): ImageView? {
+        if (view is ImageView && view.drawable != null) return view
+
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                findPosterImage(view.getChildAt(index))?.let { return it }
+            }
+        }
+
+        return null
+    }
+
+    fun update(focusedView: View) {
+        if (!isLayout(TV or EMULATOR)) return
+
+        val source = findPosterImage(focusedView) ?: return
+        val sourceDrawable = source.drawable ?: return
+        val background = focusedView.rootView
+            ?.findViewById<ImageView>(R.id.home_twitch_focus_background)
+            ?: return
+
+        background.visibility = View.VISIBLE
+        background.alpha = 0.55f
+        background.scaleType = ImageView.ScaleType.CENTER_CROP
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            background.setRenderEffect(
+                RenderEffect.createBlurEffect(
+                    18f,
+                    18f,
+                    Shader.TileMode.CLAMP,
+                ),
+            )
+        }
+
+        background.setImageDrawable(
+            sourceDrawable.constantState
+                ?.newDrawable()
+                ?.mutate()
+                ?: sourceDrawable,
+        )
+    }
+}
 class HomeScrollViewHolderState(view: ViewBinding) : ViewHolderState<Boolean>(view) {
     // very shitty that we cant store the state when the view clears,
     // but this is because the focus clears before the view is removed
@@ -225,6 +273,18 @@ open class HomeChildItemAdapter(
             nextFocusDown
         )
 
+        // TwitchOfficialFocusedBackgroundPatch: update the TV home background from the focused thumbnail.
+        if (isLayout(TV or EMULATOR)) {
+            holder.itemView.setOnFocusChangeListener { view, hasFocus ->
+                if (hasFocus) {
+                    TwitchHomeFocusedBackground.update(view)
+                }
+            }
+
+            if (holder.itemView.hasFocus()) {
+                TwitchHomeFocusedBackground.update(holder.itemView)
+            }
+        }
         holder.itemView.tag = position
     }
 }

@@ -24,6 +24,7 @@ import androidx.core.view.isVisible
 import androidx.fragment.app.activityViewModels
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.PagerSnapHelper
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.chip.Chip
@@ -636,6 +637,11 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             )
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
+            // TwitchOfficialHomeSnapPatch: TV home rows behave like Twitch category pages.
+            // Each vertical move lands on one row page instead of a long mixed list.
+            if (isLayout(TV or EMULATOR) && homeMasterRecycler.onFlingListener == null) {
+                PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
+            }
 
             homeApiFab.isVisible = isLayout(PHONE)
 
