@@ -198,14 +198,12 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         binding?.root?.viewTreeObserver?.addOnGlobalFocusChangeListener { _, newFocus ->
             if (!isTwitchProfileMediaPage || newFocus == null) return@addOnGlobalFocusChangeListener
             updateTwitchProfileFocusedBackground(newFocus)
-            alignTwitchProfileFocusedRow(newFocus)
         }
 
         binding?.root?.post {
             val focused = activity?.currentFocus
             if (focused != null) {
                 updateTwitchProfileFocusedBackground(focused)
-                alignTwitchProfileFocusedRow(focused)
             }
         }
     }
@@ -297,6 +295,11 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     ) {
         if (row == null) return
         row.spanCount = spanCount
+    row.itemAnimator = null
+    row.isNestedScrollingEnabled = false
+    row.overScrollMode = View.OVER_SCROLL_NEVER
+    row.clipToPadding = false
+    row.setHasFixedSize(true)
         row.setLinearListLayout(
         isHorizontal = true,
         nextLeft = FOCUS_SELF,
@@ -329,6 +332,268 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         (row?.adapter as? SearchAdapter)?.submitList(items)
     }
     // END TWITCH_PROFILE_MEDIA_ROWS
+
+// BEGIN TwitchProfileLikeHomePatch
+private val twitchProfilePageTag = "twitch_profile_media_page"
+private val twitchProfileMoreIndicatorTag = "twitch_profile_more_indicator"
+
+private fun View.twitchProfileDp(value: Int): Int {
+    return (value * resources.displayMetrics.density + 0.5f).toInt()
+}
+
+private fun ViewGroup.removeTwitchProfileMoreIndicators() {
+    for (index in childCount - 1 downTo 0) {
+        if (getChildAt(index)?.tag == twitchProfileMoreIndicatorTag) {
+            removeViewAt(index)
+        }
+    }
+}
+
+private fun ViewGroup.addTwitchProfileMoreIndicator() {
+    removeTwitchProfileMoreIndicators()
+
+    val indicator = TextView(context).apply {
+        tag = twitchProfileMoreIndicatorTag
+        text = "\u2193"
+        setTextColor(android.graphics.Color.WHITE)
+        textSize = 22f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        minWidth = twitchProfileDp(46)
+        isFocusable = false
+        isClickable = false
+        background = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            context.getDrawable(R.drawable.tv_home_more_indicator_bg)
+        } else {
+            null
+        }
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            twitchProfileDp(32),
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = twitchProfileDp(6)
+            bottomMargin = twitchProfileDp(14)
+        }
+    }
+
+    addView(indicator)
+}
+
+private fun twitchProfileViewportHeight(): Int {
+    val scrollHeight = binding?.resultFinishLoading?.height?.takeIf { it > 0 }
+    val rootHeight = binding?.root?.height?.takeIf { it > 0 }
+    return scrollHeight ?: rootHeight ?: resources.displayMetrics.heightPixels
+}
+
+private fun configureTwitchProfileMediaRow(row: com.lagradost.cloudstream3.ui.AutofitRecyclerView?) {
+    row ?: return
+    row.itemAnimator = null
+    row.isNestedScrollingEnabled = false
+    row.overScrollMode = View.OVER_SCROLL_NEVER
+    row.clipToPadding = false
+    row.setHasFixedSize(true)
+}
+
+private fun LinearLayout.lockTwitchProfilePageHeight(targetHeight: Int) {
+    minimumHeight = targetHeight
+    orientation = LinearLayout.VERTICAL
+    gravity = Gravity.BOTTOM
+    clipToPadding = false
+
+    val params = layoutParams ?: LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        targetHeight,
+    )
+
+    var changed = false
+    if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
+        params.width = ViewGroup.LayoutParams.MATCH_PARENT
+        changed = true
+    }
+    if (params.height != targetHeight) {
+        params.height = targetHeight
+        changed = true
+    }
+
+    if (changed) {
+        layoutParams = params
+    }
+}
+
+private fun buildTwitchProfilePage(
+    holder: LinearLayout,
+    children: List<View>,
+): LinearLayout {
+    val page = LinearLayout(holder.context).apply {
+        setTag(R.id.result_recommendations_holder, twitchProfilePageTag)
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            twitchProfileViewportHeight(),
+        )
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.BOTTOM
+        clipToPadding = false
+        descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+    }
+
+    page.addView(
+        View(holder.context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            )
+        },
+    )
+
+    children.filterNotNull().forEach { child ->
+        (child.parent as? ViewGroup)?.removeView(child)
+        page.addView(child)
+    }
+
+    return page
+}
+
+private fun rebuildTwitchProfilePagesIfNeeded() {
+    val binding = binding ?: return
+    if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
+
+    val holder = binding.resultRecommendationsHolder as? LinearLayout ?: return
+    if (holder.getTag(R.id.result_recommendations_holder) == "twitch_profile_pages_ready") return
+
+    val pastEmpty = binding.root.findViewById<View>(R.id.result_past_broadcasts_empty)
+    val clipsEmpty = binding.root.findViewById<View>(R.id.result_clips_empty)
+    val highlightsEmpty = binding.root.findViewById<View>(R.id.result_highlights_empty)
+    val clipsRow = binding.root.findViewById<com.lagradost.cloudstream3.ui.AutofitRecyclerView>(R.id.result_clips_list)
+    val highlightsRow = binding.root.findViewById<com.lagradost.cloudstream3.ui.AutofitRecyclerView>(R.id.result_highlights_list)
+
+    val directChildren = (0 until holder.childCount).map { holder.getChildAt(it) }
+
+    fun childBefore(view: View?): View? {
+        val index = directChildren.indexOf(view)
+        return if (index > 0) directChildren[index - 1] else null
+    }
+
+    val pastHeader = binding.resultRecommendationsFilterSelection.parent as? View
+        ?: childBefore(pastEmpty)
+    val clipsHeader = childBefore(clipsEmpty)
+    val highlightsHeader = childBefore(highlightsEmpty)
+
+    if (
+        pastHeader == null ||
+        pastEmpty == null ||
+        clipsHeader == null ||
+        clipsEmpty == null ||
+        clipsRow == null ||
+        highlightsHeader == null ||
+        highlightsEmpty == null ||
+        highlightsRow == null
+    ) {
+        // Layout shape was not the expected Twitch profile layout. Still lock any direct row parents we can.
+        applyTwitchProfileMediaPagesLikeHome()
+        return
+    }
+
+    val pastPage = buildTwitchProfilePage(
+        holder,
+        listOf(
+            pastHeader,
+            pastEmpty,
+            binding.resultRecommendationsList,
+        ),
+    )
+
+    val clipsPage = buildTwitchProfilePage(
+        holder,
+        listOf(
+            clipsHeader,
+            clipsEmpty,
+            clipsRow,
+        ),
+    )
+
+    val highlightsPage = buildTwitchProfilePage(
+        holder,
+        listOf(
+            highlightsHeader,
+            highlightsEmpty,
+            highlightsRow,
+        ),
+    )
+
+    holder.removeAllViews()
+    holder.orientation = LinearLayout.VERTICAL
+    holder.clipToPadding = false
+    holder.addView(pastPage)
+    holder.addView(clipsPage)
+    holder.addView(highlightsPage)
+    holder.setTag(R.id.result_recommendations_holder, "twitch_profile_pages_ready")
+
+    applyTwitchProfileMediaPagesLikeHome()
+}
+
+private fun applyTwitchProfileMediaPagesLikeHome() {
+    val binding = binding ?: return
+    if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
+
+    val holder = binding.resultRecommendationsHolder as? LinearLayout ?: return
+    val targetHeight = twitchProfileViewportHeight()
+
+    val pastEmpty = binding.root.findViewById<View>(R.id.result_past_broadcasts_empty)
+    val clipsEmpty = binding.root.findViewById<View>(R.id.result_clips_empty)
+    val highlightsEmpty = binding.root.findViewById<View>(R.id.result_highlights_empty)
+    val clipsRow = binding.root.findViewById<com.lagradost.cloudstream3.ui.AutofitRecyclerView>(R.id.result_clips_list)
+    val highlightsRow = binding.root.findViewById<com.lagradost.cloudstream3.ui.AutofitRecyclerView>(R.id.result_highlights_list)
+
+    configureTwitchProfileMediaRow(binding.resultRecommendationsList)
+    configureTwitchProfileMediaRow(clipsRow)
+    configureTwitchProfileMediaRow(highlightsRow)
+
+    val pageVisibility = listOf(
+        binding.resultRecommendationsList.isVisible || pastEmpty?.isVisible == true,
+        clipsRow?.isVisible == true || clipsEmpty?.isVisible == true,
+        highlightsRow?.isVisible == true || highlightsEmpty?.isVisible == true,
+    )
+
+    val pages = mutableListOf<LinearLayout>()
+    for (index in 0 until holder.childCount) {
+        val child = holder.getChildAt(index)
+        if (
+            child is LinearLayout &&
+            child.getTag(R.id.result_recommendations_holder) == twitchProfilePageTag
+        ) {
+            pages.add(child)
+        }
+    }
+
+    pages.forEachIndexed { index, page ->
+        val shouldShow = pageVisibility.getOrNull(index) ?: true
+        page.isVisible = shouldShow
+        page.lockTwitchProfilePageHeight(targetHeight)
+        page.removeTwitchProfileMoreIndicators()
+
+        val hasVisiblePageBelow = pageVisibility.drop(index + 1).any { it }
+        if (shouldShow && hasVisiblePageBelow) {
+            page.addTwitchProfileMoreIndicator()
+        }
+    }
+
+    if (pages.isEmpty()) {
+        // Fallback for unexpected XML shape: lock direct parents of each media row.
+        listOf(
+            binding.resultRecommendationsList,
+            clipsRow,
+            highlightsRow,
+        ).forEach { row ->
+            val parent = row?.parent as? LinearLayout ?: return@forEach
+            parent.lockTwitchProfilePageHeight(targetHeight)
+        }
+    }
+}
+// END TwitchProfileLikeHomePatch
+
 
 // BEGIN TwitchStableProfileRowsPatch
 private val twitchProfileMoreIndicatorTag = "twitch_profile_more_indicator"
@@ -517,6 +782,7 @@ private fun applyTwitchProfileStablePages(
     private fun pageTwitchProfileMediaRow(focusedView: View?) {
     if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
     applyTwitchProfileFocusedBackdrop(focusedView)
+    applyTwitchProfileMediaPagesLikeHome()
 }
 private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?) {
         currentRecommendations = rec ?: emptyList()
@@ -560,10 +826,10 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
             ) { callback ->
                 if (callback.action == SEARCH_ACTION_FOCUSED) { pageTwitchProfileMediaRow(callback.view) } else { SearchHelper.handleSearchClickCallback(callback) }
             }
-
-                            // TwitchStableProfileRowsPatch: apply stable page sizing after profile media rows bind.
+                // TwitchProfileLikeHomePatch: rebuild profile media as bottom-locked pages after rows bind.
                 root.post {
-                    applyTwitchProfileStablePages(pastBroadcasts, clips, highlights)
+                    rebuildTwitchProfilePagesIfNeeded()
+                    applyTwitchProfileMediaPagesLikeHome()
                 }
 rec?.map { it.apiName }?.distinct()?.let { apiNames ->
                 resultRecommendationsFilterSelection.isVisible = apiNames.size > 1
