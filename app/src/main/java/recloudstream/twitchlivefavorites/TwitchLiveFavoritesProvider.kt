@@ -2051,6 +2051,81 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
 
         return links.ifEmpty { directFallback }
     }
+
+    // LiveNowUsesCurrentPastBroadcastPatch:
+    // When a live channel is opened, prefer the channel's current archive VOD.
+    // That gives the player a seekable DVR-style playlist so the user can rewind
+    // and then seek back near the live edge. If Twitch has not exposed the current
+    // archive yet, normal live HLS fallback is used below.
+    private fun twitchIsoToMillis(value: String?): Long? {
+        val clean = value?.ifBlank { null } ?: return null
+        return runCatching {
+            val parser = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+            parser.timeZone = java.util.TimeZone.getTimeZone("UTC")
+            parser.parse(clean)?.time
+        }.getOrNull()
+    }
+
+    private suspend fun fetchCurrentLivePastBroadcast(channelOrUrl: String): TwitchVideo? {
+        val normalized = normalizeChannel(channelOrUrl)
+        if (normalized.isBlank() || !hasTwitchCredentials()) return null
+
+        val stream = fetchStreams(listOf(normalized))?.get(normalized) ?: return null
+        val userId = stream.user_id.ifBlank {
+            cachedLiveFavorites.firstOrNull { it.channel == normalized }?.userId.orEmpty()
+        }.ifBlank {
+            fetchUsers(listOf(normalized))[normalized]?.id.orEmpty()
+        }
+
+        if (userId.isBlank()) return null
+
+        val response = twitchGet<TwitchVideosResponse>(
+            buildHelixUrl(
+                "videos",
+                extra = mapOf(
+                    "user_id" to userId,
+                    "first" to "5",
+                    "type" to "archive",
+                ),
+            ),
+        ) ?: return null
+
+        val streamStartedAtMs = twitchIsoToMillis(stream.started_at)
+        val now = nowMs()
+        val generousStartWindowMs = 2L * 60L * 60L * 1000L
+        val tightStartWindowMs = 35L * 60L * 1000L
+
+        return response.data
+            .asSequence()
+            .filter { video ->
+                video.id.any { it.isDigit() } &&
+                        (video.type.isBlank() || video.type.equals("archive", ignoreCase = true))
+            }
+            .sortedByDescending { video ->
+                twitchIsoToMillis(video.created_at)
+                    ?: twitchIsoToMillis(video.published_at)
+                    ?: 0L
+            }
+            .firstOrNull { video ->
+                val videoStartedAtMs = twitchIsoToMillis(video.created_at)
+                    ?: twitchIsoToMillis(video.published_at)
+                    ?: return@firstOrNull true
+
+                when {
+                    streamStartedAtMs == null -> true
+                    kotlin.math.abs(videoStartedAtMs - streamStartedAtMs) <= tightStartWindowMs -> true
+                    videoStartedAtMs <= now && videoStartedAtMs >= streamStartedAtMs - generousStartWindowMs -> true
+                    else -> false
+                }
+            }
+    }
+
+    private suspend fun fetchCurrentLivePastBroadcastLinks(channelOrUrl: String): List<ExtractorLink> {
+        val currentVod = fetchCurrentLivePastBroadcast(channelOrUrl) ?: return emptyList()
+        val videoId = currentVod.id.filter { it.isDigit() }
+        if (videoId.isBlank()) return emptyList()
+        return fetchTwitchVodLinks(videoId)
+    }
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -2082,6 +2157,12 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             val vodLinks = fetchTwitchVodLinks(extractVideoId(data))
             vodLinks.forEach { callback.invoke(it) }
             return vodLinks.isNotEmpty()
+        }
+
+                val liveDvrLinks = fetchCurrentLivePastBroadcastLinks(data)
+        if (liveDvrLinks.isNotEmpty()) {
+            liveDvrLinks.forEach { callback.invoke(it) }
+            return true
         }
 
         val response = runCatching {
