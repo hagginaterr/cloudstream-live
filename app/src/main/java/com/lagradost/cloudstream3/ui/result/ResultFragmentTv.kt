@@ -332,137 +332,6 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         (row?.adapter as? SearchAdapter)?.submitList(items)
     }
     // END TWITCH_PROFILE_MEDIA_ROWS
-
-// BEGIN TwitchProfileBottomSpacerPatch
-private val twitchProfileBottomSpacerTag = "twitch_profile_bottom_spacer"
-
-private fun twitchProfileViewportHeight(): Int {
-    return binding?.root?.height?.takeIf { it > 0 }
-        ?: resources.displayMetrics.heightPixels
-}
-
-private fun View.profileMeasuredHeight(): Int {
-    return height.takeIf { it > 0 }
-        ?: measuredHeight.takeIf { it > 0 }
-        ?: 0
-}
-
-private fun directChildBefore(container: ViewGroup, target: View?): View? {
-    target ?: return null
-    for (index in 0 until container.childCount) {
-        if (container.getChildAt(index) == target) {
-            return if (index > 0) container.getChildAt(index - 1) else null
-        }
-    }
-    return null
-}
-
-private fun findOrCreateProfileSpacer(container: LinearLayout, beforeView: View): View {
-    val existingIndex = (0 until container.childCount).firstOrNull { index ->
-        container.getChildAt(index)?.tag == twitchProfileBottomSpacerTag &&
-            index + 1 < container.childCount &&
-            container.getChildAt(index + 1) == beforeView
-    }
-
-    if (existingIndex != null) {
-        return container.getChildAt(existingIndex)
-    }
-
-    val beforeIndex = (0 until container.childCount).firstOrNull { index ->
-        container.getChildAt(index) == beforeView
-    } ?: return View(container.context)
-
-    val spacer = View(container.context).apply {
-        tag = twitchProfileBottomSpacerTag
-        isFocusable = false
-        isClickable = false
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
-        )
-    }
-
-    container.addView(spacer, beforeIndex)
-    return spacer
-}
-
-private fun updateProfileSectionSpacer(
-    container: LinearLayout,
-    beforeView: View?,
-    sectionViews: List<View?>,
-) {
-    beforeView ?: return
-
-    val visibleSectionViews = sectionViews.filter { it?.isVisible == true }
-    val sectionHeight = visibleSectionViews.sumOf { it?.profileMeasuredHeight() ?: 0 }
-    val viewportHeight = twitchProfileViewportHeight()
-    val targetSpacerHeight = (viewportHeight - sectionHeight).coerceAtLeast(0)
-
-    val spacer = findOrCreateProfileSpacer(container, beforeView)
-    val params = spacer.layoutParams ?: LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT,
-        targetSpacerHeight,
-    )
-
-    if (params.height != targetSpacerHeight) {
-        params.height = targetSpacerHeight
-        spacer.layoutParams = params
-    }
-}
-
-private fun configureTwitchProfileMediaRow(row: com.lagradost.cloudstream3.ui.AutofitRecyclerView?) {
-    row ?: return
-    row.itemAnimator = null
-    row.isNestedScrollingEnabled = false
-    row.overScrollMode = View.OVER_SCROLL_NEVER
-    row.clipToPadding = false
-    row.setHasFixedSize(true)
-}
-
-private fun applyTwitchProfileBottomSpacers() {
-    val binding = binding ?: return
-    if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
-
-    val container = binding.resultRecommendationsHolder as? LinearLayout ?: return
-    container.clipToPadding = false
-    container.orientation = LinearLayout.VERTICAL
-
-    val pastEmpty = binding.root.findViewById<View>(R.id.result_past_broadcasts_empty)
-    val clipsEmpty = binding.root.findViewById<View>(R.id.result_clips_empty)
-    val highlightsEmpty = binding.root.findViewById<View>(R.id.result_highlights_empty)
-    val clipsRow = binding.root.findViewById<com.lagradost.cloudstream3.ui.AutofitRecyclerView>(R.id.result_clips_list)
-    val highlightsRow = binding.root.findViewById<com.lagradost.cloudstream3.ui.AutofitRecyclerView>(R.id.result_highlights_list)
-
-    configureTwitchProfileMediaRow(binding.resultRecommendationsList)
-    configureTwitchProfileMediaRow(clipsRow)
-    configureTwitchProfileMediaRow(highlightsRow)
-
-    val pastHeader = binding.resultRecommendationsFilterSelection.parent as? View
-        ?: directChildBefore(container, pastEmpty)
-        ?: binding.resultRecommendationsList
-    val clipsHeader = directChildBefore(container, clipsEmpty) ?: clipsEmpty ?: clipsRow
-    val highlightsHeader = directChildBefore(container, highlightsEmpty) ?: highlightsEmpty ?: highlightsRow
-
-    updateProfileSectionSpacer(
-        container,
-        pastHeader,
-        listOf(pastHeader, pastEmpty, binding.resultRecommendationsList),
-    )
-
-    updateProfileSectionSpacer(
-        container,
-        clipsHeader,
-        listOf(clipsHeader, clipsEmpty, clipsRow),
-    )
-
-    updateProfileSectionSpacer(
-        container,
-        highlightsHeader,
-        listOf(highlightsHeader, highlightsEmpty, highlightsRow),
-    )
-}
-// END TwitchProfileBottomSpacerPatch
-
 // TwitchTrueProfileRowPagingPatch: make Twitch profile media categories act
     // like one-row TV pages and keep the focused card thumbnail as the backdrop.
     private fun findTwitchProfileImage(view: View?): ImageView? {
@@ -530,7 +399,6 @@ private fun applyTwitchProfileBottomSpacers() {
     private fun pageTwitchProfileMediaRow(focusedView: View?) {
     if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
     applyTwitchProfileFocusedBackdrop(focusedView)
-    applyTwitchProfileBottomSpacers()
 }
 private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?) {
         currentRecommendations = rec ?: emptyList()
@@ -574,10 +442,6 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
             ) { callback ->
                 if (callback.action == SEARCH_ACTION_FOCUSED) { pageTwitchProfileMediaRow(callback.view) } else { SearchHelper.handleSearchClickCallback(callback) }
             }
-                // TwitchProfileBottomSpacerPatch: bottom-lock profile media rows without resizing row views.
-                root.post {
-                    applyTwitchProfileBottomSpacers()
-                }
 rec?.map { it.apiName }?.distinct()?.let { apiNames ->
                 resultRecommendationsFilterSelection.isVisible = apiNames.size > 1
                 resultRecommendationsFilterSelection.update(apiNames.map { txt(it) to it })

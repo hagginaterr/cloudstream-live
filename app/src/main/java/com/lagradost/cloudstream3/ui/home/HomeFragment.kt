@@ -637,29 +637,14 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             )
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
-                // TwitchBottomLockedHomeRowsPatch: one snap helper; decoration creates page height without row resizing.
-                if (isLayout(TV or EMULATOR) && homeMasterRecycler.onFlingListener == null) {
-                    PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
-                }
-                // TwitchBottomLockedHomeRowsPatch: decorated pages; rows stay wrap_content for recycle stability.
+                // TwitchNormalRowsPatch: stable normal rows; no snap helper and no runtime row-page resizing.
                 homeMasterRecycler.itemAnimator = null
                 homeMasterRecycler.clipToPadding = false
                 homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
-                // TwitchLockedBottomHomeRowsPatch: page-sized rows should not animate/re-measure while scrolling.
+// TwitchBottomLockedHomeRowsPatch: decorated pages; rows stay wrap_content for recycle stability.
                 homeMasterRecycler.itemAnimator = null
-                homeMasterRecycler.setHasFixedSize(true)
-                // TwitchStableTvHomeRowsPatch: stable master recycler for page-sized TV rows.
-                homeMasterRecycler.itemAnimator = null
-                homeMasterRecycler.setHasFixedSize(true)
-            // TwitchTrueRowPagingSnapPatch: row pages are full-height; snap one row per up/down move.
-            if (isLayout(TV or EMULATOR)) {
                 homeMasterRecycler.clipToPadding = false
                 homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
-                homeMasterRecycler.isNestedScrollingEnabled = false
-                if (homeMasterRecycler.onFlingListener == null) {
-                    PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
-                }
-            }
 homeApiFab.isVisible = isLayout(PHONE)
 
             homePreviewReloadProvider.setOnClickListener {
