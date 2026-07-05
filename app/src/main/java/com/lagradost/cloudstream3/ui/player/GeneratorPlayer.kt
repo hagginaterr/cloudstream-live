@@ -1169,23 +1169,31 @@ class GeneratorPlayer : FullScreenPlayer() {
         )
     }
 
-    private fun openTwitchStreamerProfile(overlay: TwitchPlayerStreamerOverlay) {
+        private fun openTwitchStreamerProfile(overlay: TwitchPlayerStreamerOverlay) {
         val act = activity
         val apiName = overlay.apiName?.takeIf { it.isNotBlank() }
 
         if (act != null && apiName != null) {
-            runCatching {
-                act.navigate(
-                    R.id.navigation_results,
-                    ResultFragment.newInstance(
-                        overlay.profileUrl,
-                        apiName,
-                        overlay.displayName,
-                    ),
-                )
-                return
-            }.onFailure { error ->
-                logError(error)
+            val resultsNavId = act.resources.getIdentifier(
+                "navigation_results",
+                "id",
+                act.packageName,
+            )
+
+            if (resultsNavId != 0) {
+                runCatching {
+                    act.navigate(
+                        resultsNavId,
+                        ResultFragment.newInstance(
+                            overlay.profileUrl,
+                            apiName,
+                            overlay.displayName,
+                        ),
+                    )
+                    return
+                }.onFailure { error ->
+                    logError(error)
+                }
             }
         }
 
