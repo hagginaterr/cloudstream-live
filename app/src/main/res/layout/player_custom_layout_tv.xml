@@ -940,7 +940,8 @@
                         app:scrubber_color="?attr/colorPrimary"
                         app:scrubber_dragged_size="26dp"
                         app:scrubber_enabled_size="24dp"
-                        app:unplayed_color="@color/videoProgress" />
+                        app:unplayed_color="@color/videoProgress"
+                        android:nextFocusDown="@id/twitch_player_chat_button" />
 
                     <TextView
                         android:id="@id/exo_duration"
@@ -997,9 +998,73 @@
                         app:layout_constraintEnd_toEndOf="parent"
                         tools:text="-23:20" />
                 </androidx.constraintlayout.widget.ConstraintLayout>
+    <LinearLayout
+        android:id="@+id/twitch_player_bottom_button_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="64dp"
+        android:paddingEnd="64dp">
 
+        <ImageButton
+                                        android:id="@+id/twitch_player_streamer_chip"
+                                        android:layout_width="48dp"
+                                        android:layout_height="48dp"
+                                        android:background="@drawable/twitch_player_profile_button_bg"
+                                        android:clickable="true"
+                                        android:contentDescription="Open streamer profile"
+                                        android:focusable="true" android:nextFocusLeft="@id/twitch_player_streamer_chip" android:nextFocusRight="@id/twitch_player_chat_button" android:nextFocusUp="@id/exo_progress" android:nextFocusDown="@id/twitch_player_streamer_chip"
+                                        android:padding="0dp"
+                                        android:scaleType="centerCrop"
+                                        android:src="@drawable/twitch_player_streamer_avatar_placeholder" android:visibility="gone"
+                                        android:layout_gravity="center_vertical" />
 
-                <HorizontalScrollView
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <ImageButton
+                android:id="@+id/twitch_player_chat_button"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="@drawable/twitch_player_profile_button_bg"
+                android:clickable="true"
+                android:contentDescription="Toggle Twitch chat"
+                android:focusable="true"
+                android:padding="10dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_twitch_player_chat" android:visibility="gone"
+                android:layout_gravity="center_vertical"
+                android:nextFocusLeft="@id/twitch_player_streamer_chip"
+                android:nextFocusRight="@id/player_sources_btt"
+                android:nextFocusUp="@id/exo_progress"
+                android:nextFocusDown="@id/twitch_player_chat_button" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <com.google.android.material.button.MaterialButton
+                                        android:id="@+id/player_sources_btt"
+                                        style="@style/VideoButtonTV" android:nextFocusLeft="@id/twitch_player_chat_button" android:nextFocusRight="@id/player_sources_btt" android:nextFocusUp="@id/exo_progress" android:nextFocusDown="@id/player_sources_btt"
+                                        android:layout_width="48dp"
+                                        android:layout_height="48dp"
+                                        android:minWidth="0dp"
+                                        android:minHeight="0dp"
+                                        android:padding="0dp"
+                                        android:contentDescription="Quality options"
+                                        app:icon="@drawable/ic_player_quality_options_modern"
+                                        app:iconGravity="textStart"
+                                        app:iconPadding="0dp"
+                                        app:iconSize="28dp"
+                                        android:layout_gravity="center_vertical" />
+    </LinearLayout>
+
+<HorizontalScrollView
                     android:id="@+id/player_controls_scroll"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -1102,24 +1167,7 @@
                 </HorizontalScrollView>
             </LinearLayout>
 
-    <ImageButton
-        android:id="@+id/twitch_player_chat_button"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_marginEnd="124dp"
-        android:layout_marginBottom="10dp"
-        android:background="@drawable/twitch_player_profile_button_bg"
-        android:clickable="true"
-        android:contentDescription="Toggle Twitch chat"
-        android:focusable="true"
-        android:padding="10dp"
-        android:scaleType="centerInside"
-        android:src="@drawable/ic_twitch_player_chat"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="@id/bottom_player_bar"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <LinearLayout
+<LinearLayout
         android:id="@+id/twitch_player_chat_overlay"
         android:layout_width="380dp"
         android:layout_height="300dp"
@@ -1165,50 +1213,7 @@
             android:textSize="12sp" />
     </LinearLayout>
 
-    <ImageButton
-                                android:id="@+id/twitch_player_streamer_chip"
-                                android:layout_width="48dp"
-                                android:layout_height="48dp"
-                                android:background="@drawable/twitch_player_profile_button_bg"
-                                android:clickable="true"
-                                android:contentDescription="Open streamer profile"
-                                android:focusable="true"
-                                android:nextFocusLeft="@id/player_pause_play"
-                                android:nextFocusRight="@id/player_skip_op"
-                                android:nextFocusUp="@id/player_pause_play"
-                                android:nextFocusDown="@id/player_skip_op"
-                                android:padding="0dp"
-                                android:scaleType="centerCrop"
-                                android:src="@drawable/twitch_player_streamer_avatar_placeholder"
-                                android:visibility="gone"
-                                android:layout_marginBottom="10dp"
-                                app:layout_constraintBottom_toBottomOf="@id/bottom_player_bar"
-                                android:layout_marginStart="64dp"
-                                app:layout_constraintStart_toStartOf="parent" />
-
-    <com.google.android.material.button.MaterialButton
-                                android:id="@+id/player_sources_btt"
-                                style="@style/VideoButtonTV"
-                                android:nextFocusLeft="@id/player_subtitle_offset_btt"
-                                android:nextFocusRight="@id/player_tracks_btt"
-                                android:nextFocusUp="@id/player_pause_play"
-                                android:nextFocusDown="@id/player_tracks_btt"
-                                android:layout_width="48dp"
-                                android:layout_height="48dp"
-                                android:minWidth="0dp"
-                                android:minHeight="0dp"
-                                android:padding="0dp"
-                                android:contentDescription="Quality options"
-                                app:icon="@drawable/ic_player_quality_options_modern"
-                                app:iconGravity="textStart"
-                                app:iconPadding="0dp"
-                                app:iconSize="28dp"
-                                android:layout_marginBottom="10dp"
-                                app:layout_constraintBottom_toBottomOf="@id/bottom_player_bar"
-                                android:layout_marginEnd="64dp"
-                                app:layout_constraintEnd_toEndOf="parent" />
-
-        </androidx.constraintlayout.widget.ConstraintLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>
     </FrameLayout>
 
     <FrameLayout
