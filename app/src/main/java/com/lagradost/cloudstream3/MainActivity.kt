@@ -195,6 +195,7 @@ import kotlin.math.abs
 import kotlin.math.absoluteValue
 import kotlin.reflect.full.createInstance
 import kotlin.system.exitProcess
+import recloudstream.twitchlivefavorites.TwitchAccountAuth
 
 class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCallback {
     companion object {
@@ -632,6 +633,11 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
         super.onResume()
         afterPluginsLoadedEvent += ::onAllPluginsLoaded
         setActivityInstance(this)
+        // BEGIN TwitchPersistentFavoritesPatch
+        ioSafe {
+            TwitchAccountAuth.ensureFollowedFavoritesPresent()
+        }
+        // END TwitchPersistentFavoritesPatch
         try {
             if (isCastApiAvailable()) {
                 mSessionManager?.addSessionManagerListener(mSessionManagerListener)
@@ -808,6 +814,8 @@ private val pluginsLock = Mutex()
         ioSafe {
             pluginsLock.withLock {
             BuiltInTwitchLiveFavorites.register(forceHomepage = true)
+                // TwitchPersistentFavoritesPatchAfterProvider
+                TwitchAccountAuth.ensureFollowedFavoritesPresent()
                 allProviders.withLock {
                     // Load cloned sites after plugins have been loaded since clones depend on plugins.
                     try {
@@ -1777,7 +1785,7 @@ private val pluginsLock = Mutex()
             var prevId: Int? = null
             var prevView: View? = null
 
-            // The genius engineers at google did not actually 
+            // The genius engineers at google did not actually
             // write a nextFocus for the navrail
             rail.findViewById<View?>(R.id.navigation_settings)?.nextFocusDownId =
                 R.id.nav_footer_profile_card

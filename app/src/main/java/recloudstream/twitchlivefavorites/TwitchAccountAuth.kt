@@ -8,6 +8,7 @@ import com.lagradost.cloudstream3.CloudStreamApp.Companion.removeKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.utils.DataStoreHelper
 import java.net.URLEncoder
+import com.lagradost.cloudstream3.mvvm.logError
 
 object TwitchAccountAuth {
     private const val CLIENT_ID_MISSING = "Twitch client ID is missing from this build."
@@ -430,7 +431,62 @@ object TwitchAccountAuth {
         )
     }
 
-    private fun authHeaders(accessToken: String): Map<String, String> {
+        // BEGIN TwitchPersistentFavoritesPatch
+    @Volatile
+    private var followedFavoriteRestoreRunning = false
+
+    @Volatile
+    private var lastFollowedFavoriteRestoreAccount: String? = null
+
+    private fun twitchImportedFavoriteCount(): Int {
+        return DataStoreHelper.getAllFavorites().count { item ->
+            item.apiName.equals("Twitch", ignoreCase = true) ||
+                item.url.contains("twitch.tv/", ignoreCase = true)
+        }
+    }
+
+    private fun notifyTwitchFavoritesChanged() {
+        runCatching { MainActivity.bookmarksUpdatedEvent(true) }
+        runCatching { MainActivity.reloadLibraryEvent(true) }
+        runCatching { MainActivity.reloadHomeEvent(true) }
+    }
+
+    suspend fun ensureFollowedFavoritesPresent(force: Boolean = false): Boolean {
+        if (!isSignedIn()) return false
+
+        val accountKey = DataStoreHelper.currentAccount
+        val currentCount = twitchImportedFavoriteCount()
+
+        if (!force && currentCount > 0) {
+            lastFollowedFavoriteRestoreAccount = accountKey
+            return false
+        }
+
+        if (!force && followedFavoriteRestoreRunning) return false
+        if (!force && lastFollowedFavoriteRestoreAccount == accountKey && currentCount > 0) return false
+
+        followedFavoriteRestoreRunning = true
+
+        return try {
+            val result = syncFollowedFavorites()
+            val restoredCount = twitchImportedFavoriteCount()
+            val changed = restoredCount > currentCount || result.followedCount > 0
+
+            if (changed) {
+                lastFollowedFavoriteRestoreAccount = accountKey
+                notifyTwitchFavoritesChanged()
+            }
+
+            changed
+        } catch (t: Throwable) {
+            logError(t)
+            false
+        } finally {
+            followedFavoriteRestoreRunning = false
+        }
+    }
+    // END TwitchPersistentFavoritesPatch
+private fun authHeaders(accessToken: String): Map<String, String> {
         return mapOf(
             "Authorization" to "Bearer $accessToken",
             "Client-Id" to TwitchCredentials.CLIENT_ID,
