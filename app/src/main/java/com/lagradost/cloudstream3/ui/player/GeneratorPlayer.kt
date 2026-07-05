@@ -1258,9 +1258,45 @@ class GeneratorPlayer : FullScreenPlayer() {
         button.adjustViewBounds = false
         button.setPadding(0, 0, 0, 0)
         button.setBackgroundResource(R.drawable.twitch_player_profile_button_bg)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            button.foreground =
+                button.context.getDrawable(R.drawable.twitch_player_profile_button_focus_overlay)
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             button.outlineProvider = ViewOutlineProvider.BACKGROUND
             button.clipToOutline = true
+        }
+
+        val focusedScale = 1.14f
+        val normalScale = 1f
+        val glowZ = 18f * button.resources.displayMetrics.density
+
+        fun applyFocusState(hasFocus: Boolean, animate: Boolean) {
+            button.isSelected = hasFocus
+
+            if (animate) {
+                button.animate()
+                    .scaleX(if (hasFocus) focusedScale else normalScale)
+                    .scaleY(if (hasFocus) focusedScale else normalScale)
+                    .setDuration(120L)
+                    .start()
+            } else {
+                button.scaleX = if (hasFocus) focusedScale else normalScale
+                button.scaleY = if (hasFocus) focusedScale else normalScale
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val z = if (hasFocus) glowZ else 0f
+                button.elevation = z
+                button.translationZ = z
+            }
+        }
+
+        applyFocusState(button.hasFocus(), animate = false)
+        button.setOnFocusChangeListener { _, hasFocus ->
+            applyFocusState(hasFocus, animate = true)
         }
     }
 
