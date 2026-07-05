@@ -1,5 +1,7 @@
-﻿package com.lagradost.cloudstream3.ui.home
+package com.lagradost.cloudstream3.ui.home
 
+import android.widget.LinearLayout
+import android.view.Gravity
 import android.os.Build
 import android.os.Bundle
 import android.os.Parcelable
@@ -84,6 +86,7 @@ open class ParentItemAdapter(
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
         applyTwitchTvRowPageSizing(holder)
+        updateTwitchTvScrollMoreIndicator(binding, position)
         (binding.homeChildRecyclerview.adapter as? HomeChildItemAdapter)?.submitList(item.list.list)
     }
 
@@ -114,6 +117,15 @@ open class ParentItemAdapter(
         if (changed) rowView.layoutParams = params
 
         (rowView as? ViewGroup)?.clipToPadding = false
+
+        // TwitchHomeBottomPagingPatch: keep the active full-screen TV row anchored to the bottom.
+        (rowView as? LinearLayout)?.gravity = Gravity.BOTTOM
+    }
+    // TwitchHomeBottomPagingPatch: show a subtle bottom indicator when another row/page exists below.
+    private fun updateTwitchTvScrollMoreIndicator(binding: HomepageParentBinding, position: Int) {
+        if (!isLayout(TV or EMULATOR)) return
+        val indicator = binding.root.findViewById<View>(R.id.twitch_home_scroll_more_indicator) ?: return
+        indicator.visibility = if (position < itemCount - 1) View.VISIBLE else View.GONE
     }
     override fun onBindContent(
         holder: ViewHolderState<Bundle>,
@@ -125,6 +137,7 @@ open class ParentItemAdapter(
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
         applyTwitchTvRowPageSizing(holder)
+        updateTwitchTvScrollMoreIndicator(binding, position)
         val info = item.list
         binding.apply {
             val currentAdapter = homeChildRecyclerview.adapter as? HomeChildItemAdapter
