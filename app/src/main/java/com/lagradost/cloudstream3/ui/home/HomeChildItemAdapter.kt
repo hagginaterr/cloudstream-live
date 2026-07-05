@@ -76,37 +76,8 @@ object TwitchHomeFocusedBackground {
     }
 }
 object TwitchTvRowPager {
-    private fun findParentRecycler(view: View): RecyclerView? {
-        var current = view.parent
-        while (current != null) {
-            if (current is RecyclerView) return current
-            current = current.parent
-        }
-        return null
-    }
-
-    fun alignFocusedRow(view: View) {
-        if (!isLayout(TV or EMULATOR)) return
-
-        val horizontalRow = findParentRecycler(view) ?: return
-        val rowPage = horizontalRow.parent as? View ?: return
-        val masterRecycler = rowPage.parent as? RecyclerView ?: return
-        val rowPosition = masterRecycler.getChildAdapterPosition(rowPage)
-        if (rowPosition == RecyclerView.NO_POSITION) return
-
-        val targetHeight = masterRecycler.height.takeIf { it > 0 }
-            ?: view.resources.displayMetrics.heightPixels
-        val params = rowPage.layoutParams
-        if (params != null && params.height != targetHeight) {
-            params.width = ViewGroup.LayoutParams.MATCH_PARENT
-            params.height = targetHeight
-            rowPage.layoutParams = params
-        }
-
-        masterRecycler.post {
-            masterRecycler.smoothScrollToPosition(rowPosition)
-        }
-    }
+    @Suppress("UNUSED_PARAMETER")
+    fun alignFocusedRow(view: View) = Unit
 }
 class HomeScrollViewHolderState(view: ViewBinding) : ViewHolderState<Boolean>(view) {
     // very shitty that we cant store the state when the view clears,
@@ -311,8 +282,6 @@ open class HomeChildItemAdapter(
         if (isLayout(TV or EMULATOR)) {
             holder.itemView.setOnFocusChangeListener { view, hasFocus ->
                 if (hasFocus) {
-                    // TwitchTrueRowPagingFocusPatch
-                    TwitchTvRowPager.alignFocusedRow(view)
                     TwitchHomeFocusedBackground.update(view)
                 }
             }

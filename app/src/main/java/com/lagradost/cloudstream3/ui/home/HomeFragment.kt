@@ -637,6 +637,9 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             )
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
+                // TwitchStableTvHomeRowsPatch: stable master recycler for page-sized TV rows.
+                homeMasterRecycler.itemAnimator = null
+                homeMasterRecycler.setHasFixedSize(true)
             // TwitchTrueRowPagingSnapPatch: row pages are full-height; snap one row per up/down move.
             if (isLayout(TV or EMULATOR)) {
                 homeMasterRecycler.clipToPadding = false

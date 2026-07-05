@@ -94,43 +94,58 @@ open class ParentItemAdapter(
     // PagerSnapHelper alone is not enough if each parent row still measures as wrap_content.
         // TwitchTrueRowPagingPatch: TV home rows must be real full-screen pages.
     // Keep sizing stable during bind/scroll; bottom alignment is handled by homepage_parent_tv.xml.
+        // TwitchStableTvHomeRowsPatch: each TV home row is one viewport-height page.
+    // Do not shift the row during focus or scroll; the XML spacer pins content to the bottom.
     private fun applyTwitchTvRowPageSizing(holder: ViewHolderState<Bundle>) {
         if (!isLayout(TV or EMULATOR)) return
 
-        val rowView = holder.view.root
+        val rowView = holder.itemView
+
+        fun setStableHeight(targetHeight: Int) {
+            if (targetHeight <= 0) return
+
+            val params = rowView.layoutParams ?: RecyclerView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                targetHeight,
+            )
+
+            var changed = false
+            if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
+                params.width = ViewGroup.LayoutParams.MATCH_PARENT
+                changed = true
+            }
+            if (params.height != targetHeight) {
+                params.height = targetHeight
+                changed = true
+            }
+
+            if (changed) {
+                rowView.layoutParams = params
+            }
+
+            (rowView as? ViewGroup)?.clipToPadding = false
+
+            (holder.view as? HomepageParentBinding)?.homeChildRecyclerview?.apply {
+                itemAnimator = null
+                isNestedScrollingEnabled = false
+                overScrollMode = View.OVER_SCROLL_NEVER
+            }
+        }
+
         val masterRecycler = rowView.parent as? RecyclerView
-        val targetHeight = masterRecycler?.measuredHeight?.takeIf { it > 0 }
-            ?: masterRecycler?.height?.takeIf { it > 0 }
-            ?: rowView.resources.displayMetrics.heightPixels
+        val targetHeight = masterRecycler?.height?.takeIf { it > 0 }
+            ?: masterRecycler?.measuredHeight?.takeIf { it > 0 }
 
-        val params = rowView.layoutParams ?: RecyclerView.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            targetHeight,
-        )
-
-        var changed = false
-        if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
-            params.width = ViewGroup.LayoutParams.MATCH_PARENT
-            changed = true
-        }
-        if (params.height != targetHeight) {
-            params.height = targetHeight
-            changed = true
-        }
-
-        if (changed) {
-            rowView.layoutParams = params
-        }
-
-        rowView.minimumHeight = targetHeight
-        rowView.translationY = 0f
-
-        (rowView as? ViewGroup)?.clipToPadding = false
-
-        (holder.view as? HomepageParentBinding)?.homeChildRecyclerview?.apply {
-            itemAnimator = null
-            isNestedScrollingEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
+        if (targetHeight != null) {
+            setStableHeight(targetHeight)
+        } else {
+            rowView.post {
+                val parentRecycler = rowView.parent as? RecyclerView
+                val postedHeight = parentRecycler?.height?.takeIf { it > 0 }
+                    ?: parentRecycler?.measuredHeight?.takeIf { it > 0 }
+                    ?: return@post
+                setStableHeight(postedHeight)
+            }
         }
     }
     // TwitchHomeBottomPagingPatch: show a subtle bottom indicator when another row/page exists below.
@@ -182,11 +197,10 @@ open class ParentItemAdapter(
                 nextRight = endFocus,
             )
             homeChildMoreInfo.text = info.name
-                // TwitchTvHomeIndicatorPatch: keep the down-more affordance accurate per vertical page.
+                // TwitchTvHomeIndicatorPatch: show a down hint only when another row page exists below.
                 root.findViewById<View>(R.id.tv_home_more_indicator)?.visibility =
                     if (isLayout(TV or EMULATOR) && position < itemCount - 1) View.VISIBLE else View.GONE
-
-            if (TwitchHomeRefreshFocus.consumeForRow(info.name)) {
+if (TwitchHomeRefreshFocus.consumeForRow(info.name)) {
                 homeChildRecyclerview.post {
                     homeChildRecyclerview.scrollToPosition(0)
                     homeChildRecyclerview.post {
@@ -198,6 +212,8 @@ open class ParentItemAdapter(
             }
                             // TwitchTvHomeScrollStutterPatch: onBind can run repeatedly, so avoid stacking listeners.
                 homeChildRecyclerview.clearOnScrollListeners()
+                homeChildRecyclerview.clearOnScrollListeners()
+                // TwitchStableTvHomeRowsPatch: avoid stacked row listeners during recycled binds.
                 homeChildRecyclerview.addOnScrollListener(object :
                 RecyclerView.OnScrollListener() {
                 var expandCount = 0
