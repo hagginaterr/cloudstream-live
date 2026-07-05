@@ -706,6 +706,78 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
         if (playerBinding?.playerEpisodeOverlay?.isGone == true) playerBinding?.playerPausePlay?.requestFocus()
     }
 
+    private fun requestBottomActionRowFocus() {
+        val binding = playerBinding ?: return
+        val ctx = binding.root.context
+
+        fun findCandidateByName(name: String): View? {
+            val id = ctx.resources.getIdentifier(name, "id", ctx.packageName)
+            return if (id != 0) binding.root.findViewById(id) else null
+        }
+
+        fun View.canTakePlayerFocus(): Boolean {
+            return isShown && isEnabled && isFocusable
+        }
+
+        fun focusOnce(): Boolean {
+            val dynamicTarget = listOf(
+                "player_chat_btt",
+                "player_chat_button",
+                "player_chat_toggle",
+                "twitch_chat_btt",
+                "twitch_chat_button",
+                "player_profile_btt",
+                "player_profile_button",
+                "player_profile_avatar",
+                "player_avatar_btt",
+                "player_avatar_button",
+                "player_channel_btt",
+                "player_channel_button",
+                "player_sources_btt",
+                "player_quality_btt",
+                "player_quality_button",
+                "player_quality_profile_btt",
+                "player_tracks_btt",
+                "player_open_source",
+            ).asSequence()
+                .mapNotNull { findCandidateByName(it) }
+                .firstOrNull { it.canTakePlayerFocus() }
+
+            val staticTarget = listOf(
+                binding.playerSourcesBtt,
+                binding.playerTracksBtt,
+                binding.playerSpeedBtt,
+                binding.playerResizeBtt,
+                binding.playerPausePlay,
+            ).firstOrNull { it.canTakePlayerFocus() }
+
+            return (dynamicTarget ?: staticTarget)?.requestFocus() == true
+        }
+
+        binding.playerHolder.post {
+            focusOnce()
+            binding.playerHolder.postDelayed({ focusOnce() }, 150L)
+        }
+    }
+
+    private fun showPlayerMenuAndFocusBottomActions(): Boolean {
+        if (isShowingEpisodeOverlay || isDialogOpen()) {
+            return false
+        }
+
+        if (!isShowing) {
+            isShowing = true
+            autoHide()
+            activity?.hideSystemUI()
+            animateLayoutChanges()
+        } else {
+            autoHide()
+        }
+
+        requestBottomActionRowFocus()
+        return true
+    }
+
     private fun toggleLock() {
         if (!isShowing) {
             onClickChange()
@@ -1104,11 +1176,19 @@ private fun handleKeyDownEvent(event: KeyEvent): Boolean? {
     }
 
     private fun handleKeyEvent(event: KeyEvent, hasNavigated: Boolean): Boolean {
-        if (hasNavigated) {
+                val keyCode = event.keyCode
+        if (event.action == KeyEvent.ACTION_DOWN &&
+            keyCode == KeyEvent.KEYCODE_DPAD_DOWN &&
+            !isShowing &&
+            !isDialogOpen()
+        ) {
+            return showPlayerMenuAndFocusBottomActions()
+        }
+if (hasNavigated) {
             autoHide()
             return false
         }
-        val keyCode = event.keyCode
+        
 
         if (event.action == KeyEvent.ACTION_DOWN) {
             val value = handleKeyDownEvent(event)
