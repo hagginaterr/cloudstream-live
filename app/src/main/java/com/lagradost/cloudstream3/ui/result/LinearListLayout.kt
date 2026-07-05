@@ -190,7 +190,19 @@ open class LinearListLayout(context: Context?) :
             } else {
                 getViewFromPos(lookFor) ?: run {
                     scrollToPosition(lookFor)
-                    null
+
+                    // TvHorizontalFocusGuard by ChatGPT: keep focus in this row while
+                    // RecyclerView lays out the next off-screen item. Returning null here
+                    // lets Android TV choose another row, which can jump upward when
+                    // pressing DPAD_RIGHT through past broadcasts or highlights.
+                    if (isLayout(TV) && orientation == HORIZONTAL) {
+                        focused.post {
+                            getViewFromPos(lookFor)?.requestFocus()
+                        }
+                        focused
+                    } else {
+                        null
+                    }
                 }
             }
         } catch (e: Exception) {

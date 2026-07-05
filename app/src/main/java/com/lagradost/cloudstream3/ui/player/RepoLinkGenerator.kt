@@ -11,6 +11,14 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.AppUtils.toJson
+import com.lagradost.nicehttp.RequestBodyTypes
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.net.URLDecoder
+import java.net.URLEncoder
 
 data class Cache(
     val linkCache: MutableSet<ExtractorLink>,
@@ -39,6 +47,120 @@ class RepoLinkGenerator(
     //var linkCache = Array<Set<ExtractorLink>>(size = episodes.size, init = { setOf() })
     //var subsCache = Array<Set<SubtitleData>>(size = episodes.size, init = { setOf() })
 
+    // TwitchClipFallback by ChatGPT: app-level fallback for Twitch clip pages.
+    private fun extractTwitchClipSlugForFallback(dataUrl: String): String? {
+        val raw = dataUrl.trim()
+        val decoded = try {
+            URLDecoder.decode(raw, "UTF-8")
+        } catch (_: Throwable) {
+            raw
+        }
+        val normalized = decoded.replace("\\/", "/")
+        val sources = listOf(raw, decoded, normalized)
+        val patterns = listOf(
+            Regex("""(?i)clips\.twitch\.tv/([A-Za-z0-9_-]+)"""),
+            Regex("""(?i)twitch\.tv/[^/?#]+/clip/([A-Za-z0-9_-]+)"""),
+            Regex("""["'](?:slug|clipSlug)["']\s*:\s*["']([A-Za-z0-9_-]+)["']"""),
+            Regex("""(?i)[?&#](?:slug|clipSlug|clip)=([A-Za-z0-9_-]+)"""),
+            Regex("""(?i)(?:slug|clipSlug|clip):([A-Za-z0-9_-]+)""")
+        )
+
+        for (source in sources) {
+            for (pattern in patterns) {
+                val match = pattern.find(source) ?: continue
+                return match.groupValues.getOrNull(1)
+                    ?.substringBefore("?")
+                    ?.trimEnd('/')
+                    ?.takeIf { it.isNotBlank() }
+            }
+        }
+
+        return null
+    }
+
+    private suspend fun tryLoadTwitchClipFallback(
+        dataUrl: String,
+        sourceTypes: Set<ExtractorLinkType>,
+        currentCache: Cache,
+        currentLinksUrls: MutableSet<String>,
+        callback: (Pair<ExtractorLink?, ExtractorUri?>) -> Unit,
+    ): Boolean {
+        val slug = extractTwitchClipSlugForFallback(dataUrl) ?: return false
+
+        return try {
+            val query = """
+                query VideoAccessToken_Clip(${'$'}slug: ID!) {
+                    clip(slug: ${'$'}slug) {
+                        playbackAccessToken(params: {platform: "web", playerBackend: "mediaplayer", playerType: "site"}) {
+                            signature
+                            value
+                        }
+                    }
+                }
+            """.trimIndent()
+            val body = mapOf(
+                "operationName" to "VideoAccessToken_Clip",
+                "variables" to mapOf("slug" to slug),
+                "query" to query,
+            ).toJson().toRequestBody(RequestBodyTypes.JSON.toMediaTypeOrNull())
+            fun urlEncode(value: String): String = URLEncoder.encode(value, "UTF-8")
+
+            val response = app.post(
+                "https://gql.twitch.tv/gql",
+                headers = mapOf(
+                    "Accept" to "application/json",
+                    "Client-ID" to "kimne78kx3ncx6brgo4mv6wki5h1ko"
+                ),
+                requestBody = body,
+                cacheTime = 0
+            )
+            val accessToken = JSONObject(response.text)
+                .optJSONObject("data")
+                ?.optJSONObject("clip")
+                ?.optJSONObject("playbackAccessToken")
+            val signature = accessToken?.optString("signature").orEmpty()
+            val tokenValue = accessToken?.optString("value").orEmpty()
+
+            if (signature.isBlank() || tokenValue.isBlank()) {
+                Log.w(TAG, "Twitch clip fallback did not receive a playback token for $slug")
+                return false
+            }
+
+            val hlsUrl = "https://usher.ttvnw.net/api/v2/clips/${urlEncode(slug)}.m3u8" +
+                    "?sig=${urlEncode(signature)}" +
+                    "&token=${urlEncode(tokenValue)}" +
+                    "&allow_source=true" +
+                    "&allow_audio_only=true" +
+                    "&player=twitchweb"
+
+            if (!currentLinksUrls.add(hlsUrl)) {
+                return false
+            }
+
+            val link = ExtractorLink(
+                source = "Twitch Clip",
+                name = "Twitch Clip",
+                url = hlsUrl,
+                referer = "https://clips.twitch.tv/",
+                quality = 0,
+                type = ExtractorLinkType.M3U8,
+            )
+
+            synchronized(currentCache) {
+                if (currentCache.linkCache.add(link)) {
+                    if (sourceTypes.contains(link.type)) {
+                        callback(link to null)
+                    }
+                    currentCache.lastCachedTimestamp = unixTime
+                }
+            }
+
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "Twitch clip fallback failed for $slug", t)
+            false
+        }
+    }
     @Throws
     override suspend fun generateLinks(
         clearCache: Boolean,
@@ -150,6 +272,15 @@ class RepoLinkGenerator(
                 }
             }
         )
+        if (currentCache.linkCache.isEmpty()) {
+            tryLoadTwitchClipFallback(
+                dataUrl = current.data,
+                sourceTypes = sourceTypes,
+                currentCache = currentCache,
+                currentLinksUrls = currentLinksUrls,
+                callback = callback
+            )
+        }
 
         synchronized(currentCache) {
             currentCache.saturated = currentCache.linkCache.isNotEmpty()
