@@ -20,14 +20,32 @@ import qrcode.QRCode
 object TwitchStartupAuthPrompt {
     @Volatile private var showing = false
     @Volatile private var shownThisRun = false
+    @Volatile private var syncStartedThisRun = false
 
     fun maybeShow(activity: FragmentActivity?) {
         if (activity == null) return
-        if (shownThisRun || showing || TwitchAccountAuth.isSignedIn()) return
+        if (TwitchAccountAuth.isSignedIn()) {
+            maybeSyncFollowsOnStartup(activity)
+            return
+        }
+        if (shownThisRun || showing) return
         shownThisRun = true
         activity.window?.decorView?.postDelayed({ show(activity, force = false) }, 900L)
     }
 
+    // TwitchFavoritesStartupSyncPatch: sync followed Twitch channels once per app run.
+    private fun maybeSyncFollowsOnStartup(activity: FragmentActivity) {
+        if (syncStartedThisRun || !TwitchAccountAuth.isSyncOnStartupEnabled()) return
+        syncStartedThisRun = true
+
+        ioSafe {
+            runCatching {
+                TwitchAccountAuth.syncFollowedFavorites()
+            }.onFailure { error ->
+                logError(error)
+            }
+        }
+    }
     fun show(activity: FragmentActivity?, force: Boolean = true) {
         if (activity == null) return
         if (showing) return

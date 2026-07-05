@@ -443,6 +443,54 @@ class SettingsAccount : BasePreferenceFragmentCompat(), BiometricCallback {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         hideKeyboard()
         setPreferencesFromResource(R.xml.settings_account, rootKey)
+        // TwitchFavoritesSettingsSyncPatchV2
+        findPreference<androidx.preference.Preference>("twitch_sync_now_key")?.apply {
+            summary = recloudstream.twitchlivefavorites.TwitchAccountAuth.lastImportSummary()
+                ?: "Copy followed Twitch channels into app favorites"
+            setOnPreferenceClickListener {
+                val currentActivity = activity ?: return@setOnPreferenceClickListener false
+                if (!recloudstream.twitchlivefavorites.TwitchAccountAuth.isSignedIn()) {
+                    showToast("Sign in to Twitch first.")
+                    return@setOnPreferenceClickListener true
+                }
+
+                summary = "Syncing Twitch follows..."
+                ioSafe {
+                    try {
+                        val result = recloudstream.twitchlivefavorites.TwitchAccountAuth.syncFollowedFavorites()
+                        currentActivity.runOnUiThread {
+                            summary = recloudstream.twitchlivefavorites.TwitchAccountAuth.lastImportSummary()
+                                ?: "Copy followed Twitch channels into app favorites"
+                            val removedText = if (result.removedCount > 0) ", removed ${result.removedCount}" else ""
+                            showToast("Synced ${result.followedCount} Twitch follows$removedText.")
+                        }
+                    } catch (t: Throwable) {
+                        currentActivity.runOnUiThread {
+                            summary = recloudstream.twitchlivefavorites.TwitchAccountAuth.lastImportSummary()
+                                ?: "Copy followed Twitch channels into app favorites"
+                            showToast("Twitch sync failed: ${t.message ?: t.javaClass.simpleName}")
+                        }
+                    }
+                }
+                true
+            }
+        }
+
+        findPreference<androidx.preference.SwitchPreference>("twitch_sync_startup_key")?.apply {
+            isChecked = recloudstream.twitchlivefavorites.TwitchAccountAuth.isSyncOnStartupEnabled()
+            setOnPreferenceChangeListener { _, newValue ->
+                recloudstream.twitchlivefavorites.TwitchAccountAuth.setSyncOnStartupEnabled(newValue as? Boolean ?: false)
+                true
+            }
+        }
+
+        findPreference<androidx.preference.SwitchPreference>("twitch_remove_unfollowed_key")?.apply {
+            isChecked = recloudstream.twitchlivefavorites.TwitchAccountAuth.isRemoveUnfollowedEnabled()
+            setOnPreferenceChangeListener { _, newValue ->
+                recloudstream.twitchlivefavorites.TwitchAccountAuth.setRemoveUnfollowedEnabled(newValue as? Boolean ?: false)
+                true
+            }
+        }
         findPreference<androidx.preference.Preference>("twitch_account_key")?.apply {
             title = "Twitch Account"
             summary = TwitchAccountAuth.displayName()?.let { name ->

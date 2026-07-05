@@ -58,4 +58,21 @@
 
     </PreferenceCategory>
 
+
+    <Preference
+        android:key="twitch_sync_now_key"
+        android:title="Sync Twitch follows now"
+        android:summary="Copy followed Twitch channels into app favorites" />
+
+    <SwitchPreference
+        android:key="twitch_sync_startup_key"
+        android:title="Sync Twitch follows on startup"
+        android:summary="Automatically refresh app favorites from your Twitch follows when the app starts"
+        android:defaultValue="true" />
+
+    <SwitchPreference
+        android:key="twitch_remove_unfollowed_key"
+        android:title="Remove unfollowed channels"
+        android:summary="When syncing, remove Twitch favorites for channels you no longer follow"
+        android:defaultValue="false" />
 </PreferenceScreen>

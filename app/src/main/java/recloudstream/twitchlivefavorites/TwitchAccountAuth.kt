@@ -1,4 +1,4 @@
-﻿package recloudstream.twitchlivefavorites
+package recloudstream.twitchlivefavorites
 
 import com.lagradost.cloudstream3.MainActivity
 import com.lagradost.cloudstream3.TvType
@@ -10,7 +10,6 @@ import com.lagradost.cloudstream3.utils.DataStoreHelper
 import java.net.URLEncoder
 
 object TwitchAccountAuth {
-    // TwitchDeviceFlowPendingFixV2: keep QR login open while Twitch is waiting for phone approval.
     private const val CLIENT_ID_MISSING = "Twitch client ID is missing from this build."
     private const val OAUTH_DEVICE_URL = "https://id.twitch.tv/oauth2/device"
     private const val OAUTH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
@@ -25,6 +24,10 @@ object TwitchAccountAuth {
     private const val USER_DISPLAY_KEY = "twitch_user_display_name"
     private const val LAST_IMPORT_COUNT_KEY = "twitch_user_last_import_count"
     private const val LAST_IMPORT_AT_KEY = "twitch_user_last_import_at"
+    private const val LAST_SYNC_REMOVED_COUNT_KEY = "twitch_user_last_sync_removed_count"
+    private const val LAST_SYNC_FOLLOWED_COUNT_KEY = "twitch_user_last_sync_followed_count"
+    private const val SYNC_ON_STARTUP_KEY = "twitch_user_sync_on_startup"
+    private const val REMOVE_UNFOLLOWED_KEY = "twitch_user_remove_unfollowed"
 
     data class DeviceCode(
         val deviceCode: String,
@@ -37,6 +40,8 @@ object TwitchAccountAuth {
     data class ImportResult(
         val importedCount: Int,
         val displayName: String?,
+        val removedCount: Int = 0,
+        val followedCount: Int = importedCount,
     )
 
     private data class TwitchDeviceCodeResponse(
@@ -102,7 +107,28 @@ object TwitchAccountAuth {
 
     fun lastImportSummary(): String? {
         val count = getKey<Int>(LAST_IMPORT_COUNT_KEY) ?: return null
-        return "$count followed channels imported"
+        val removed = getKey<Int>(LAST_SYNC_REMOVED_COUNT_KEY) ?: 0
+        return if (removed > 0) {
+            "$count followed channels synced, $removed removed"
+        } else {
+            "$count followed channels synced"
+        }
+    }
+
+    fun isSyncOnStartupEnabled(): Boolean {
+        return getKey<Boolean>(SYNC_ON_STARTUP_KEY) ?: true
+    }
+
+    fun setSyncOnStartupEnabled(enabled: Boolean) {
+        setKey(SYNC_ON_STARTUP_KEY, enabled)
+    }
+
+    fun isRemoveUnfollowedEnabled(): Boolean {
+        return getKey<Boolean>(REMOVE_UNFOLLOWED_KEY) ?: false
+    }
+
+    fun setRemoveUnfollowedEnabled(enabled: Boolean) {
+        setKey(REMOVE_UNFOLLOWED_KEY, enabled)
     }
 
     fun clearAccount() {
@@ -115,6 +141,8 @@ object TwitchAccountAuth {
             USER_DISPLAY_KEY,
             LAST_IMPORT_COUNT_KEY,
             LAST_IMPORT_AT_KEY,
+            LAST_SYNC_REMOVED_COUNT_KEY,
+            LAST_SYNC_FOLLOWED_COUNT_KEY,
         ).forEach { removeKey(it) }
     }
 
@@ -187,13 +215,11 @@ object TwitchAccountAuth {
         saveToken(token)
         val user = fetchAuthenticatedUser(token.access_token)
         saveUser(user)
-        val imported = importFollowedChannels(token.access_token, user.id)
-        setKey(LAST_IMPORT_COUNT_KEY, imported)
-        setKey(LAST_IMPORT_AT_KEY, System.currentTimeMillis())
-        runCatching { MainActivity.bookmarksUpdatedEvent(true) }
-        runCatching { MainActivity.reloadLibraryEvent(true) }
-        runCatching { MainActivity.reloadHomeEvent(true) }
-        return ImportResult(imported, user.display_name.ifBlank { user.login })
+        return syncFollowedFavoritesWith(
+            accessToken = token.access_token,
+            user = user,
+            removeUnfollowed = isRemoveUnfollowedEnabled(),
+        )
     }
 
     suspend fun getValidAccessToken(): String? {
@@ -211,6 +237,70 @@ object TwitchAccountAuth {
         return refreshAccessToken(refreshToken) ?: savedAccessToken
     }
 
+    suspend fun syncFollowedFavorites(
+        removeUnfollowed: Boolean = isRemoveUnfollowedEnabled(),
+    ): ImportResult {
+        val accessToken = getValidAccessToken()
+            ?: throw IllegalStateException("Sign in to Twitch first.")
+
+        val savedUserId = userId()
+        val user = if (savedUserId.isNullOrBlank()) {
+            fetchAuthenticatedUser(accessToken).also { saveUser(it) }
+        } else {
+            TwitchUser(
+                id = savedUserId,
+                login = getKey<String>(USER_LOGIN_KEY).orEmpty(),
+                display_name = displayName().orEmpty(),
+            )
+        }
+
+        return syncFollowedFavoritesWith(
+            accessToken = accessToken,
+            user = user,
+            removeUnfollowed = removeUnfollowed,
+        )
+    }
+
+    private suspend fun syncFollowedFavoritesWith(
+        accessToken: String,
+        user: TwitchUser,
+        removeUnfollowed: Boolean,
+    ): ImportResult {
+        val followed = fetchFollowedChannels(accessToken, user.id)
+        val uniqueFollowed = followed
+            .distinctBy { normalizeChannel(it.broadcaster_login) }
+            .filter { normalizeChannel(it.broadcaster_login).isNotBlank() }
+
+        uniqueFollowed.forEach { seedCloudStreamFavorite(it) }
+
+        val followedNames = uniqueFollowed
+            .map { normalizeChannel(it.broadcaster_login) }
+            .filter { it.isNotBlank() }
+            .toSet()
+
+        val removed = if (removeUnfollowed) {
+            removeUnfollowedTwitchFavorites(followedNames)
+        } else {
+            0
+        }
+
+        setKey(LAST_IMPORT_COUNT_KEY, followedNames.size)
+        setKey(LAST_SYNC_FOLLOWED_COUNT_KEY, followedNames.size)
+        setKey(LAST_SYNC_REMOVED_COUNT_KEY, removed)
+        setKey(LAST_IMPORT_AT_KEY, System.currentTimeMillis())
+
+        runCatching { MainActivity.bookmarksUpdatedEvent(true) }
+        runCatching { MainActivity.reloadLibraryEvent(true) }
+        runCatching { MainActivity.reloadHomeEvent(true) }
+
+        return ImportResult(
+            importedCount = followedNames.size,
+            displayName = user.display_name.ifBlank { user.login },
+            removedCount = removed,
+            followedCount = followedNames.size,
+        )
+    }
+
     private suspend fun refreshAccessToken(refreshToken: String): String? {
         val clientId = TwitchCredentials.CLIENT_ID.trim()
         if (clientId.isBlank()) return null
@@ -225,30 +315,11 @@ object TwitchAccountAuth {
                     "refresh_token" to refreshToken,
                 ),
             ).parsed<TwitchTokenResponse>()
-            val pendingError = token.error
-            .ifBlank { token.message }
-            .ifBlank { token.error_description }
-            .lowercase()
-
-        if (token.access_token.isBlank() && pendingError.isPendingDeviceAuth()) {
-            return null
-        }
-
-        if (token.access_token.isBlank()) {
-            val detail = pendingError.ifBlank { "empty token" }
-            throw IllegalStateException("Twitch sign in failed: $detail")
-        }
-
-        saveToken(token)
+            saveToken(token)
             token.access_token.takeIf { it.isNotBlank() }
         }.getOrNull()
     }
 
-    private fun String.isPendingDeviceAuth(): Boolean {
-        return contains("authorization_pending") ||
-                contains("slow_down") ||
-                contains("pending")
-    }
     private fun saveToken(token: TwitchTokenResponse) {
         if (token.access_token.isBlank()) throw IllegalStateException("Twitch returned an empty access token.")
         setKey(ACCESS_TOKEN_KEY, token.access_token)
@@ -272,7 +343,10 @@ object TwitchAccountAuth {
             ?: throw IllegalStateException("Twitch did not return the signed-in user.")
     }
 
-    private suspend fun importFollowedChannels(accessToken: String, userId: String): Int {
+    private suspend fun fetchFollowedChannels(accessToken: String, userId: String): List<TwitchFollowedChannel> {
+        val cleanUserId = userId.trim()
+        if (cleanUserId.isBlank()) throw IllegalStateException("Twitch user id is missing.")
+
         val followed = mutableListOf<TwitchFollowedChannel>()
         var cursor: String? = null
         var guard = 0
@@ -280,7 +354,7 @@ object TwitchAccountAuth {
         do {
             val url = buildString {
                 append("$HELIX_BASE/channels/followed?user_id=")
-                append(encode(userId))
+                append(encode(cleanUserId))
                 append("&first=100")
                 if (!cursor.isNullOrBlank()) {
                     append("&after=")
@@ -294,9 +368,41 @@ object TwitchAccountAuth {
             guard++
         } while (!cursor.isNullOrBlank() && guard < 200)
 
-        followed.distinctBy { normalizeChannel(it.broadcaster_login) }
-            .forEach { seedCloudStreamFavorite(it) }
-        return followed.map { normalizeChannel(it.broadcaster_login) }.filter { it.isNotBlank() }.distinct().size
+        return followed
+    }
+
+    private fun removeUnfollowedTwitchFavorites(followedChannels: Set<String>): Int {
+        var removed = 0
+
+        DataStoreHelper.getAllFavorites().forEach { favorite ->
+            val favoriteChannel = favorite.toTwitchChannelOrNull()
+            if (favoriteChannel.isNotBlank() && favoriteChannel !in followedChannels) {
+                DataStoreHelper.removeFavoritesData(favorite.id)
+                removed++
+            }
+        }
+
+        return removed
+    }
+
+    private fun DataStoreHelper.FavoritesData.toTwitchChannelOrNull(): String {
+        val api = apiName.lowercase()
+        val normalizedUrl = url.lowercase()
+        val isTwitchFavorite = type == TvType.Live &&
+                (api == "twitch" || api == "twitch live favorites api" || normalizedUrl.contains("twitch.tv/"))
+
+        if (!isTwitchFavorite) return ""
+        if (normalizedUrl.contains("/videos/") || normalizedUrl.contains("/clip/") || normalizedUrl.contains("/clips/")) return ""
+        if (normalizedUrl.contains("cloudstream_twitch_vod") || normalizedUrl.contains("cloudstream_twitch_clip")) return ""
+
+        val fromUrl = normalizeChannel(url)
+        val fromName = normalizeChannel(name)
+
+        return when {
+            fromUrl.isNotBlank() && fromUrl != "twitch" -> fromUrl
+            fromName.isNotBlank() && fromName != "twitch" -> fromName
+            else -> ""
+        }
     }
 
     private fun seedCloudStreamFavorite(channel: TwitchFollowedChannel) {
@@ -331,10 +437,17 @@ object TwitchAccountAuth {
         )
     }
 
+    private fun String.isPendingDeviceAuth(): Boolean {
+        return contains("authorization_pending") ||
+                contains("slow_down") ||
+                contains("pending")
+    }
+
     private fun normalizeChannel(value: String?): String {
         return value.orEmpty()
             .trim()
             .trimEnd('/')
+            .substringAfter("twitch.tv/", missingDelimiterValue = value.orEmpty())
             .substringAfterLast("/")
             .substringBefore("?")
             .lowercase()
@@ -343,4 +456,3 @@ object TwitchAccountAuth {
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 }
-
