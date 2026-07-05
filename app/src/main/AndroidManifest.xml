@@ -23,8 +23,8 @@
         tools:ignore="QueryAllPackagesPermission" />
 
     <queries>
-        <!-- 
-            QUERY_ALL_PACKAGES does not work on some devices running Android 11+ (like Google TV 14), 
+        <!--
+            QUERY_ALL_PACKAGES does not work on some devices running Android 11+ (like Google TV 14),
             so we must explicitly specify the packages and intent patterns we query to ensure visibility.
         -->
         <!-- For external video players -->
@@ -57,7 +57,7 @@
         <package android:name="dev.anilbeesetti.nextplayer" />
         <package android:name="com.instantbits.cast.webvideo" />
         <package android:name="com.gianlu.aria2android" />
-        
+
         <!-- Torrent clients -->
         <package android:name="org.proninyaroslav.libretorrent" />
         <package android:name="com.biglybt.android.client" />
@@ -74,12 +74,9 @@
     <!-- Without the large heap Exoplayer buffering gets reset due to OOM. -->
     <!--TODO https://stackoverflow.com/questions/41799732/chromecast-button-not-visible-in-android-->
     <application
-        android:name=".CloudStreamApp"
-        android:allowBackup="true"
+        android:name=".CloudStreamApp" android:allowBackup="true"
         android:appCategory="video"
-        android:banner="@mipmap/ic_banner"
-        android:fullBackupContent="@xml/backup_descriptor"
-        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:banner="@mipmap/ic_banner" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:largeHeap="true"
@@ -291,5 +288,5 @@
                 android:resource="@xml/provider_paths" />
         </provider>
     </application>
-    
+
 </manifest>
