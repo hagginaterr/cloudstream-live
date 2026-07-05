@@ -9,35 +9,7 @@
             android:key="twitch_account_key"
             android:title="Twitch Account"
             android:summary="Sign in with Twitch to import followed channels into favorites" />
-
-        <Preference
-            android:icon="@drawable/mal_logo"
-            android:key="@string/mal_key" />
-
-        <Preference
-            android:icon="@drawable/kitsu_icon"
-            android:key="@string/kitsu_key" />
-
-        <Preference
-            android:icon="@drawable/ic_anilist_icon"
-            android:key="@string/anilist_key" />
-
-        <Preference
-            android:icon="@drawable/simkl_logo"
-            android:key="@string/simkl_key" />
-
-        <Preference
-            android:icon="@drawable/open_subtitles_icon"
-            android:key="@string/opensubtitles_key" />
-
-        <Preference
-            android:icon="@drawable/subdl_logo_big"
-            android:key="@string/subdl_key" />
-        <Preference
-            android:icon="@drawable/animeskip"
-            android:key="@string/animeskip_key" />
-
-        <SwitchPreference
+<SwitchPreference
             android:defaultValue="false"
             android:icon="@drawable/ic_outline_account_circle_24"
             android:key="@string/skip_startup_account_select_key"
@@ -58,8 +30,7 @@
 
     </PreferenceCategory>
 
-
-    <Preference
+<Preference
         android:key="twitch_sync_now_key"
         android:title="Sync Twitch follows now"
         android:summary="Copy followed Twitch channels into app favorites" />

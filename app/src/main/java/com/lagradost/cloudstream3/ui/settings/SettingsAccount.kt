@@ -443,6 +443,16 @@ class SettingsAccount : BasePreferenceFragmentCompat(), BiometricCallback {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         hideKeyboard()
         setPreferencesFromResource(R.xml.settings_account, rootKey)
+        // TwitchOnlyAccountPagePatch: only Twitch should appear as an account sign-in option.
+        listOf(
+            R.string.mal_key,
+            R.string.kitsu_key,
+            R.string.anilist_key,
+            R.string.simkl_key,
+            R.string.opensubtitles_key,
+            R.string.subdl_key,
+            R.string.animeskip_key,
+        ).forEach { getPref(it)?.isVisible = false }
         // TwitchFavoritesSettingsSyncPatchV2
         findPreference<androidx.preference.Preference>("twitch_sync_now_key")?.apply {
             summary = recloudstream.twitchlivefavorites.TwitchAccountAuth.lastImportSummary()
