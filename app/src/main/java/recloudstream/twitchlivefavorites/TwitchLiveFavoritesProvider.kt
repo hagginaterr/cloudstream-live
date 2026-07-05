@@ -796,8 +796,12 @@ private fun normalizeChannel(value: String): String {
     }
 
     private fun twitchUrl(channel: String): String = "https://twitch.tv/${normalizeChannel(channel)}"
+    private fun appendDirectPlayMarker(url: String): String {
+        val separator = if (url.contains("?")) "&" else "?"
+        return "$url${separator}cloudstream_direct_play=1"
+    }
     private fun directPlayUrl(channel: String): String {
-        return "${twitchUrl(channel)}?cloudstream_direct_play=1"
+        return appendDirectPlayMarker(twitchUrl(channel))
     }
 
         private fun twitchVideoUrl(id: String): String {
@@ -1363,7 +1367,7 @@ private fun twitchProfileVideoThumbnail(url: String): String? {
         val category = fetchTwitchVideoCategory(video)
         val views = formatViewCount(video.view_count)
         val durationText = formatTwitchDuration(video.duration) ?: video.duration.ifBlank { null }
-        val cardUrl = if (marker == "past_broadcast") {
+        val mediaCardUrl = if (marker == "past_broadcast") {
             appendTwitchProfileMediaMarker(
                 twitchVodCardUrl(videoId, displayTitle, age, category, views, durationText),
                 marker,
@@ -1371,6 +1375,7 @@ private fun twitchProfileVideoThumbnail(url: String): String? {
         } else {
             twitchProfileMediaCardUrl(watchUrl, marker, displayTitle, age, category, views, durationText)
         }
+        val cardUrl = appendDirectPlayMarker(mediaCardUrl)
         newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(twitchProfileVideoThumbnail(video.thumbnail_url), nowMs())
             lang = listOfNotNull(age, category).joinToString(" - ").ifBlank { null }
@@ -1393,7 +1398,8 @@ private suspend fun fetchTwitchClipRecommendations(user: TwitchUser): List<LiveS
         val views = formatViewCount(clip.view_count)
         val durationText = if (clip.duration > 0f) "${clip.duration.toInt()}s" else null
         val clipVideoUrl = twitchClipDirectVideoUrl(clip.thumbnail_url)
-        val cardUrl = appendTwitchProfileQueryParam(twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, null, views, durationText), "cs_clip_video", clipVideoUrl)
+        val mediaCardUrl = appendTwitchProfileQueryParam(twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, null, views, durationText), "cs_clip_video", clipVideoUrl)
+        val cardUrl = appendDirectPlayMarker(mediaCardUrl)
         newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(clip.thumbnail_url.ifBlank { null }, nowMs())
             lang = age

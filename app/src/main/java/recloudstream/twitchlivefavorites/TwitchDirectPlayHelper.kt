@@ -29,9 +29,8 @@ object TwitchDirectPlayHelper {
     fun tryOpen(card: SearchResponse): Boolean {
         if (!isDirectPlayCard(card)) return false
 
-        val twitchUrl = cleanProfileUrl(card.url)
+        val twitchUrl = cleanDirectPlayUrl(card.url)
             .ifBlank { return false }
-
         val title = card.name.ifBlank { "Twitch" }
 
         ioSafe {
@@ -39,7 +38,7 @@ object TwitchDirectPlayHelper {
 
             activity?.runOnUiThread {
                 if (links.isEmpty()) {
-                    showToast("Could not open Twitch stream", Toast.LENGTH_SHORT)
+                    showToast("Could not open Twitch media", Toast.LENGTH_SHORT)
                     return@runOnUiThread
                 }
 
@@ -77,16 +76,41 @@ object TwitchDirectPlayHelper {
             card.url.contains(DIRECT_PLAY_MARKER, ignoreCase = true)
     }
 
+    private fun removeDirectPlayMarker(url: String): String {
+        return url
+            .replace(Regex("([?&])cloudstream_direct_play=1&?", RegexOption.IGNORE_CASE), "$1")
+            .replace("?&", "?")
+            .trimEnd('?', '&')
+    }
+
+    private fun cleanDirectPlayUrl(url: String): String {
+        return removeDirectPlayMarker(url).substringBefore("#")
+    }
+
     private fun cleanProfileUrl(url: String): String {
-        return url.substringBefore("?").substringBefore("#")
+        return cleanDirectPlayUrl(url).substringBefore("?").trimEnd('/')
     }
 
     private suspend fun fetchLinks(twitchUrl: String, title: String): List<ExtractorLink> {
+        val providerLinks = mutableListOf<ExtractorLink>()
+        val providerHandled = runCatching {
+            TwitchApiLiveFavoritesProvider().loadLinks(
+                twitchUrl,
+                isCasting = false,
+                subtitleCallback = { _ -> },
+                callback = { link -> providerLinks.add(link) },
+            )
+        }.getOrDefault(false)
+
+        if (providerHandled && providerLinks.isNotEmpty()) {
+            return providerLinks.distinctBy { it.url }
+        }
+
         val response = runCatching {
             app.get("$STREAM_API$twitchUrl").parsed<ApiResponse>()
-        }.getOrNull() ?: return emptyList()
+        }.getOrNull() ?: return providerLinks.distinctBy { it.url }
 
-        return response.urls
+        val liveLinks = response.urls
             .orEmpty()
             .mapNotNull { (qualityName, streamUrl) ->
                 if (streamUrl.isBlank()) return@mapNotNull null
@@ -102,5 +126,7 @@ object TwitchDirectPlayHelper {
                     this.referer = ""
                 }
             }
+
+        return (providerLinks + liveLinks).distinctBy { it.url }
     }
 }
