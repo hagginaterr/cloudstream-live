@@ -278,10 +278,10 @@ private data class TwitchSearchResponse(
 
     private data class TwitchGqlClipPlaybackClip(
         val title: String? = null,
-        val videoQualities: List<TwitchGqlClipQuality> = emptyList(),
+            val playbackAccessToken: TwitchPlaybackAccessToken? = null,
+val videoQualities: List<TwitchGqlClipQuality> = emptyList(),
     )
-
-    private data class TwitchGqlClipQuality(
+private data class TwitchGqlClipQuality(
         val frameRate: Double? = null,
         val quality: String? = null,
         val sourceURL: String? = null,
