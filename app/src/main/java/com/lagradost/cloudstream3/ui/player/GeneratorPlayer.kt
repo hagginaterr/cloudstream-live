@@ -1031,9 +1031,177 @@ class GeneratorPlayer : FullScreenPlayer() {
         return !isTwitchPlayback()
     }
 
-    private fun updateTwitchPlayerControls() {
+        // BEGIN TwitchPlayerChatFoundationPatch
+    private enum class TwitchPlayerChatCorner(val label: String) {
+        TOP_START("top left"),
+        TOP_END("top right"),
+        BOTTOM_START("bottom left"),
+        BOTTOM_END("bottom right");
+
+        fun next(): TwitchPlayerChatCorner {
+            val values = values()
+            return values[(ordinal + 1) % values.size]
+        }
+    }
+
+    private data class TwitchPlayerChatTarget(
+        val login: String,
+        val displayName: String,
+        val avatarUrl: String?,
+    )
+
+    private var twitchPlayerChatVisible = false
+    private var twitchPlayerChatCorner = TwitchPlayerChatCorner.TOP_END
+
+    private fun currentTwitchPlayerChatTarget(): TwitchPlayerChatTarget? {
+        val overlay = currentTwitchStreamerOverlay() ?: return null
+        val login = twitchChannelFromUrl(overlay.profileUrl)
+            ?: cleanTwitchProfileChannel(firstTwitchOverlayParam("cs_streamer_login"))
+            ?: return null
+
+        return TwitchPlayerChatTarget(
+            login = login,
+            displayName = overlay.displayName.ifBlank { login },
+            avatarUrl = overlay.avatarUrl,
+        )
+    }
+
+    private fun View.twitchPlayerChatDp(value: Int): Int {
+        return (value * resources.displayMetrics.density + 0.5f).toInt()
+    }
+
+    private fun applyTwitchPlayerChatCorner(overlay: View) {
+        val params = overlay.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
+            ?: return
+
+        val parent = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+        val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+
+        params.startToStart = unset
+        params.startToEnd = unset
+        params.endToStart = unset
+        params.endToEnd = unset
+        params.topToTop = unset
+        params.topToBottom = unset
+        params.bottomToTop = unset
+        params.bottomToBottom = unset
+
+        val sideMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 64 else 20)
+        val topMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 56 else 44)
+        val bottomMargin = overlay.twitchPlayerChatDp(16)
+
+        params.leftMargin = 0
+        params.rightMargin = 0
+        params.topMargin = 0
+        params.bottomMargin = 0
+
+        when (twitchPlayerChatCorner) {
+            TwitchPlayerChatCorner.TOP_START -> {
+                params.startToStart = parent
+                params.topToTop = parent
+                params.leftMargin = sideMargin
+                params.topMargin = topMargin
+            }
+            TwitchPlayerChatCorner.TOP_END -> {
+                params.endToEnd = parent
+                params.topToTop = parent
+                params.rightMargin = sideMargin
+                params.topMargin = topMargin
+            }
+            TwitchPlayerChatCorner.BOTTOM_START -> {
+                params.startToStart = parent
+                params.bottomToTop = R.id.bottom_player_bar
+                params.leftMargin = sideMargin
+                params.bottomMargin = bottomMargin
+            }
+            TwitchPlayerChatCorner.BOTTOM_END -> {
+                params.endToEnd = parent
+                params.bottomToTop = R.id.bottom_player_bar
+                params.rightMargin = sideMargin
+                params.bottomMargin = bottomMargin
+            }
+        }
+
+        overlay.layoutParams = params
+    }
+
+    private fun updateTwitchPlayerChatText(target: TwitchPlayerChatTarget) {
+        val root = playerBinding?.root ?: return
+
+        root.findViewById<android.widget.TextView>(R.id.twitch_player_chat_title)?.text =
+            "Twitch chat"
+        root.findViewById<android.widget.TextView>(R.id.twitch_player_chat_status)?.text =
+            "@${target.login} â€¢ ${target.displayName}"
+        root.findViewById<android.widget.TextView>(R.id.twitch_player_chat_hint)?.text =
+            "Chat overlay foundation ready.\nHistorical messages, live IRC, and emotes are next.\nPosition: ${twitchPlayerChatCorner.label}\nClick chat to hide. Long-press chat to move."
+    }
+
+    private fun cycleTwitchPlayerChatCorner() {
+        twitchPlayerChatCorner = twitchPlayerChatCorner.next()
+        playerBinding?.root
+            ?.findViewById<View>(R.id.twitch_player_chat_overlay)
+            ?.let { applyTwitchPlayerChatCorner(it) }
+
+        Toast.makeText(
+            context,
+            "Chat moved to ${twitchPlayerChatCorner.label}",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    private fun updateTwitchPlayerChatOverlay() {
+        val root = playerBinding?.root ?: return
+        val button = root.findViewById<View>(R.id.twitch_player_chat_button) as? android.widget.ImageButton
+            ?: return
+        val overlayView = root.findViewById<View>(R.id.twitch_player_chat_overlay)
+            ?: return
+
+        val target = currentTwitchPlayerChatTarget()
+        val hasChatTarget = target != null
+
+        button.isVisible = hasChatTarget
+        button.isEnabled = hasChatTarget
+        button.isClickable = hasChatTarget
+        button.isFocusable = hasChatTarget
+        button.setImageResource(R.drawable.ic_twitch_player_chat)
+        button.contentDescription = if (twitchPlayerChatVisible) {
+            "Hide Twitch chat"
+        } else {
+            "Show Twitch chat"
+        }
+
+        overlayView.isVisible = hasChatTarget && twitchPlayerChatVisible
+
+        if (!hasChatTarget) {
+            twitchPlayerChatVisible = false
+            overlayView.isVisible = false
+            button.setOnClickListener(null)
+            button.setOnLongClickListener(null)
+            return
+        }
+
+        target?.let {
+            applyTwitchPlayerChatCorner(overlayView)
+            updateTwitchPlayerChatText(it)
+        }
+
+        button.setOnClickListener {
+            twitchPlayerChatVisible = !twitchPlayerChatVisible
+            updateTwitchPlayerChatOverlay()
+        }
+
+        button.setOnLongClickListener {
+            cycleTwitchPlayerChatCorner()
+            updateTwitchPlayerChatOverlay()
+            true
+        }
+    }
+    // END TwitchPlayerChatFoundationPatch
+
+private fun updateTwitchPlayerControls() {
         playerBinding?.playerResizeBtt?.isVisible = playerResizeEnabled && !isTwitchPlayback()
         updateTwitchStreamerOverlay()
+        updateTwitchPlayerChatOverlay()
     }
 
     // BEGIN TwitchPlayerStreamerOverlayPatch

@@ -931,6 +931,69 @@
             </LinearLayout>
 
     <ImageButton
+        android:id="@+id/twitch_player_chat_button"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginEnd="72dp"
+        android:layout_marginBottom="10dp"
+        android:background="@drawable/twitch_player_profile_button_bg"
+        android:clickable="true"
+        android:contentDescription="Toggle Twitch chat"
+        android:focusable="true"
+        android:padding="8dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_twitch_player_chat"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/bottom_player_bar"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/twitch_player_chat_overlay"
+        android:layout_width="300dp"
+        android:layout_height="220dp"
+        android:layout_marginTop="44dp"
+        android:layout_marginEnd="20dp"
+        android:background="@drawable/twitch_player_chat_overlay_bg"
+        android:elevation="18dp"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/twitch_player_chat_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Twitch chat"
+            android:textColor="#FFFFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/twitch_player_chat_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Chat overlay ready"
+            android:textColor="#DDFFFFFF"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/twitch_player_chat_hint"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="10dp"
+            android:layout_weight="1"
+            android:gravity="bottom"
+            android:text="Click the chat button to hide. Long-press the chat button to move corners."
+            android:textColor="#AAFFFFFF"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <ImageButton
                                     android:id="@+id/twitch_player_streamer_chip"
                                     android:layout_width="40dp"
                                     android:layout_height="40dp"
