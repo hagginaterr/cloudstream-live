@@ -1,4 +1,4 @@
-package recloudstream.twitchlivefavorites
+﻿package recloudstream.twitchlivefavorites
 
 import com.lagradost.cloudstream3.MainActivity
 import com.lagradost.cloudstream3.TvType
@@ -10,6 +10,7 @@ import com.lagradost.cloudstream3.utils.DataStoreHelper
 import java.net.URLEncoder
 
 object TwitchAccountAuth {
+    // TwitchDeviceFlowPendingFixV2: keep QR login open while Twitch is waiting for phone approval.
     private const val CLIENT_ID_MISSING = "Twitch client ID is missing from this build."
     private const val OAUTH_DEVICE_URL = "https://id.twitch.tv/oauth2/device"
     private const val OAUTH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
@@ -52,6 +53,10 @@ object TwitchAccountAuth {
         val refresh_token: String = "",
         val scope: List<String> = emptyList(),
         val token_type: String = "",
+        val error: String = "",
+        val message: String = "",
+        val error_description: String = "",
+        val status: Int = 0,
     )
 
     private data class TwitchUsersResponse(
@@ -153,10 +158,24 @@ object TwitchAccountAuth {
             ).parsed<TwitchTokenResponse>()
         } catch (t: Throwable) {
             val message = (t.message ?: "").lowercase()
-            if (message.contains("authorization_pending") || message.contains("slow_down")) {
+            if (message.isPendingDeviceAuth()) {
                 return null
             }
             throw t
+        }
+
+        val pendingError = token.error
+            .ifBlank { token.message }
+            .ifBlank { token.error_description }
+            .lowercase()
+
+        if (token.access_token.isBlank() && pendingError.isPendingDeviceAuth()) {
+            return null
+        }
+
+        if (token.access_token.isBlank()) {
+            val detail = pendingError.ifBlank { "empty token" }
+            throw IllegalStateException("Twitch sign in failed: $detail")
         }
 
         saveToken(token)
@@ -200,11 +219,30 @@ object TwitchAccountAuth {
                     "refresh_token" to refreshToken,
                 ),
             ).parsed<TwitchTokenResponse>()
-            saveToken(token)
+            val pendingError = token.error
+            .ifBlank { token.message }
+            .ifBlank { token.error_description }
+            .lowercase()
+
+        if (token.access_token.isBlank() && pendingError.isPendingDeviceAuth()) {
+            return null
+        }
+
+        if (token.access_token.isBlank()) {
+            val detail = pendingError.ifBlank { "empty token" }
+            throw IllegalStateException("Twitch sign in failed: $detail")
+        }
+
+        saveToken(token)
             token.access_token.takeIf { it.isNotBlank() }
         }.getOrNull()
     }
 
+    private fun String.isPendingDeviceAuth(): Boolean {
+        return contains("authorization_pending") ||
+                contains("slow_down") ||
+                contains("pending")
+    }
     private fun saveToken(token: TwitchTokenResponse) {
         if (token.access_token.isBlank()) throw IllegalStateException("Twitch returned an empty access token.")
         setKey(ACCESS_TOKEN_KEY, token.access_token)
