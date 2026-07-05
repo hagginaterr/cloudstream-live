@@ -1102,15 +1102,25 @@ private fun showTwitchQualityDialog(): Boolean {
         val labels = links.map { twitchQualityLabel(it.first) }
         val selectedIndex = links.indexOf(currentSelectedLink).coerceAtLeast(0)
 
+        // TwitchInstantQualityPickerPatch:
+        // Source/quality selections should apply immediately for streams.
+        // Passing showApply = false hides Apply/Cancel and makes the dialog
+        // select + dismiss on click. We remember the current play state and
+        // resume after swapping the HLS variant so changing quality does not
+        // leave the stream paused.
         activity?.showDialog(
             labels,
             selectedIndex,
             "Twitch quality",
-            true,
+            false,
             {},
         ) { index ->
             links.getOrNull(index)?.let { selected ->
+                val resumeAfterQualityChange = player.getIsPlaying()
                 loadLink(selected, true)
+                if (resumeAfterQualityChange) {
+                    player.handleEvent(CSPlayerEvent.Play)
+                }
             }
         }
 
