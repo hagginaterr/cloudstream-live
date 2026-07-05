@@ -236,15 +236,26 @@ open class LinearListLayout(context: Context?) :
 
             // if out of bounds then refocus as specified
             return if (lookFor >= itemCount) {
-                getNextDirection(
-                    focused,
-                    if (orientation == HORIZONTAL) FocusDirection.End else FocusDirection.Down
-                )
+                // TvHorizontalRowTrap by ChatGPT: LEFT/RIGHT at the row edge must
+                // stay in this row. Android TV focus search can otherwise escape
+                // vertically to a row above/below when the user fast-scrolls.
+                if (isLayout(TV) && orientation == HORIZONTAL) {
+                    focused
+                } else {
+                    getNextDirection(
+                        focused,
+                        if (orientation == HORIZONTAL) FocusDirection.End else FocusDirection.Down
+                    )
+                }
             } else if (lookFor < 0) {
-                getNextDirection(
-                    focused,
-                    if (orientation == HORIZONTAL) FocusDirection.Start else FocusDirection.Up
-                )
+                if (isLayout(TV) && orientation == HORIZONTAL) {
+                    focused
+                } else {
+                    getNextDirection(
+                        focused,
+                        if (orientation == HORIZONTAL) FocusDirection.Start else FocusDirection.Up
+                    )
+                }
             } else {
             getViewFromPos(lookFor) ?: run {
                 if (isLayout(TV) && orientation == HORIZONTAL && isHorizontalFocusDirection(direction)) {

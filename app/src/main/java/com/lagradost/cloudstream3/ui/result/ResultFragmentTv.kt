@@ -181,13 +181,14 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     ) {
         if (row == null) return
         row.spanCount = spanCount
-        row.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(
-            row.context,
-            androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL,
-            false,
-        )
+        row.setLinearListLayout(
+        isHorizontal = true,
+        nextLeft = FOCUS_SELF,
+        nextRight = FOCUS_SELF,
+    )
+    (row.layoutManager as? LinearListLayout)?.initialPrefetchItemCount = 8
         row.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
-        row.isNestedScrollingEnabled = true
+        row.isNestedScrollingEnabled = false
         row.setRecycledViewPool(SearchAdapter.sharedPool)
         row.adapter = SearchAdapter(
             row,
@@ -531,11 +532,12 @@ activity?.window?.decorView?.clearFocus()
             //}
 
             resultRecommendationsList.spanCount = 4
-            resultRecommendationsList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(
-                resultRecommendationsList.context,
-                androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL,
-                false
+            resultRecommendationsList.setLinearListLayout(
+                isHorizontal = true,
+                nextLeft = FOCUS_SELF,
+                nextRight = FOCUS_SELF,
             )
+            (resultRecommendationsList.layoutManager as? LinearListLayout)?.initialPrefetchItemCount = 8
             resultRecommendationsList.isNestedScrollingEnabled = false
             resultRecommendationsList.setRecycledViewPool(SearchAdapter.sharedPool)
             resultRecommendationsList.adapter =
