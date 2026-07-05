@@ -17,16 +17,17 @@ const val PREFERRED_LIVE_OFFSET = 5_000L
 const val CHUNK_VARIANCE = 3_000L
 
 // A livestream chunk from the player. The time we get it and the duration can
-// be used to calculate the expected live timestamp.
+// be used to calculate the expected live timestamp for streams where Media3
+// cannot expose a trustworthy currentLiveOffset.
 class LivestreamChunk(
-    durationMs: Long,
+    val durationMs: Long,
     val receiveTimeMs: Long = System.currentTimeMillis(),
 ) {
     // We want to be PREFERRED_LIVE_OFFSET ms after the latest update, but we
     // cannot be ahead of the middle point. If we are ahead of the middle point
     // we will reach the end before the new chunk is expected to be released.
     val targetPosition = maxOf(
-        0,
+        0L,
         minOf(
             durationMs - PREFERRED_LIVE_OFFSET,
             durationMs / 2 - CHUNK_VARIANCE,
@@ -44,24 +45,12 @@ class LivestreamChunk(
         val livePosition = targetPosition + (currentTime - receiveTimeMs)
         return position - livePosition
     }
-
-    fun getTimeBehindPreferredLiveEdgeForDisplay(position: Long): Long {
-        val currentTime = System.currentTimeMillis()
-        val livePosition = targetPosition + (currentTime - receiveTimeMs)
-        val preferredLivePosition = livePosition - PREFERRED_LIVE_OFFSET
-        return maxOf(0L, preferredLivePosition - position)
-    }
 }
 
 // There are two types of livestreams we need to manage:
 // 1. A livestream with no history, a continually sliding window.
-//    This livestream has no currentLiveOffset, which means we need to calculate
-//    the real live point based on when we receive the latest update and the
-//    size of that update.
-// 2. A livestream with history.
-//    This livestream has a currentLiveOffset and therefore requires no
-//    calculation to get the live point. currentLiveOffset can however be
-//    inaccurate, and we need to be able to fall back to manual calculations.
+// 2. A livestream with history / live-DVR, where currentLiveOffset is the
+//    reliable signal for "how far behind live" the player currently is.
 class LiveManager(player: Player?) {
     private var _currentPlayer: WeakReference<Player>? = player?.let { WeakReference(it) }
     val currentPlayer: Player? get() = _currentPlayer?.get()
@@ -95,29 +84,63 @@ class LiveManager(player: Player?) {
         return maxOf(0, ahead)
     }
 
+    private fun hasReliableLiveDvrOffset(player: Player): Boolean {
+        val duration = player.duration
+        val liveOffset = player.currentLiveOffset
+
+        return player.isCurrentMediaItemDynamic &&
+            duration != C.TIME_UNSET &&
+            duration > 0L &&
+            liveOffset != C.TIME_UNSET &&
+            liveOffset >= 0L &&
+            liveOffset < duration
+    }
+
+    fun getSeekbarDisplayDuration(): Long? {
+        val player = currentPlayer ?: return null
+        val duration = player.duration
+
+        if (!player.isCurrentMediaItemDynamic) return null
+        if (duration != C.TIME_UNSET && duration > 0L) return duration
+
+        return lastLivestreamChunk
+            ?.durationMs
+            ?.takeIf { it > 0L }
+    }
+
     /**
      * Converts raw player positions into a display-only seekbar position for
-     * live-DVR streams. Actual seeking is not changed.
+     * live-DVR streams.
+     *
+     * This intentionally only runs when currentLiveOffset is reliable. If
+     * currentLiveOffset is unavailable, we fall back to raw Media3 behavior
+     * instead of guessing, because guessing is what caused negative timestamps
+     * and halfway-bar placement.
      */
     fun getSeekbarDisplayPosition(position: Long): Long? {
         val player = currentPlayer ?: return null
-        val duration = player.duration
-        if (!player.isCurrentMediaItemDynamic || duration == C.TIME_UNSET || duration <= 0L) {
-            return null
-        }
+        if (!hasReliableLiveDvrOffset(player)) return null
 
-        val behindPreferredLiveEdge = if (
-            player.currentLiveOffset != C.TIME_UNSET &&
-            player.currentLiveOffset >= 0L &&
-            player.currentLiveOffset < duration
-        ) {
-            val offsetAtPosition = player.currentLiveOffset + (player.currentPosition - position)
-            maxOf(0L, offsetAtPosition - PREFERRED_LIVE_OFFSET)
-        } else {
-            lastLivestreamChunk?.getTimeBehindPreferredLiveEdgeForDisplay(position) ?: return null
-        }
+        val duration = getSeekbarDisplayDuration() ?: return null
+        val rawOffsetFromCurrent = player.currentPosition - position
+        val offsetAtPosition = (player.currentLiveOffset + rawOffsetFromCurrent).coerceAtLeast(0L)
+        val behindPreferredLiveEdge = (offsetAtPosition - PREFERRED_LIVE_OFFSET).coerceAtLeast(0L)
 
         return (duration - behindPreferredLiveEdge).coerceIn(0L, duration)
+    }
+
+    fun getSeekbarDisplayBufferedPosition(bufferedPosition: Long): Long? {
+        val player = currentPlayer ?: return null
+        if (!hasReliableLiveDvrOffset(player)) return null
+
+        val duration = getSeekbarDisplayDuration() ?: return null
+        val normalized = getSeekbarDisplayPosition(bufferedPosition) ?: duration
+
+        // For live-DVR playback the area from the current position to the live
+        // edge is normally available or about to be available. Keep the
+        // buffered marker at least at the normalized position and never beyond
+        // the display duration.
+        return maxOf(normalized, duration).coerceIn(0L, duration)
     }
 
     /**
