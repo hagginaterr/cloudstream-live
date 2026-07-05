@@ -794,10 +794,6 @@ private fun getSavedFavoriteChannels(): List<String> {
                 .ifBlank { followedChannel.broadcaster_login }
                 .ifBlank { "Twitch" }
             val channelAvatar = fetchTwitchProfileAvatar(followedChannel.broadcaster_login)
-
-
-            val followedUser = fetchUsers(listOf(followedChannel.broadcaster_login))[normalizeChannel(followedChannel.broadcaster_login)]
-            val channelAvatar = followedUser?.profile_image_url?.ifBlank { null }
 val response = twitchGet<TwitchVideosResponse>(
                 buildHelixUrl(
                     "videos",
@@ -865,10 +861,6 @@ val response = twitchGet<TwitchVideosResponse>(
                 .ifBlank { followedChannel.broadcaster_login }
                 .ifBlank { "Twitch" }
             val channelAvatar = fetchTwitchProfileAvatar(followedChannel.broadcaster_login)
-
-
-            val followedUser = fetchUsers(listOf(followedChannel.broadcaster_login))[normalizeChannel(followedChannel.broadcaster_login)]
-            val channelAvatar = followedUser?.profile_image_url?.ifBlank { null }
 val response = twitchGet<TwitchClipsResponse>(
                 buildHelixUrl(
                     "clips",
