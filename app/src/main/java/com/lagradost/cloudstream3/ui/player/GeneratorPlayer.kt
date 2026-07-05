@@ -1099,6 +1099,26 @@ class GeneratorPlayer : FullScreenPlayer() {
             ?.ifBlank { null }
     }
 
+    private fun isLikelyTwitchMediaThumbnail(value: String?): Boolean {
+        val lower = value?.lowercase() ?: return false
+        return lower.contains("previews-ttv") ||
+            lower.contains("cf_vods") ||
+            lower.contains("clips-media-assets") ||
+            lower.contains("-preview-") ||
+            lower.contains("-social-preview") ||
+            lower.contains("/vod/") ||
+            lower.contains("thumb")
+    }
+
+    private fun strictTwitchProfileAvatar(value: String?): String? {
+        val clean = value?.trim()?.ifBlank { null } ?: return null
+        val lower = clean.lowercase()
+        if (!lower.startsWith("http")) return null
+        if (lower.contains("%{width}") || lower.contains("{width}")) return null
+        if (isLikelyTwitchMediaThumbnail(lower)) return null
+        return clean
+    }
+
     private fun hasTwitchOverlaySignal(): Boolean {
         if (isTwitchPlayback()) return true
         if (firstTwitchOverlayParam("cs_streamer_login") != null) return true
@@ -1148,12 +1168,6 @@ class GeneratorPlayer : FullScreenPlayer() {
             }
             ?: profileChannel
 
-        // Important: never fall back to response.posterUrl or ResultEpisode.poster here.
-        // Those are media thumbnails for VODs/clips/highlights; this button must only use the streamer avatar.
-        val avatarUrl = explicitAvatar?.takeIf {
-            it.isNotBlank() && !it.contains("%{width}", ignoreCase = true)
-        }
-
         val apiName = explicitApiName
             ?: when (meta) {
                 is ResultEpisode -> meta.apiName
@@ -1163,44 +1177,45 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         return TwitchPlayerStreamerOverlay(
             displayName = displayName,
-            avatarUrl = avatarUrl,
-            profileUrl = "https://www.twitch.tv/$profileChannel",
+            avatarUrl = strictTwitchProfileAvatar(explicitAvatar),
+            profileUrl = "https://www.twitch.tv/",
             apiName = apiName,
         )
     }
 
-        private fun openTwitchStreamerProfile(overlay: TwitchPlayerStreamerOverlay) {
+    private fun twitchResultNavigationDestinationId(): Int {
+        val act = activity ?: return 0
+        val candidates = listOf("navigation_results_tv", "navigation_results", "global_to_navigation_results_tv", "global_to_navigation_results_phone", "navigation_results_phone", "action_navigation_results_phone_to_navigation_quick_search", "action_navigation_results_phone_to_navigation_player", "action_navigation_results_tv_to_navigation_quick_search", "action_navigation_results_tv_to_navigation_player", "action_navigation_results_to_navigation_quick_search", "action_navigation_results_to_navigation_player", "result", "results", "resultFragment", "result_fragment", "fragment_result", "result_fragment_tv", "resultFragmentTv", "navigation_result")
+        return candidates
+            .asSequence()
+            .map { act.resources.getIdentifier(it, "id", act.packageName) }
+            .firstOrNull { it != 0 }
+            ?: 0
+    }
+
+    private fun openTwitchStreamerProfile(overlay: TwitchPlayerStreamerOverlay) {
         val act = activity
         val apiName = overlay.apiName?.takeIf { it.isNotBlank() }
+        val resultNavId = twitchResultNavigationDestinationId()
 
-        if (act != null && apiName != null) {
-            val resultsNavId = act.resources.getIdentifier(
-                "navigation_results",
-                "id",
-                act.packageName,
-            )
-
-            if (resultsNavId != 0) {
-                runCatching {
-                    act.navigate(
-                        resultsNavId,
-                        ResultFragment.newInstance(
-                            overlay.profileUrl,
-                            apiName,
-                            overlay.displayName,
-                        ),
-                    )
-                    return
-                }.onFailure { error ->
-                    logError(error)
-                }
-            }
+        if (act == null || apiName == null || resultNavId == 0) {
+            Toast.makeText(context, "Could not open Twitch profile in app", Toast.LENGTH_SHORT).show()
+            return
         }
 
         runCatching {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(overlay.profileUrl)))
+            playerHostView?.exitFullscreen()
+            act.navigate(
+                resultNavId,
+                ResultFragment.newInstance(
+                    overlay.profileUrl,
+                    apiName,
+                    overlay.displayName,
+                ),
+            )
         }.onFailure { error ->
             logError(error)
+            Toast.makeText(context, "Could not open Twitch profile in app", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1215,7 +1230,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         button.isFocusable = overlay != null
         button.iconTint = null
         button.text = ""
-        button.contentDescription = overlay?.let { "Open ${it.displayName} on Twitch" }
+        button.contentDescription = overlay?.let { "Open  on Twitch" }
 
         if (overlay == null) {
             button.setIconResource(R.drawable.twitch_player_streamer_avatar_placeholder)

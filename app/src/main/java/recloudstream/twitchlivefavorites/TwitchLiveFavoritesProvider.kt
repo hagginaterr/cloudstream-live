@@ -647,28 +647,29 @@ private fun getSavedFavoriteChannels(): List<String> {
     }.getOrDefault(value)
     // TwitchPlayerStreamerOverlayPatch: pass streamer metadata through player URLs.
     private fun appendTwitchPlayerStreamerMeta(
-        url: String,
-        login: String?,
-        displayName: String?,
-        avatarUrl: String?,
-    ): String {
-        var out = url
-        val cleanLogin = normalizeChannel(login.orEmpty())
-        val cleanName = displayName?.trim()?.ifBlank { null }
-        val cleanAvatar = avatarUrl?.trim()?.ifBlank { null }
+    url: String,
+    login: String?,
+    displayName: String?,
+    avatarUrl: String?,
+): String {
+    var out = url
+    val cleanLogin = normalizeChannel(login.orEmpty())
+    val cleanName = displayName?.trim()?.ifBlank { null }
+    val cleanAvatar = avatarUrl?.trim()?.ifBlank { null }
 
-        if (cleanLogin.isNotBlank()) {
-            out = appendTwitchProfileQueryParam(out, "cs_streamer_login", cleanLogin)
-        }
-        if (cleanName != null) {
-            out = appendTwitchProfileQueryParam(out, "cs_streamer_name", cleanName)
-        }
-        if (cleanAvatar != null) {
-            out = appendTwitchProfileQueryParam(out, "cs_streamer_avatar", cleanAvatar)
-        }
-
-        return out
+    if (cleanLogin.isNotBlank()) {
+        out = appendTwitchProfileQueryParam(out, "cs_streamer_login", cleanLogin)
     }
+    if (cleanName != null) {
+        out = appendTwitchProfileQueryParam(out, "cs_streamer_name", cleanName)
+    }
+    if (cleanAvatar != null) {
+        out = appendTwitchProfileQueryParam(out, "cs_streamer_avatar", cleanAvatar)
+    }
+    out = appendTwitchProfileQueryParam(out, "cs_api_name", name)
+
+    return out
+}
 
 
     private fun buildHelixUrl(
@@ -705,6 +706,14 @@ private fun getSavedFavoriteChannels(): List<String> {
         return users
     }
 
+
+    private suspend fun fetchTwitchProfileAvatar(channel: String?): String? {
+        val normalized = normalizeChannel(channel.orEmpty())
+        if (normalized.isBlank()) return null
+        return fetchUsers(listOf(normalized))[normalized]
+            ?.profile_image_url
+            ?.ifBlank { null }
+    }
     private val followedHomeChannelRequestLimit = 5
     private val followedHomeMaxItemsPerRow = 12
 
@@ -784,6 +793,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             val displayName = followedChannel.broadcaster_name
                 .ifBlank { followedChannel.broadcaster_login }
                 .ifBlank { "Twitch" }
+            val channelAvatar = fetchTwitchProfileAvatar(followedChannel.broadcaster_login)
 
 
             val followedUser = fetchUsers(listOf(followedChannel.broadcaster_login))[normalizeChannel(followedChannel.broadcaster_login)]
@@ -854,6 +864,7 @@ val response = twitchGet<TwitchVideosResponse>(
             val displayName = followedChannel.broadcaster_name
                 .ifBlank { followedChannel.broadcaster_login }
                 .ifBlank { "Twitch" }
+            val channelAvatar = fetchTwitchProfileAvatar(followedChannel.broadcaster_login)
 
 
             val followedUser = fetchUsers(listOf(followedChannel.broadcaster_login))[normalizeChannel(followedChannel.broadcaster_login)]
@@ -1083,7 +1094,7 @@ val response = twitchGet<TwitchClipsResponse>(
         return FavoriteChannel(
             channel = normalized,
             displayName = displayName.ifBlank { normalized },
-            image = profile ?: preview,
+            image = profile,
             poster = preview ?: offline ?: profile,
             isLive = stream != null,
             language = stream?.language?.ifBlank { null },
@@ -1627,20 +1638,21 @@ private fun formatViewerCount(count: Int?): String? {
     }
     // BEGIN TwitchStreamerMetadataUrlPatch
     private fun appendTwitchStreamerMeta(
-        url: String,
-        displayName: String?,
-        channel: String?,
-        avatarUrl: String?,
-    ): String {
-        var out = url
-        val cleanName = displayName?.ifBlank { null }
-        val cleanChannel = channel?.let { normalizeChannel(it) }?.ifBlank { null }
-        val cleanAvatar = avatarUrl?.ifBlank { null }
-        if (cleanName != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_name", cleanName)
-        if (cleanChannel != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_login", cleanChannel)
-        if (cleanAvatar != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_avatar", cleanAvatar)
-        return out
-    }
+    url: String,
+    displayName: String?,
+    channel: String?,
+    avatarUrl: String?,
+): String {
+    var out = url
+    val cleanName = displayName?.ifBlank { null }
+    val cleanChannel = channel?.let { normalizeChannel(it) }?.ifBlank { null }
+    val cleanAvatar = avatarUrl?.ifBlank { null }
+    if (cleanName != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_name", cleanName)
+    if (cleanChannel != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_login", cleanChannel)
+    if (cleanAvatar != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_avatar", cleanAvatar)
+    out = appendTwitchProfileQueryParam(out, "cs_api_name", name)
+    return out
+}
     // END TwitchStreamerMetadataUrlPatch
     private fun twitchProfileMediaParam(url: String, key: String): String? {
         val query = url.substringAfter("?", "")
@@ -1792,28 +1804,42 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
     }
 
     private suspend fun twitchProfileMediaLoadResponse(url: String): LoadResponse {
-    val marker = twitchProfileMediaMarker(url).orEmpty()
-    val clipVideoUrl = twitchProfileMediaParam(url, "cs_clip_video")?.takeIf { isTwitchClipDirectVideoUrl(it) }
-    val cleanUrl = stripTwitchProfileMediaMarker(url)
-    val fallbackTitle = when (marker) {
-        "clip" -> "Twitch Clip"
-        "highlight" -> "Twitch Highlight"
-        else -> "Twitch Past Broadcast"
+        val marker = twitchProfileMediaMarker(url).orEmpty()
+        val clipVideoUrl = twitchProfileMediaParam(url, "cs_clip_video")?.takeIf { isTwitchClipDirectVideoUrl(it) }
+        val cleanUrl = stripTwitchProfileMediaMarker(url)
+
+        val fallbackTitle = when (marker) {
+            "clip" -> "Twitch Clip"
+            "highlight" -> "Twitch Highlight"
+            else -> "Twitch Past Broadcast"
+        }
+        val title = twitchProfileMediaParam(url, "cs_title") ?: fallbackTitle
+        val mediaTag = when (marker) {
+            "clip" -> "Clip"
+            "highlight" -> "Highlight"
+            else -> "Past Broadcast"
+        }
+
+        val age = twitchProfileMediaParam(url, "cs_age")
+        val views = twitchProfileMediaParam(url, "cs_views")
+        val duration = twitchProfileMediaParam(url, "cs_duration")
+        val streamerLogin = twitchProfileMediaParam(url, "cs_streamer_login")
+        val streamerName = twitchProfileMediaParam(url, "cs_streamer_name") ?: streamerLogin
+        val streamerAvatar = twitchProfileMediaParam(url, "cs_streamer_avatar")
+            ?: fetchTwitchProfileAvatar(streamerLogin)
+
+        val playerUrl = appendTwitchPlayerStreamerMeta(
+            cleanUrl,
+            streamerLogin,
+            streamerName,
+            streamerAvatar,
+        )
+
+        return newLiveStreamLoadResponse(title, playerUrl, playerUrl) {
+            plot = "Open this Twitch $mediaTag."
+            this@newLiveStreamLoadResponse.tags = listOfNotNull("Twitch", mediaTag, age, views, duration)
+        }
     }
-    val title = twitchProfileMediaParam(url, "cs_title") ?: fallbackTitle
-    val mediaTag = when (marker) {
-        "clip" -> "Clip"
-        "highlight" -> "Highlight"
-        else -> "Past Broadcast"
-    }
-    val age = twitchProfileMediaParam(url, "cs_age")
-    val views = twitchProfileMediaParam(url, "cs_views")
-    val duration = twitchProfileMediaParam(url, "cs_duration")
-    return newLiveStreamLoadResponse(title, cleanUrl, cleanUrl) {
-        plot = "Open this Twitch $mediaTag."
-        this@newLiveStreamLoadResponse.tags = listOfNotNull("Twitch", mediaTag, age, views, duration)
-    }
-}
 
 // END TWITCH_PROFILE_MEDIA_PROVIDER_ROWS
     private fun ChannelSummary.toChannelCard(): LiveSearchResponse {
@@ -1932,25 +1958,30 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
         if (videoId.isBlank()) return statusResponse("channel-not-found")
 
         val video = fetchVideo(videoId)
-        val videoUrl = appendTwitchStreamerMeta(
+        val streamerLogin = normalizeChannel(video?.user_login.orEmpty())
+        val streamerInfo = if (streamerLogin.isNotBlank()) fetchChannel(streamerLogin) else null
+        val streamerDisplayName = video?.user_name?.takeIf { it.isNotBlank() }
+            ?: streamerInfo?.displayName
+            ?: streamerLogin
+        val streamerAvatar = fetchTwitchProfileAvatar(streamerLogin)
+
+        val baseVideoUrl = appendTwitchStreamerMeta(
             twitchVideoUrl(videoId),
-            video?.user_name?.takeIf { it.isNotBlank() } ?: video?.user_login,
-            video?.user_login,
-            null,
+            streamerDisplayName,
+            streamerLogin,
+            streamerAvatar,
         )
-        val title = cleanTwitchText(video?.title) ?: "Past broadcast"
-        val poster = cacheBustImage(resizeTwitchImage(video?.thumbnail_url, 640, 360), nowMs())
-        val streamerInfo = fetchChannel(video?.user_login.orEmpty())
-        val streamerLogin = streamerInfo?.channel ?: video?.user_login.orEmpty()
-        val streamerDisplayName = streamerInfo?.displayName ?: streamerLogin
-        val streamerAvatar = streamerInfo?.image
         val playerVideoUrl = appendTwitchPlayerStreamerMeta(
-            videoUrl,
+            baseVideoUrl,
             streamerLogin,
             streamerDisplayName,
             streamerAvatar,
         )
-        val profileRecommendations = fetchTwitchProfileRecommendations(video?.user_login.orEmpty())
+
+        val title = cleanTwitchText(video?.title) ?: "Past broadcast"
+        val poster = cacheBustImage(resizeTwitchImage(video?.thumbnail_url, 640, 360), nowMs())
+        val profileRecommendations = fetchTwitchProfileRecommendations(streamerLogin)
+
         val tagList = listOfNotNull(
             "Past Broadcast",
             video?.duration?.ifBlank { null },
@@ -1968,7 +1999,7 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
             backgroundPosterUrl = poster
             this@newLiveStreamLoadResponse.tags = tagList
             recommendations = profileRecommendations
-}
+        }
     }
 private suspend fun channelLoadResponse(url: String): LoadResponse {
         val channel = normalizeChannel(url)
@@ -1981,11 +2012,12 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             formatViewerCount(info.viewerCount),
             info.language,
         )
+        val streamerAvatar = fetchTwitchProfileAvatar(info.channel)
         val streamUrl = appendTwitchStreamerMeta(
             twitchUrl(info.channel),
             info.displayName,
             info.channel,
-            cacheBustImage(info.image, nowMs()),
+            cacheBustImage(streamerAvatar, nowMs()),
         )
 
         return newLiveStreamLoadResponse(info.displayName, streamUrl, streamUrl) {
@@ -1994,7 +2026,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             backgroundPosterUrl = cacheBustImage(info.poster, nowMs())
             this@newLiveStreamLoadResponse.tags = tagList
             recommendations = profileRecommendations
-}
+        }
     }
 
     private suspend fun searchChannels(query: String): List<ChannelSummary> {
