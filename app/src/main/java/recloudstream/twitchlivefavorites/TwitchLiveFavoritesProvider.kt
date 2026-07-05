@@ -282,6 +282,7 @@ private data class TwitchSearchResponse(
     )
 
     private data class TwitchGqlClipQuality(
+        val frameRate: Double? = null,
         val quality: String? = null,
         val sourceURL: String? = null,
     )
@@ -1392,7 +1393,7 @@ private suspend fun fetchTwitchClipRecommendations(user: TwitchUser): List<LiveS
         val views = formatViewCount(clip.view_count)
         val durationText = if (clip.duration > 0f) "${clip.duration.toInt()}s" else null
         val clipVideoUrl = twitchClipDirectVideoUrl(clip.thumbnail_url)
-        val baseClipUrl = clipVideoUrl ?: watchUrl; val cardUrl = appendTwitchProfileQueryParam(twitchProfileMediaCardUrl(baseClipUrl, "clip", displayTitle, age, null, views, durationText), "cs_clip_video", clipVideoUrl)
+        val cardUrl = appendTwitchProfileQueryParam(twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, null, views, durationText), "cs_clip_video", clipVideoUrl)
         newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(clip.thumbnail_url.ifBlank { null }, nowMs())
             lang = age
@@ -1674,48 +1675,64 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             this.headers = mapOf("User-Agent" to twitchWebUserAgent)
         }
     }
+    private fun signedTwitchClipSourceUrl(sourceUrl: String, token: TwitchPlaybackAccessToken?): String? {
+        val source = sourceUrl.ifBlank { null } ?: return null
+        val nonNullToken = token ?: return null
+        val signature = nonNullToken.signature.ifBlank { null } ?: return null
+        val value = nonNullToken.value.ifBlank { null } ?: return null
+        val separator = if (source.contains("?")) "&" else "?"
+        return "$source${separator}sig=${encode(signature)}&token=${encode(value)}"
+    }
 
     private suspend fun fetchTwitchClipLinks(url: String): List<ExtractorLink> {
-        val direct = twitchProfileMediaParam(url, "cs_clip_video")?.takeIf { isTwitchClipDirectVideoUrl(it) }
         val slug = extractTwitchClipSlug(url)
-        val directFallback = direct?.let { listOf(twitchClipFallbackLink(it)) } ?: emptyList()
+        val direct = twitchProfileMediaParam(url, "cs_clip_video")?.takeIf { isTwitchClipDirectVideoUrl(it) }
+        val directFallback = if (slug.isBlank()) {
+            direct?.let { listOf(twitchClipFallbackLink(it, "$name Clip fallback")) } ?: emptyList()
+        } else {
+            emptyList()
+        }
         if (slug.isBlank()) return directFallback
-
-        val query = """
-            query ClipAccessToken(${'$'}slug: ID!) {
-              clip(slug: ${'$'}slug) {
-                title
-                videoQualities {
-                  quality
-                  sourceURL
-                }
-              }
-            }
-        """.trimIndent()
 
         val response: TwitchGqlClipPlaybackResponse? = twitchGqlPost(
             mapOf(
-                "operationName" to "ClipAccessToken",
-                "query" to query,
+                "operationName" to "VideoAccessToken_Clip",
                 "variables" to mapOf("slug" to slug),
+                "extensions" to mapOf(
+                    "persistedQuery" to mapOf(
+                        "version" to 1,
+                        "sha256Hash" to "36b89d2507fce29e5ca551df756d27c1cfe079e2609642b4390aa4c35796eb11",
+                    ),
+                ),
             ),
         )
 
-        val links = response?.data?.clip?.videoQualities.orEmpty().mapNotNull { item ->
+        val clip = response?.data?.clip ?: return directFallback
+        val token = clip.playbackAccessToken
+        val links = clip.videoQualities.orEmpty().mapNotNull { item ->
             val source = item.sourceURL?.ifBlank { null } ?: return@mapNotNull null
-            val qualityName = item.quality?.ifBlank { null } ?: "720"
-            val quality = getQualityFromName("${qualityName.substringBefore("p")}p")
-            newExtractorLink(name, "$name Clip ${qualityName}p", source) {
+            val signedSource = signedTwitchClipSourceUrl(source, token) ?: return@mapNotNull null
+            val rawQuality = item.quality?.ifBlank { null }.orEmpty()
+            val qualityLabel = when {
+                rawQuality.isBlank() -> "source"
+                rawQuality.endsWith("p", ignoreCase = true) -> rawQuality
+                else -> "${rawQuality}p"
+            }
+            val quality = getQualityFromName(qualityLabel)
+            newExtractorLink(name, "$name Clip $qualityLabel", signedSource) {
                 this.type = ExtractorLinkType.VIDEO
                 this.quality = quality
                 this.referer = "https://clips.twitch.tv/"
-                this.headers = mapOf("User-Agent" to twitchWebUserAgent)
+                this.headers = mapOf(
+                    "User-Agent" to twitchWebUserAgent,
+                    "Referer" to "https://clips.twitch.tv/",
+                )
             }
         }.distinctBy { it.url }
 
         return links.ifEmpty { directFallback }
     }
-override suspend fun loadLinks(
+    override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
