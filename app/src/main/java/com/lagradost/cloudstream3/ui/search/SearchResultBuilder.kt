@@ -107,7 +107,7 @@ object SearchResultBuilder {
         val twitchVodCategory = twitchVodParam("cs_category")
         val twitchVodViews = twitchVodParam("cs_views")
         val twitchVodDuration = twitchVodParam("cs_duration")
-        val twitchVodSubtitle = listOfNotNull(twitchVodAge, twitchVodCategory).joinToString(" - ").ifBlank { (card as? LiveSearchResponse)?.lang?.ifBlank { null } }
+        val twitchVodSubtitle = twitchVodCategory ?: (card as? LiveSearchResponse)?.lang?.ifBlank { null }
         if (card is SyncAPI.LibraryItem) {
             val ratingText = card.personalRating?.toStringNull(0.1, 10, 1)
             val showRating = !ratingText.isNullOrBlank()
@@ -162,6 +162,7 @@ object SearchResultBuilder {
             textFlag?.apply {
                 text = twitchVodAge.orEmpty()
                 isVisible = !twitchVodAge.isNullOrBlank()
+                setBackgroundResource(R.drawable.bg_color_both)
             }
 
             rating?.apply {
@@ -352,7 +353,7 @@ object SearchResultBuilder {
 
         // Requires that the ordering here is the same as in the xml
         val boxes = arrayListOf<TextView>()
-        for (view in arrayOf(textIsDub, textIsSub, rating)) {
+        for (view in arrayOf(textFlag, textIsDub, textIsSub, rating)) {
             if (view?.isVisible == true) {
                 boxes.add(view)
             }

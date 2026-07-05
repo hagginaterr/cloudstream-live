@@ -1275,7 +1275,7 @@ private fun formatViewerCount(count: Int?): String? {
     }
     private fun isTwitchClipDirectVideoUrl(url: String): Boolean {
         val clean = url.substringBefore("?").lowercase()
-        return clean.startsWith("http") && clean.contains("clips") && clean.endsWith(".mp4")
+        return clean.startsWith("http") && clean.endsWith(".mp4") && (clean.contains("clips") || clean.contains("jtvnw") || clean.contains("twitch"))
     }
 private fun twitchProfileMediaCardUrl(
     url: String,
@@ -1399,7 +1399,7 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
         } else {
             stripTwitchProfileMediaMarker(url)
         }
-        val title = when (marker) {
+        val title = twitchProfileMediaParam(url, "cs_title") ?: when (marker) {
             "clip" -> "Twitch Clip"
             "highlight" -> "Twitch Highlight"
             else -> "Twitch Past Broadcast"

@@ -192,7 +192,7 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         row.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
         row.nextFocusLeftId = row.id
         row.nextFocusRightId = row.id
-        row.isNestedScrollingEnabled = false
+        row.isNestedScrollingEnabled = true
         row.setRecycledViewPool(SearchAdapter.sharedPool)
         if (row.adapter !is SearchAdapter) {
             row.adapter = SearchAdapter(
@@ -240,11 +240,9 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
                 pastBroadcasts,
                 4,
             ) { callback ->
-                if (callback.action == SEARCH_ACTION_FOCUSED) {
-                    toggleEpisodes(false)
-                } else {
-                    SearchHelper.handleSearchClickCallback(callback)
-                }
+                if (callback.action != SEARCH_ACTION_FOCUSED) {
+                SearchHelper.handleSearchClickCallback(callback)
+            }
             }
             submitTwitchProfileMediaRow(
                 root.findViewById(R.id.result_clips_list),
@@ -252,11 +250,9 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
                 clips,
                 4,
             ) { callback ->
-                if (callback.action == SEARCH_ACTION_FOCUSED) {
-                    toggleEpisodes(false)
-                } else {
-                    SearchHelper.handleSearchClickCallback(callback)
-                }
+                if (callback.action != SEARCH_ACTION_FOCUSED) {
+                SearchHelper.handleSearchClickCallback(callback)
+            }
             }
             submitTwitchProfileMediaRow(
                 root.findViewById(R.id.result_highlights_list),
@@ -264,11 +260,9 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
                 highlights,
                 4,
             ) { callback ->
-                if (callback.action == SEARCH_ACTION_FOCUSED) {
-                    toggleEpisodes(false)
-                } else {
-                    SearchHelper.handleSearchClickCallback(callback)
-                }
+                if (callback.action != SEARCH_ACTION_FOCUSED) {
+                SearchHelper.handleSearchClickCallback(callback)
+            }
             }
 
             rec?.map { it.apiName }?.distinct()?.let { apiNames ->
