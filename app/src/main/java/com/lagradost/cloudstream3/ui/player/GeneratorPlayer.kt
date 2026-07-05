@@ -510,6 +510,7 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         uiReset()
         currentSelectedLink = link
+        updateTwitchStreamerOverlay()
         updateTwitchPlayerControls()
         updateTwitchStreamerOverlay()
         //  setEpisodes(viewModel.getAllMeta() ?: emptyList())
@@ -1021,13 +1022,14 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     private fun updateTwitchPlayerControls() {
         playerBinding?.playerResizeBtt?.isVisible = playerResizeEnabled && !isTwitchPlayback()
+        updateTwitchStreamerOverlay()
     }
 
     // BEGIN TwitchPlayerStreamerOverlayPatch
     private data class TwitchPlayerStreamerOverlay(
         val displayName: String,
         val avatarUrl: String?,
-        val profileUrl: String
+        val profileUrl: String,
     )
 
     private fun cleanTwitchOverlayText(value: String?): String? {
@@ -1044,15 +1046,24 @@ class GeneratorPlayer : FullScreenPlayer() {
     private fun currentTwitchOverlayCandidateUrls(): List<String> {
         val meta = currentMeta
         val response = viewModel.state.generatorState?.response
+
         return listOfNotNull(
             when (meta) {
                 is ResultEpisode -> meta.data
                 is ExtractorUri -> meta.uri.toString()
                 else -> null
             },
+            when (meta) {
+                is ResultEpisode -> meta.poster
+                else -> null
+            },
             response?.url,
+            response?.posterUrl,
             currentSelectedLink?.first?.url,
             currentSelectedLink?.first?.referer,
+            currentSelectedLink?.first?.name,
+            currentSelectedLink?.second?.uri?.toString(),
+            currentSelectedLink?.second?.name,
         ).filter { it.isNotBlank() }.distinct()
     }
 
@@ -1074,6 +1085,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         val firstPathPart = afterHost.substringBefore("/").trim().removePrefix("@")
         if (firstPathPart.equals("videos", ignoreCase = true)) return null
         if (firstPathPart.equals("clip", ignoreCase = true)) return null
+
         val channel = firstPathPart.filter { it.isLetterOrDigit() || it == '_' }.lowercase()
         return channel.ifBlank { null }
     }
@@ -1087,13 +1099,26 @@ class GeneratorPlayer : FullScreenPlayer() {
             ?.ifBlank { null }
     }
 
+    private fun hasTwitchOverlaySignal(): Boolean {
+        if (isTwitchPlayback()) return true
+        if (firstTwitchOverlayParam("cs_streamer_login") != null) return true
+        if (firstTwitchOverlayParam("cs_streamer_name") != null) return true
+        return currentTwitchOverlayCandidateUrls().any { value ->
+            value.contains("twitch.tv/", ignoreCase = true) ||
+                value.contains("ttvnw.net", ignoreCase = true) ||
+                value.contains("cs_streamer_", ignoreCase = true)
+        }
+    }
+
     private fun currentTwitchStreamerOverlay(): TwitchPlayerStreamerOverlay? {
-        if (!isTwitchPlayback()) return null
+        if (!hasTwitchOverlaySignal()) return null
 
         val meta = currentMeta
         val response = viewModel.state.generatorState?.response
         val explicitName = firstTwitchOverlayParam("cs_streamer_name")
         val explicitChannel = firstTwitchOverlayParam("cs_streamer_login")
+        val explicitAvatar = firstTwitchOverlayParam("cs_streamer_avatar")
+
         val urls = currentTwitchOverlayCandidateUrls()
         val channelFromUrl = urls.mapNotNull { twitchChannelFromUrl(it) }.firstOrNull()
 
@@ -1105,44 +1130,53 @@ class GeneratorPlayer : FullScreenPlayer() {
             else -> null
         }?.trim()?.ifBlank { null }
 
+        val responseUrlChannel = twitchChannelFromUrl(response?.url)
         val profileChannel = explicitChannel
+            ?: responseUrlChannel
             ?: channelFromUrl
             ?: twitchChannelFromName(explicitName)
-            ?: twitchChannelFromName(response?.name)
             ?: twitchChannelFromName(metaName)
             ?: return null
 
         val displayName = cleanTwitchOverlayText(explicitName)
-            ?: cleanTwitchOverlayText(response?.name)?.takeIf { channelFromUrl != null || explicitChannel != null }
-            ?: cleanTwitchOverlayText(metaName)
+            ?: cleanTwitchOverlayText(response?.name)?.takeIf {
+                responseUrlChannel != null || explicitChannel != null
+            }
+            ?: cleanTwitchOverlayText(metaName)?.takeIf {
+                !it.contains("://") && !it.contains(".m3u8", ignoreCase = true)
+            }
             ?: profileChannel
 
-        val metadataAvatar = firstTwitchOverlayParam("cs_streamer_avatar")
-        val responseAvatar = response?.posterUrl?.takeIf { it.isNotBlank() }
-        val metaAvatar = when (meta) {
-            is ResultEpisode -> meta.poster?.takeIf { it.isNotBlank() }
-            else -> null
-        }
-        val avatarUrl = metadataAvatar ?: responseAvatar ?: metaAvatar
+        val avatarUrl = explicitAvatar
+            ?: response?.posterUrl?.takeIf {
+                it.isNotBlank() && !it.contains("%{width}", ignoreCase = true)
+            }
+            ?: when (meta) {
+                is ResultEpisode -> meta.poster?.takeIf { it.isNotBlank() }
+                else -> null
+            }
 
         return TwitchPlayerStreamerOverlay(
             displayName = displayName,
             avatarUrl = avatarUrl,
-            profileUrl = "https://www.twitch.tv/$profileChannel"
+            profileUrl = "https://www.twitch.tv/$profileChannel",
         )
     }
 
     private fun updateTwitchStreamerOverlay() {
-        val overlay = currentTwitchStreamerOverlay()
-        val chip = playerBinding?.twitchPlayerStreamerChip ?: return
-        val name = playerBinding?.twitchPlayerStreamerName
-        val avatar = playerBinding?.twitchPlayerStreamerAvatar
+        val root = playerBinding?.root ?: return
+        val chip = root.findViewById<View>(R.id.twitch_player_streamer_chip) ?: return
+        val name = root.findViewById<TextView>(R.id.twitch_player_streamer_name)
+        val avatar = root.findViewById<ImageView>(R.id.twitch_player_streamer_avatar)
 
+        val overlay = currentTwitchStreamerOverlay()
         chip.isVisible = overlay != null
         chip.bringToFront()
+
         if (overlay == null) {
             name?.text = null
-            avatar?.setImageDrawable(null)
+            avatar?.setImageResource(R.drawable.twitch_player_streamer_avatar_placeholder)
+            avatar?.tag = null
             chip.contentDescription = null
             chip.setOnClickListener(null)
             return
@@ -1159,19 +1193,23 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
 
         val avatarUrl = overlay.avatarUrl
-        avatar?.setImageDrawable(null)
-        if (avatarUrl != null) {
+        avatar?.tag = avatarUrl
+        if (avatarUrl.isNullOrBlank()) {
+            avatar?.setImageResource(R.drawable.twitch_player_streamer_avatar_placeholder)
+        } else {
+            avatar?.setImageResource(R.drawable.twitch_player_streamer_avatar_placeholder)
             ioSafe {
                 val bitmap = context?.getImageBitmapFromUrl(avatarUrl)
                 runOnMainThread {
-                    if (currentTwitchStreamerOverlay()?.avatarUrl == avatarUrl) {
-                        avatar?.setImageBitmap(bitmap)
+                    val currentAvatar = root.findViewById<ImageView>(R.id.twitch_player_streamer_avatar)
+                    if (currentAvatar?.tag == avatarUrl && bitmap != null) {
+                        currentAvatar.setImageBitmap(bitmap)
                     }
                 }
             }
         }
     }
-    // END TwitchPlayerStreamerOverlayPatch
+// END TwitchPlayerStreamerOverlayPatch
 
     private fun twitchQualityLabel(link: ExtractorLink?): String {
     if (link == null) return "Unknown"

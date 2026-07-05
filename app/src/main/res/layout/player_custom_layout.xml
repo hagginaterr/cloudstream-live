@@ -617,46 +617,6 @@
                 </LinearLayout>
 
         <!-- Twitch current streamer overlay chip. -->
-        <LinearLayout
-            android:id="@+id/twitch_player_streamer_chip"
-            android:layout_width="wrap_content"
-            android:layout_height="52dp"
-            android:layout_marginStart="48dp"
-            android:layout_marginBottom="98dp"
-            android:background="@drawable/twitch_player_streamer_chip_bg"
-            android:clickable="true"
-            android:focusable="true"
-            android:foreground="?android:attr/selectableItemBackground"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="9dp"
-            android:paddingEnd="16dp"
-            android:visibility="gone"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            tools:visibility="visible">
-
-            <ImageView
-                android:id="@+id/twitch_player_streamer_avatar"
-                android:layout_width="38dp"
-                android:layout_height="38dp"
-                android:background="@drawable/twitch_player_streamer_avatar_bg"
-                android:contentDescription="@null"
-                android:padding="1dp"
-                android:scaleType="centerCrop" />
-
-            <TextView
-                android:id="@+id/twitch_player_streamer_name"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:textColor="@android:color/white"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                tools:text="Streamer" />
-        </LinearLayout>
 </androidx.constraintlayout.widget.ConstraintLayout>
 
 
@@ -739,7 +699,50 @@
                     tools:ignore="ContentDescription" />
             </LinearLayout>
 
-            <LinearLayout
+                <LinearLayout
+        android:id="@+id/twitch_player_streamer_chip"
+        android:layout_width="wrap_content"
+        android:layout_height="44dp"
+        android:layout_marginStart="18dp"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/twitch_player_streamer_chip_bg"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:minWidth="120dp"
+        android:orientation="horizontal"
+        android:paddingStart="7dp"
+        android:paddingEnd="12dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottom_player_bar"
+        app:layout_constraintStart_toStartOf="parent"
+        tools:visibility="visible">
+
+        <ImageView
+            android:id="@+id/twitch_player_streamer_avatar"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/twitch_player_streamer_avatar_placeholder"
+            android:clipToOutline="true"
+            android:importantForAccessibility="no"
+            android:scaleType="centerCrop"
+            android:src="@drawable/twitch_player_streamer_avatar_placeholder" />
+
+        <TextView
+            android:id="@+id/twitch_player_streamer_name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="9dp"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:maxWidth="260dp"
+            android:textColor="@android:color/white"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            tools:text="Streamer" />
+    </LinearLayout>
+<LinearLayout
                 android:id="@+id/bottom_player_bar"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

@@ -645,6 +645,31 @@ private fun getSavedFavoriteChannels(): List<String> {
     private fun decode(value: String): String = runCatching {
         URLDecoder.decode(value, "UTF-8")
     }.getOrDefault(value)
+    // TwitchPlayerStreamerOverlayPatch: pass streamer metadata through player URLs.
+    private fun appendTwitchPlayerStreamerMeta(
+        url: String,
+        login: String?,
+        displayName: String?,
+        avatarUrl: String?,
+    ): String {
+        var out = url
+        val cleanLogin = normalizeChannel(login.orEmpty())
+        val cleanName = displayName?.trim()?.ifBlank { null }
+        val cleanAvatar = avatarUrl?.trim()?.ifBlank { null }
+
+        if (cleanLogin.isNotBlank()) {
+            out = appendTwitchProfileQueryParam(out, "cs_streamer_login", cleanLogin)
+        }
+        if (cleanName != null) {
+            out = appendTwitchProfileQueryParam(out, "cs_streamer_name", cleanName)
+        }
+        if (cleanAvatar != null) {
+            out = appendTwitchProfileQueryParam(out, "cs_streamer_avatar", cleanAvatar)
+        }
+
+        return out
+    }
+
 
     private fun buildHelixUrl(
         endpoint: String,
@@ -773,7 +798,7 @@ private fun getSavedFavoriteChannels(): List<String> {
 
             response.data.forEach { video ->
                 val sortKey = video.published_at.ifBlank { video.created_at }
-                val card = video.toFollowedVideoHomeCard(marker, displayName) ?: return@forEach
+                val card = video.toFollowedVideoHomeCard(marker, displayName, followedChannel.broadcaster_login) ?: return@forEach
                 items.add(sortKey to card)
             }
         }
@@ -785,10 +810,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             .take(followedHomeMaxItemsPerRow)
     }
 
-    private fun TwitchVideo.toFollowedVideoHomeCard(
-        marker: String,
-        channelDisplayName: String,
-    ): LiveSearchResponse? {
+    private fun TwitchVideo.toFollowedVideoHomeCard( marker: String, channelDisplayName: String, channelLogin: String, ): LiveSearchResponse? {
         val videoId = id.filter { it.isDigit() }
         if (videoId.isBlank()) return null
 
@@ -841,7 +863,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             ) ?: return@forEach
 
             response.data.forEach { clip ->
-                val card = clip.toFollowedClipHomeCard(displayName) ?: return@forEach
+                val card = clip.toFollowedClipHomeCard(displayName, followedChannel.broadcaster_login) ?: return@forEach
                 items.add(clip.view_count to card)
             }
         }
@@ -853,7 +875,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             .take(followedHomeMaxItemsPerRow)
     }
 
-    private fun TwitchClip.toFollowedClipHomeCard(channelDisplayName: String): LiveSearchResponse? {
+    private fun TwitchClip.toFollowedClipHomeCard(channelDisplayName: String, channelLogin: String): LiveSearchResponse? {
         val watchUrl = url.ifBlank { return null }
         val displayTitle = cleanTwitchText(title) ?: channelDisplayName.ifBlank { "Twitch clip" }
         val age = formatTwitchVideoAge(created_at) ?: formatTwitchVideoDate(created_at)
@@ -1912,6 +1934,16 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
         )
         val title = cleanTwitchText(video?.title) ?: "Past broadcast"
         val poster = cacheBustImage(resizeTwitchImage(video?.thumbnail_url, 640, 360), nowMs())
+        val streamerInfo = fetchChannel(video?.user_login.orEmpty())
+        val streamerLogin = streamerInfo?.channel ?: video?.user_login.orEmpty()
+        val streamerDisplayName = streamerInfo?.displayName ?: streamerLogin
+        val streamerAvatar = streamerInfo?.image
+        val playerVideoUrl = appendTwitchPlayerStreamerMeta(
+            videoUrl,
+            streamerLogin,
+            streamerDisplayName,
+            streamerAvatar,
+        )
         val profileRecommendations = fetchTwitchProfileRecommendations(video?.user_login.orEmpty())
         val tagList = listOfNotNull(
             "Past Broadcast",
@@ -1921,7 +1953,7 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
             video?.language?.ifBlank { null },
         )
 
-        return newLiveStreamLoadResponse(title, videoUrl, videoUrl) {
+        return newLiveStreamLoadResponse(title, playerVideoUrl, playerVideoUrl) {
             plot = listOfNotNull(
                 "Past broadcast",
                 cleanTwitchText(video?.description),
