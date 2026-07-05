@@ -1087,7 +1087,85 @@ class GeneratorPlayer : FullScreenPlayer() {
         return (value * resources.displayMetrics.density + 0.5f).toInt()
     }
 
+    private fun configureTwitchPlayerChatButton(button: android.widget.ImageButton) {
+        button.setBackgroundResource(R.drawable.twitch_player_profile_button_bg)
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            button.foreground = button.context.getDrawable(R.drawable.twitch_player_profile_button_focus_overlay)
+        }
+
+        val focusedScale = 1.14f
+        val normalScale = 1f
+        val glowZ = 18f * button.resources.displayMetrics.density
+
+        fun applyFocusState(hasFocus: Boolean, animate: Boolean) {
+            button.isSelected = hasFocus
+
+            if (animate) {
+                button.animate()
+                    .scaleX(if (hasFocus) focusedScale else normalScale)
+                    .scaleY(if (hasFocus) focusedScale else normalScale)
+                    .setDuration(120L)
+                    .start()
+            } else {
+                button.scaleX = if (hasFocus) focusedScale else normalScale
+                button.scaleY = if (hasFocus) focusedScale else normalScale
+            }
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                val z = if (hasFocus) glowZ else 0f
+                button.elevation = z
+                button.translationZ = z
+            }
+        }
+
+        applyFocusState(button.hasFocus(), animate = false)
+        button.setOnFocusChangeListener { _, hasFocus ->
+            applyFocusState(hasFocus, animate = true)
+        }
+    }
+
+    private fun setTwitchPlayerChatOverlaySize(overlay: View) {
+        val params = overlay.layoutParams ?: return
+        params.width = overlay.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
+        params.height = overlay.twitchPlayerChatDp(if (isLayout(TV)) 150 else 130)
+        overlay.layoutParams = params
+    }
+
+    private fun positionTwitchPlayerChatOverlayNow(overlay: View) {
+        val parentView = overlay.parent as? View ?: return
+        val parentWidth = parentView.width
+        val parentHeight = parentView.height
+
+        if (parentWidth <= 0 || parentHeight <= 0) return
+
+        val overlayWidth = overlay.width.takeIf { it > 0 }
+            ?: overlay.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
+        val overlayHeight = overlay.height.takeIf { it > 0 }
+            ?: overlay.twitchPlayerChatDp(if (isLayout(TV)) 150 else 130)
+
+        val sideMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 24 else 16)
+        val topMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 34 else 24)
+        val bottomMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 42 else 32)
+
+        overlay.x = if (twitchPlayerChatCorner.isStart) {
+            sideMargin.toFloat()
+        } else {
+            (parentWidth - overlayWidth - sideMargin).coerceAtLeast(0).toFloat()
+        }
+
+        overlay.y = if (twitchPlayerChatCorner.isTop) {
+            topMargin.toFloat()
+        } else {
+            (parentHeight - overlayHeight - bottomMargin).coerceAtLeast(0).toFloat()
+        }
+
+        overlay.bringToFront()
+    }
+
     private fun applyTwitchPlayerChatCorner(overlay: View) {
+        setTwitchPlayerChatOverlaySize(overlay)
+
         val params = overlay.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
         val parent = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
         val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
@@ -1109,9 +1187,9 @@ class GeneratorPlayer : FullScreenPlayer() {
             params.marginStart = 0
             params.marginEnd = 0
 
-            val sideMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 64 else 20)
-            val topMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 56 else 44)
-            val bottomMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 84 else 72)
+            val sideMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 24 else 16)
+            val topMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 34 else 24)
+            val bottomMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 42 else 32)
 
             if (twitchPlayerChatCorner.isStart) {
                 params.startToStart = parent
@@ -1136,39 +1214,8 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         overlay.translationX = 0f
         overlay.translationY = 0f
-
-        overlay.post {
-            val parentView = overlay.parent as? View ?: return@post
-            val parentWidth = parentView.width
-            val parentHeight = parentView.height
-            val overlayWidth = overlay.width
-            val overlayHeight = overlay.height
-
-            if (
-                parentWidth <= 0 ||
-                parentHeight <= 0 ||
-                overlayWidth <= 0 ||
-                overlayHeight <= 0
-            ) {
-                return@post
-            }
-
-            val sideMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 64 else 20)
-            val topMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 56 else 44)
-            val bottomMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 84 else 72)
-
-            overlay.x = if (twitchPlayerChatCorner.isStart) {
-                sideMargin.toFloat()
-            } else {
-                (parentWidth - overlayWidth - sideMargin).coerceAtLeast(0).toFloat()
-            }
-
-            overlay.y = if (twitchPlayerChatCorner.isTop) {
-                topMargin.toFloat()
-            } else {
-                (parentHeight - overlayHeight - bottomMargin).coerceAtLeast(0).toFloat()
-            }
-        }
+        overlay.post { positionTwitchPlayerChatOverlayNow(overlay) }
+        overlay.postDelayed({ positionTwitchPlayerChatOverlayNow(overlay) }, 80L)
     }
 
     private fun formatTwitchPlayerChatTarget(target: TwitchPlayerChatTarget): String {
@@ -1188,16 +1235,36 @@ class GeneratorPlayer : FullScreenPlayer() {
         root.findViewById<android.widget.TextView>(R.id.twitch_player_chat_status)?.text =
             formatTwitchPlayerChatTarget(target)
         root.findViewById<android.widget.TextView>(R.id.twitch_player_chat_hint)?.text =
-            "Chat overlay foundation ready.\nHistorical messages, live IRC, and emotes are next.\nPosition: ${twitchPlayerChatCorner.label}\nPress any direction to return to the chat button. Long-press chat window or button to move."
+            "Messages and emotes are next.\n${twitchPlayerChatCorner.label}\nLong-press to move."
     }
 
-    private fun cycleTwitchPlayerChatCorner() {
+    private fun focusTwitchPlayerChatButton() {
+        val button = playerBinding?.root
+            ?.findViewById<View>(R.id.twitch_player_chat_button)
+            ?: return
+
+        button.post {
+            button.requestFocus()
+        }
+    }
+
+    private fun closeTwitchPlayerChatAndFocusButton() {
+        twitchPlayerChatVisible = false
+        updateTwitchPlayerChatOverlay()
+        focusTwitchPlayerChatButton()
+    }
+
+    private fun cycleTwitchPlayerChatCorner(focusOverlay: Boolean = false) {
         twitchPlayerChatCorner = twitchPlayerChatCorner.next()
         playerBinding?.root
             ?.findViewById<View>(R.id.twitch_player_chat_overlay)
             ?.let { overlay ->
                 applyTwitchPlayerChatCorner(overlay)
-                overlay.requestFocus()
+                if (focusOverlay) {
+                    overlay.requestFocus()
+                } else {
+                    focusTwitchPlayerChatButton()
+                }
             }
 
         Toast.makeText(
@@ -1213,20 +1280,34 @@ class GeneratorPlayer : FullScreenPlayer() {
         overlay.isFocusableInTouchMode = true
 
         overlay.setOnClickListener {
-            // Consume click so it never falls through to play/pause.
+            closeTwitchPlayerChatAndFocusButton()
         }
 
         overlay.setOnLongClickListener {
-            cycleTwitchPlayerChatCorner()
+            cycleTwitchPlayerChatCorner(focusOverlay = true)
             updateTwitchPlayerChatOverlay()
             true
         }
 
-        overlay.setOnKeyListener { _, keyCode, _ ->
+        overlay.setOnKeyListener { _, keyCode, event ->
             when (keyCode) {
                 android.view.KeyEvent.KEYCODE_DPAD_CENTER,
                 android.view.KeyEvent.KEYCODE_ENTER,
-                android.view.KeyEvent.KEYCODE_SPACE -> true
+                android.view.KeyEvent.KEYCODE_SPACE -> {
+                    if (event.action == android.view.KeyEvent.ACTION_UP) {
+                        closeTwitchPlayerChatAndFocusButton()
+                    }
+                    true
+                }
+                android.view.KeyEvent.KEYCODE_DPAD_UP,
+                android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+                android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                        focusTwitchPlayerChatButton()
+                    }
+                    true
+                }
                 else -> false
             }
         }
@@ -1239,6 +1320,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         val overlayView = root.findViewById<View>(R.id.twitch_player_chat_overlay)
             ?: return
 
+        configureTwitchPlayerChatButton(button)
         consumeTwitchPlayerChatOverlayInput(overlayView)
 
         val target = currentTwitchPlayerChatTarget()
@@ -1277,19 +1359,23 @@ class GeneratorPlayer : FullScreenPlayer() {
         button.setOnClickListener {
             twitchPlayerChatVisible = !twitchPlayerChatVisible
             updateTwitchPlayerChatOverlay()
+            focusTwitchPlayerChatButton()
         }
 
         button.setOnLongClickListener {
-            cycleTwitchPlayerChatCorner()
+            cycleTwitchPlayerChatCorner(focusOverlay = false)
             updateTwitchPlayerChatOverlay()
+            focusTwitchPlayerChatButton()
             true
         }
 
         if (overlayView.isVisible && !wasOverlayVisible) {
             overlayView.post {
                 applyTwitchPlayerChatCorner(overlayView)
-                overlayView.requestFocus()
+                focusTwitchPlayerChatButton()
             }
+        } else if (button.hasFocus()) {
+            focusTwitchPlayerChatButton()
         }
     }
     // END TwitchPlayerChatFoundationPatch
