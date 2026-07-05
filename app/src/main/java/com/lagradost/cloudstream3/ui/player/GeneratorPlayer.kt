@@ -1126,9 +1126,30 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     private fun setTwitchPlayerChatOverlaySize(overlay: View) {
+        val parentView = overlay.parent as? View
+        val parentWidth = parentView?.width ?: 0
+        val parentHeight = parentView?.height ?: 0
+
+        val maxWidth = overlay.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
+        val maxHeight = overlay.twitchPlayerChatDp(if (isLayout(TV)) 150 else 130)
+        val minWidth = overlay.twitchPlayerChatDp(if (isLayout(TV)) 180 else 160)
+        val minHeight = overlay.twitchPlayerChatDp(if (isLayout(TV)) 105 else 95)
+
+        val scaledWidth = if (parentWidth > 0) {
+            minOf(maxWidth, (parentWidth * 0.30f).toInt().coerceAtLeast(minWidth))
+        } else {
+            maxWidth
+        }
+
+        val scaledHeight = if (parentHeight > 0) {
+            minOf(maxHeight, (parentHeight * 0.22f).toInt().coerceAtLeast(minHeight))
+        } else {
+            maxHeight
+        }
+
         val params = overlay.layoutParams ?: return
-        params.width = overlay.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
-        params.height = overlay.twitchPlayerChatDp(if (isLayout(TV)) 150 else 130)
+        params.width = scaledWidth
+        params.height = scaledHeight
         overlay.layoutParams = params
     }
 
@@ -1140,26 +1161,27 @@ class GeneratorPlayer : FullScreenPlayer() {
         if (parentWidth <= 0 || parentHeight <= 0) return
 
         val overlayWidth = overlay.width.takeIf { it > 0 }
+            ?: overlay.layoutParams?.width?.takeIf { it > 0 }
             ?: overlay.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
+
         val overlayHeight = overlay.height.takeIf { it > 0 }
+            ?: overlay.layoutParams?.height?.takeIf { it > 0 }
             ?: overlay.twitchPlayerChatDp(if (isLayout(TV)) 150 else 130)
 
-        val sideMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 24 else 16)
-        val topMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 34 else 24)
-        val bottomMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 42 else 32)
-
-        overlay.x = if (twitchPlayerChatCorner.isStart) {
-            sideMargin.toFloat()
+        val targetLeft = if (twitchPlayerChatCorner.isStart) {
+            0
         } else {
-            (parentWidth - overlayWidth - sideMargin).coerceAtLeast(0).toFloat()
+            (parentWidth - overlayWidth).coerceAtLeast(0)
         }
 
-        overlay.y = if (twitchPlayerChatCorner.isTop) {
-            topMargin.toFloat()
+        val targetTop = if (twitchPlayerChatCorner.isTop) {
+            0
         } else {
-            (parentHeight - overlayHeight - bottomMargin).coerceAtLeast(0).toFloat()
+            (parentHeight - overlayHeight).coerceAtLeast(0)
         }
 
+        overlay.translationX = targetLeft.toFloat() - overlay.left.toFloat()
+        overlay.translationY = targetTop.toFloat() - overlay.top.toFloat()
         overlay.bringToFront()
     }
 
@@ -1187,24 +1209,16 @@ class GeneratorPlayer : FullScreenPlayer() {
             params.marginStart = 0
             params.marginEnd = 0
 
-            val sideMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 24 else 16)
-            val topMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 34 else 24)
-            val bottomMargin = overlay.twitchPlayerChatDp(if (isLayout(TV)) 42 else 32)
-
             if (twitchPlayerChatCorner.isStart) {
                 params.startToStart = parent
-                params.marginStart = sideMargin
             } else {
                 params.endToEnd = parent
-                params.marginEnd = sideMargin
             }
 
             if (twitchPlayerChatCorner.isTop) {
                 params.topToTop = parent
-                params.topMargin = topMargin
             } else {
                 params.bottomToBottom = parent
-                params.bottomMargin = bottomMargin
             }
 
             params.horizontalBias = if (twitchPlayerChatCorner.isStart) 0f else 1f
@@ -1214,8 +1228,18 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         overlay.translationX = 0f
         overlay.translationY = 0f
-        overlay.post { positionTwitchPlayerChatOverlayNow(overlay) }
-        overlay.postDelayed({ positionTwitchPlayerChatOverlayNow(overlay) }, 80L)
+        overlay.post {
+            setTwitchPlayerChatOverlaySize(overlay)
+            positionTwitchPlayerChatOverlayNow(overlay)
+        }
+        overlay.postDelayed({
+            setTwitchPlayerChatOverlaySize(overlay)
+            positionTwitchPlayerChatOverlayNow(overlay)
+        }, 80L)
+        overlay.postDelayed({
+            setTwitchPlayerChatOverlaySize(overlay)
+            positionTwitchPlayerChatOverlayNow(overlay)
+        }, 250L)
     }
 
     private fun formatTwitchPlayerChatTarget(target: TwitchPlayerChatTarget): String {
@@ -1267,10 +1291,10 @@ class GeneratorPlayer : FullScreenPlayer() {
                 }
             }
 
-        Toast.makeText(
+        android.widget.Toast.makeText(
             context,
             "Chat moved to ${twitchPlayerChatCorner.label}",
-            Toast.LENGTH_SHORT,
+            android.widget.Toast.LENGTH_SHORT,
         ).show()
     }
 
@@ -1373,6 +1397,10 @@ class GeneratorPlayer : FullScreenPlayer() {
             overlayView.post {
                 applyTwitchPlayerChatCorner(overlayView)
                 focusTwitchPlayerChatButton()
+            }
+        } else if (overlayView.isVisible) {
+            overlayView.post {
+                positionTwitchPlayerChatOverlayNow(overlayView)
             }
         } else if (button.hasFocus()) {
             focusTwitchPlayerChatButton()
