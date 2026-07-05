@@ -13,7 +13,9 @@
         android:layout_gravity="bottom"
         android:orientation="vertical"
         android:paddingBottom="48dp"
-    android:gravity="bottom">
+    android:gravity="bottom"
+    android:clipToPadding="false"
+    android:baselineAligned="false">
 
         <TextView
             android:id="@+id/home_child_more_info"
@@ -57,5 +59,23 @@
         android:textStyle="bold"
         android:visibility="gone"
         tools:visibility="visible" />
+
+    <TextView
+        android:id="@+id/tv_home_more_indicator"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="14dp"
+        android:background="@drawable/tv_home_more_indicator_bg"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:minWidth="46dp"
+        android:text="&#x2193;"
+        android:textColor="@android:color/white"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        tools:ignore="HardcodedText" />
 </LinearLayout>
 </FrameLayout>
