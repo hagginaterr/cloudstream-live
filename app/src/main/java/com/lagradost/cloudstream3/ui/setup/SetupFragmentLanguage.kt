@@ -1,24 +1,16 @@
 package com.lagradost.cloudstream3.ui.setup
 
 import android.view.View
-import android.widget.AbsListView
-import android.widget.ArrayAdapter
-import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.navigation.fragment.findNavController
 import androidx.preference.PreferenceManager
-import com.lagradost.cloudstream3.BuildConfig
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.CommonActivity
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.databinding.FragmentSetupLanguageBinding
 import com.lagradost.cloudstream3.mvvm.safe
 import com.lagradost.cloudstream3.ui.BaseFragment
-import com.lagradost.cloudstream3.ui.settings.appLanguages
-import com.lagradost.cloudstream3.ui.settings.getCurrentLocale
-import com.lagradost.cloudstream3.ui.settings.nameNextToFlagEmoji
 import com.lagradost.cloudstream3.utils.UIHelper.fixSystemBarsPadding
-import recloudstream.twitchlivefavorites.BuiltInTwitchLiveFavorites
 
 const val HAS_DONE_SETUP_KEY = "HAS_DONE_SETUP"
 
@@ -33,49 +25,14 @@ class SetupFragmentLanguage : BaseFragment<FragmentSetupLanguageBinding>(
         safe {
             val ctx = context ?: return@safe
             val settingsManager = PreferenceManager.getDefaultSharedPreferences(ctx)
-            val arrayAdapter = ArrayAdapter<String>(ctx, R.layout.sort_bottom_single_choice)
 
-            binding.apply {
-                safe {
-                    val drawable = when {
-                        BuildConfig.DEBUG -> R.drawable.cloud_2_gradient_debug
-                        BuildConfig.FLAVOR == "prerelease" -> R.drawable.cloud_2_gradient_beta
-                        else -> R.drawable.cloud_2_gradient
-                    }
-                    appIconImage.setImageDrawable(ContextCompat.getDrawable(ctx, drawable))
-                }
-
-                val current = getCurrentLocale(ctx)
-                val languageTagsIETF = appLanguages.map { it.second }
-                val languageNames = appLanguages.map { it.nameNextToFlagEmoji() }
-                val currentIndex = languageTagsIETF.indexOf(current)
-
-                arrayAdapter.addAll(languageNames)
-                listview1.adapter = arrayAdapter
-                listview1.choiceMode = AbsListView.CHOICE_MODE_SINGLE
-                listview1.setItemChecked(currentIndex, true)
-
-                listview1.setOnItemClickListener { _, _, selectedLangIndex, _ ->
-                    val langTagIETF = languageTagsIETF[selectedLangIndex]
-                    CommonActivity.setLocale(activity, langTagIETF)
-                    settingsManager.edit {
-                        putString(getString(R.string.locale_key), langTagIETF)
-                    }
-                }
-
-                nextBtt.setOnClickListener {
-                    BuiltInTwitchLiveFavorites.register(forceHomepage = true)
-                    findNavController().navigate(
-                        R.id.action_navigation_setup_language_to_navigation_setup_provider_languages
-                    )
-                }
-
-                skipBtt.setOnClickListener {
-                    BuiltInTwitchLiveFavorites.register(forceHomepage = true)
-                    setKey(HAS_DONE_SETUP_KEY, true)
-                    findNavController().navigate(R.id.navigation_home)
-                }
+            CommonActivity.setLocale(activity, "en")
+            settingsManager.edit {
+                putString(getString(R.string.locale_key), "en")
             }
+
+            setKey(HAS_DONE_SETUP_KEY, true)
+            findNavController().navigate(R.id.navigation_home)
         }
     }
 }

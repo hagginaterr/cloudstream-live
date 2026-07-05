@@ -398,7 +398,7 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
                         }
                     } else if (!isWebview) {
                         if (str.startsWith(DOWNLOAD_NAVIGATE_TO)) {
-                            this.navigate(R.id.navigation_downloads)
+                            this.navigate(R.id.navigation_home)
                             return true
                         } else {
                             val apiName = extraArgs?.getString(API_NAME_EXTRA_KEY)
@@ -504,10 +504,7 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
             R.id.navigation_home,
             R.id.navigation_search,
             R.id.navigation_library,
-            R.id.navigation_downloads,
             R.id.navigation_settings,
-            R.id.navigation_download_child,
-            R.id.navigation_download_queue,
             R.id.navigation_subtitles,
             R.id.navigation_chrome_subtitles,
             R.id.navigation_settings_player,
@@ -573,14 +570,6 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
              * highlight the wrong one in UI.
              */
             when (destination.id) {
-                in listOf(
-                    R.id.navigation_downloads,
-                    R.id.navigation_download_child,
-                    R.id.navigation_download_queue
-                ) -> {
-                    navRailView.menu.findItem(R.id.navigation_downloads).isChecked = true
-                    navView.menu.findItem(R.id.navigation_downloads).isChecked = true
-                }
 
                 in listOf(
                     R.id.navigation_settings,
@@ -767,7 +756,6 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
             // R.id.navigation_home -> R.id.home_preview_change_api
             R.id.navigation_search -> R.id.main_search
             R.id.navigation_library -> R.id.main_search
-            R.id.navigation_downloads -> R.id.download_appbar
             else -> null
         }
         if (targetView != null && isLayout(TV or EMULATOR)) {
@@ -776,7 +764,6 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
                 fromView.nextFocusRightId = targetView
 
                 for (focusView in arrayOf(
-                    R.id.navigation_downloads,
                     R.id.navigation_home,
                     R.id.navigation_search,
                     R.id.navigation_library,
@@ -1789,7 +1776,6 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
                 R.id.navigation_home,
                 R.id.navigation_search,
                 R.id.navigation_library,
-                R.id.navigation_downloads,
                 R.id.navigation_settings
             )) {
                 val view = rail.findViewById<View?>(id) ?: continue
