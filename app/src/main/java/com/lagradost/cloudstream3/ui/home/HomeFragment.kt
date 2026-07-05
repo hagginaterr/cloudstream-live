@@ -614,6 +614,9 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             handleTvBackPress(this)
         }
         binding.apply {
+            // TwitchNoHomePreviewButtonsPatch: the top preview carousel is gone, so hide its toolbar buttons.
+            homePreviewReloadProvider.isGone = true
+            homePreviewSearchButton.isGone = true
             //homeChangeApiLoading.setOnClickListener(apiChangeClickListener)
             //homeChangeApiLoading.setOnClickListener(apiChangeClickListener)
             homeApiFab.setOnClickListener(apiChangeClickListener)
@@ -715,8 +718,8 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             binding.apply {
                 homeApiFab.text = apiName
                 homeChangeApi.text = apiName
-                homePreviewReloadProvider.isGone = false
-                homePreviewSearchButton.isGone = false
+                homePreviewReloadProvider.isGone = true
+                homePreviewSearchButton.isGone = true
             }
         }
 

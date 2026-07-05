@@ -332,7 +332,7 @@ class HomeViewModel : ViewModel() {
 
 
         _page.postValue(Resource.Loading())
-        _preview.postValue(Resource.Loading())
+        _preview.postValue(Resource.Failure(false, "Home preview disabled"))
         // cancel the current preview expand as that is no longer relevant
         addJob?.cancel()
 
@@ -355,45 +355,13 @@ class HomeViewModel : ViewModel() {
                         }
                     }
 
-                    val items = data.value.mapNotNull { it?.items }.flatten()
-
-
+                    // TwitchNoHomePreviewDataPatch: top preview carousel is disabled.
+                    // Do not load random preview details; keep the first visible content as the provider rows.
                     previewResponses.clear()
                     previewResponsesAdded.clear()
-
-                    //val home = data.value
-                    if (items.isNotEmpty()) {
-                        val currentList =
-                            items.shuffled().filter { it.list.isNotEmpty() }
-                                .flatMap { it.list }
-                                .distinctBy { it.url }.toList()
-
-                        if (currentList.isNotEmpty()) {
-                            val randomItems =
-                                context?.filterSearchResultByFilmQuality(currentList.shuffled())
-                                    ?: currentList.shuffled()
-
-                            updatePreviewResponses(
-                                previewResponses,
-                                previewResponsesAdded,
-                                randomItems,
-                                3
-                            )
-
-                            _randomItems.postValue(randomItems)
-                            currentShuffledList = randomItems
-                        }
-                    }
-                    if (previewResponses.isEmpty()) {
-                        _preview.postValue(
-                            Resource.Failure(
-                                false,
-                                "No homepage responses"
-                            )
-                        )
-                    } else {
-                        _preview.postValue(Resource.Success((previewResponsesAdded.size < currentShuffledList.size) to previewResponses))
-                    }
+                    currentShuffledList = emptyList()
+                    _randomItems.postValue(emptyList())
+                    _preview.postValue(Resource.Failure(false, "Home preview disabled"))
                     _page.postValue(Resource.Success(expandable))
                 } catch (e: Exception) {
                     _randomItems.postValue(emptyList())

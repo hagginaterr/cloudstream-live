@@ -74,7 +74,8 @@ class HomeParentItemAdapterPreview(
     }, expandCallback = {
         viewModel.expand(it)
     }) {
-    override val headers = 1
+    // TwitchNoHomePreviewHeaderPatch: remove the large top preview/header carousel so Live Now is first.
+    override val headers = 0
     override fun onCreateHeader(parent: ViewGroup): ViewHolderState<Bundle> {
         val inflater = LayoutInflater.from(parent.context)
         val binding = if (isLayout(TV or EMULATOR)) FragmentHomeHeadTvBinding.inflate(
