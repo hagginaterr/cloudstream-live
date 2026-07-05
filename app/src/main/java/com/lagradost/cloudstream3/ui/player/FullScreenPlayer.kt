@@ -916,6 +916,47 @@ private fun updateUIVisibility() {
         val amount = acceleratedSeekAmount(baseMs, repeatCount)
         player.seekTime(if (forward) amount else -amount)
     }
+    // BEGIN PlayerDownFocusBottomRowPatch
+    private fun focusPlayerBottomActionRow() {
+        val root = playerBinding?.root ?: return
+
+        val target = listOf(
+            R.id.twitch_player_chat_button,
+            R.id.twitch_player_streamer_chip,
+            R.id.player_sources_btt,
+        ).asSequence()
+            .mapNotNull { id -> root.findViewById<View>(id) }
+            .firstOrNull { view ->
+                view.isShown && view.isEnabled && view.isFocusable
+            }
+            ?: return
+
+        target.requestFocus()
+    }
+
+    private fun showPlayerUIAndFocusBottomActionRow() {
+        if (!isShowing) {
+            onClickChange()
+        } else {
+            autoHide()
+        }
+
+        val root = playerBinding?.root ?: return
+
+        root.post {
+            focusPlayerBottomActionRow()
+        }
+
+        root.postDelayed({
+            focusPlayerBottomActionRow()
+        }, 120L)
+
+        root.postDelayed({
+            focusPlayerBottomActionRow()
+        }, 260L)
+    }
+    // END PlayerDownFocusBottomRowPatch
+
 private fun handleKeyDownEvent(event: KeyEvent): Boolean? {
         val keyCode = event.keyCode
         val repeatCount = event.repeatCount
@@ -1006,7 +1047,12 @@ private fun handleKeyDownEvent(event: KeyEvent): Boolean? {
                 onClickChange()
             }
 
-            KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                if (isShowing || isShowingEpisodeOverlay) {
+                    return null
+                }
+                showPlayerUIAndFocusBottomActionRow()
+            }
             KeyEvent.KEYCODE_DPAD_UP -> {
                 if (isShowing || isShowingEpisodeOverlay) {
                     return null
