@@ -17,7 +17,6 @@ object LiveHelper {
             return
         }
 
-        // Prevent duplicates
         if (liveManagers.contains(player)) {
             return
         }
@@ -26,9 +25,11 @@ object LiveHelper {
         val listener = object : Player.Listener {
             override fun onTimelineChanged(timeline: Timeline, reason: Int) {
                 val window = Timeline.Window()
-                timeline.getWindow(player.currentMediaItemIndex, window)
-                if (window.isDynamic) {
-                    liveManager.submitLivestreamChunk(LivestreamChunk(window.durationMs))
+                if (!timeline.isEmpty && player.currentMediaItemIndex in 0 until timeline.windowCount) {
+                    timeline.getWindow(player.currentMediaItemIndex, window)
+                    if (window.isDynamic) {
+                        liveManager.submitLivestreamChunk(LivestreamChunk(window.durationMs))
+                    }
                 }
                 super.onTimelineChanged(timeline, reason)
             }
@@ -39,11 +40,13 @@ object LiveHelper {
                 reason: Int
             ) {
                 super.onPositionDiscontinuity(oldPosition, newPosition, reason)
-                val timeAheadOfLive = liveManager.getTimeAheadOfLive(newPosition.positionMs)
 
-                // Seek back to the optimal live spot
+                // Only correct positions that are beyond the actual live window edge.
+                // Do not correct positions that are merely ahead of the preferred live offset;
+                // Media3's default live target is already handled by seekToDefaultPosition().
+                val timeAheadOfLive = liveManager.getTimeAheadOfLive(newPosition.positionMs)
                 if (timeAheadOfLive > 100) {
-                    player.seekTo(newPosition.positionMs - timeAheadOfLive)
+                    player.seekToDefaultPosition()
                 }
             }
         }
@@ -56,12 +59,6 @@ object LiveHelper {
 
     fun unregisterPlayer(player: Player?) {
         if (player == null) {
-            debugWarning { "LiveHelper unregisterPlayer called with null player!" }
-            return
-        }
-
-        // Prevent duplicates
-        if (!liveManagers.contains(player)) {
             return
         }
 

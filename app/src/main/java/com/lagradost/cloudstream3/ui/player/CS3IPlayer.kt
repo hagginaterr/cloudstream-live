@@ -88,6 +88,7 @@ import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.mvvm.safe
 import com.lagradost.cloudstream3.ui.player.CustomDecoder.Companion.fixSubtitleAlignment
 import com.lagradost.cloudstream3.ui.player.live.LiveHelper
+import com.lagradost.cloudstream3.ui.player.live.LIVE_MARGIN
 import com.lagradost.cloudstream3.ui.player.live.PREFERRED_LIVE_OFFSET
 import com.lagradost.cloudstream3.ui.settings.Globals.EMULATOR
 import com.lagradost.cloudstream3.ui.settings.Globals.PHONE
@@ -623,6 +624,7 @@ class CS3IPlayer : IPlayer {
                 removeListener(it)
                 playerListener = null
             }
+            LiveHelper.unregisterPlayer(this)
             stop()
             release()
         }
@@ -1016,14 +1018,33 @@ companion object {
         }
     }
 
+    private fun ExoPlayer.shouldSeekToLiveDefault(targetPosition: Long): Boolean {
+        val liveDuration = duration
+        if (!isCurrentMediaItemDynamic || liveDuration == TIME_UNSET || liveDuration <= 0L) {
+            return false
+        }
+
+        // Media3's known-good way to return to a DVR/live stream's live position is
+        // seekToDefaultPosition(). Seeking to the raw duration can briefly land beyond
+        // the playlist edge and trigger stale/corrected seekbar states.
+        val liveThreshold = (liveDuration - (PREFERRED_LIVE_OFFSET + LIVE_MARGIN)).coerceAtLeast(0L)
+        return targetPosition >= liveThreshold
+    }
+
     override fun seekTime(time: Long, source: PlayerEventSource) {
         exoPlayer?.seekTime(time, source)
     }
 
     override fun seekTo(time: Long, source: PlayerEventSource) {
+        val player = exoPlayer ?: return
         if (isMediaSeekable) {
-            updatedTime(time, source)
-            exoPlayer?.seekTo(time)
+            val targetPosition = time.coerceAtLeast(0L)
+            updatedTime(targetPosition, source)
+            if (player.shouldSeekToLiveDefault(targetPosition)) {
+                player.seekToDefaultPosition()
+            } else {
+                player.seekTo(targetPosition)
+            }
         } else {
             Log.i(TAG, "Media is not seekable, we can not seek to $time")
         }
@@ -1031,8 +1052,13 @@ companion object {
 
     private fun ExoPlayer.seekTime(time: Long, source: PlayerEventSource) {
         if (isMediaSeekable) {
-            updatedTime(currentPosition + time, source)
-            seekTo(currentPosition + time)
+            val targetPosition = currentPosition + time
+            updatedTime(targetPosition, source)
+            if (shouldSeekToLiveDefault(targetPosition)) {
+                seekToDefaultPosition()
+            } else {
+                seekTo(targetPosition.coerceAtLeast(0L))
+            }
         } else {
             Log.i(TAG, "Media is not seekable, we can not seek to $time")
         }
@@ -1668,16 +1694,8 @@ companion object {
                         // PlaylistStuckException usually happens when the player position is ahead of the live window.
                         // Seek to the default location in that case
                         error.cause is HlsPlaylistTracker.PlaylistStuckException -> {
-                            val position = exoPlayer?.currentPosition ?: exoPlayer?.duration ?: 0
-
-                            // Seek to live head
-                            val aheadOfLive = LiveHelper.getLiveManager(exoPlayer)?.getTimeAheadOfLive(position) ?: 0
-
-                            if (aheadOfLive > 100) {
-                                exoPlayer?.seekTo(position - aheadOfLive)
-                            } else {
-                                exoPlayer?.seekToDefaultPosition()
-                            }
+                            // Let Media3 choose the current live-window default position.
+                            exoPlayer?.seekToDefaultPosition()
                             exoPlayer?.prepare()
                         }
 

@@ -2,57 +2,46 @@ package com.lagradost.cloudstream3.ui.player.live
 
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import java.lang.ref.WeakReference
 
-// How much margin from the live point is still considered "live"
+// How close to the live/default position still counts as live.
 const val LIVE_MARGIN = 6_000L
 
-// How many ms should we be behind the real live point?
-// Too low, and we cannot pre-buffer.
-// Too high, and we are no longer live.
+// How far behind the real live edge ExoPlayer should try to play.
+// This is also wired into DefaultMediaSourceFactory.setLiveTargetOffsetMs(...).
 const val PREFERRED_LIVE_OFFSET = 5_000L
 
-// An extra offset from the optimal calculated timestamp.
-// This accounts for chunk updates not always being the same size.
+// Kept for source/binary compatibility with older patches. Do not use this to clamp the
+// live target to the middle of the seek window; that was the cause of the stuck-midbar bug.
 const val CHUNK_VARIANCE = 3_000L
 
-// A livestream chunk from the player. The time we get it and the duration can
-// be used to calculate the expected live timestamp for streams where Media3
-// cannot expose a trustworthy currentLiveOffset.
+// Snapshot of a dynamic live window when ExoPlayer reports a timeline update.
+// Player.currentPosition is relative to the start of the current live window and
+// Player.duration is the length/end of that window, so the fallback live target is
+// near duration, not duration / 2.
 class LivestreamChunk(
     val durationMs: Long,
-    val receiveTimeMs: Long = System.currentTimeMillis(),
+    val receiveTimeMs: Long = System.currentTimeMillis()
 ) {
-    // We want to be PREFERRED_LIVE_OFFSET ms after the latest update, but we
-    // cannot be ahead of the middle point. If we are ahead of the middle point
-    // we will reach the end before the new chunk is expected to be released.
-    val targetPosition = maxOf(
-        0L,
-        minOf(
-            durationMs - PREFERRED_LIVE_OFFSET,
-            durationMs / 2 - CHUNK_VARIANCE,
-        ),
-    )
+    val targetPosition: Long = if (durationMs <= 0L || durationMs == C.TIME_UNSET) {
+        0L
+    } else {
+        (durationMs - PREFERRED_LIVE_OFFSET).coerceAtLeast(0L)
+    }
 
     fun isPositionLive(position: Long): Boolean {
-        val currentTime = System.currentTimeMillis()
-        val livePosition = targetPosition + (currentTime - receiveTimeMs)
-        return position + LIVE_MARGIN > livePosition - PREFERRED_LIVE_OFFSET
+        return position + LIVE_MARGIN >= targetPosition
     }
 
     fun getTimeAheadOfLive(position: Long): Long {
-        val currentTime = System.currentTimeMillis()
-        val livePosition = targetPosition + (currentTime - receiveTimeMs)
-        return position - livePosition
+        if (durationMs <= 0L || durationMs == C.TIME_UNSET) return 0L
+        return (position - durationMs).coerceAtLeast(0L)
     }
 }
 
-// There are two types of livestreams we need to manage:
-// 1. A livestream with no history, a continually sliding window.
-// 2. A livestream with history / live-DVR, where currentLiveOffset is the
-//    reliable signal for "how far behind live" the player currently is.
 class LiveManager(player: Player?) {
-    private var _currentPlayer: WeakReference<Player>? = player?.let { WeakReference(it) }
+    private var _currentPlayer: WeakReference<Player>? = WeakReference(player)
     val currentPlayer: Player? get() = _currentPlayer?.get()
 
     private var lastLivestreamChunk: LivestreamChunk? = null
@@ -61,104 +50,62 @@ class LiveManager(player: Player?) {
         lastLivestreamChunk = chunk
     }
 
+    private fun getWindow(player: Player): Timeline.Window? {
+        val timeline = player.currentTimeline
+        if (timeline.isEmpty) return null
+        val index = player.currentMediaItemIndex
+        if (index < 0 || index >= timeline.windowCount) return null
+        return timeline.getWindow(index, Timeline.Window())
+    }
+
+    private fun getFallbackLiveTarget(player: Player): Long? {
+        val duration = player.duration
+        if (duration == C.TIME_UNSET || duration <= 0L) return null
+
+        val windowDefault = getWindow(player)
+            ?.getDefaultPositionMs()
+            ?.takeIf { it != C.TIME_UNSET && it in 0L..duration }
+
+        return (windowDefault ?: (duration - PREFERRED_LIVE_OFFSET))
+            .coerceIn(0L, duration)
+    }
+
     /**
-     * Returns how much a position is ahead of the calculated live window.
-     * Returns 0 if not ahead of live window.
+     * Returns how far a requested position is beyond the actual live edge/window end.
+     * This must not use the preferred target offset, otherwise seeking back to live gets
+     * corrected back away from live and the seekbar appears stuck in the middle.
      */
     fun getTimeAheadOfLive(position: Long): Long {
-        val player = currentPlayer ?: return 0
-        if (!player.isCurrentMediaItemDynamic || player.duration == C.TIME_UNSET) return 0
+        val player = currentPlayer ?: return 0L
+        if (!player.isCurrentMediaItemDynamic) return 0L
 
-        // If currentLiveOffset is wrong we fall back to manual calculations.
-        val ahead = if (
-            player.currentLiveOffset != C.TIME_UNSET &&
-            player.currentLiveOffset >= 0L &&
-            player.currentLiveOffset < player.duration
-        ) {
-            val relativeOffset = player.currentLiveOffset - player.currentPosition + position
-            PREFERRED_LIVE_OFFSET - relativeOffset
+        val duration = player.duration
+        if (duration == C.TIME_UNSET || duration <= 0L) return 0L
+
+        val liveOffset = player.currentLiveOffset
+        val liveEdge = if (liveOffset != C.TIME_UNSET && liveOffset >= 0L) {
+            (player.currentPosition + liveOffset).coerceAtMost(duration)
         } else {
-            lastLivestreamChunk?.getTimeAheadOfLive(position) ?: 0
+            duration
         }
 
-        return maxOf(0, ahead)
+        return (position - liveEdge).coerceAtLeast(0L)
     }
 
-    private fun hasReliableLiveDvrOffset(player: Player): Boolean {
-        val duration = player.duration
-        val liveOffset = player.currentLiveOffset
-
-        return player.isCurrentMediaItemDynamic &&
-            duration != C.TIME_UNSET &&
-            duration > 0L &&
-            liveOffset != C.TIME_UNSET &&
-            liveOffset >= 0L &&
-            liveOffset < duration
-    }
-
-    fun getSeekbarDisplayDuration(): Long? {
-        val player = currentPlayer ?: return null
-        val duration = player.duration
-
-        if (!player.isCurrentMediaItemDynamic) return null
-        if (duration != C.TIME_UNSET && duration > 0L) return duration
-
-        return lastLivestreamChunk
-            ?.durationMs
-            ?.takeIf { it > 0L }
-    }
-
-    /**
-     * Converts raw player positions into a display-only seekbar position for
-     * live-DVR streams.
-     *
-     * This intentionally only runs when currentLiveOffset is reliable. If
-     * currentLiveOffset is unavailable, we fall back to raw Media3 behavior
-     * instead of guessing, because guessing is what caused negative timestamps
-     * and halfway-bar placement.
-     */
-    fun getSeekbarDisplayPosition(position: Long): Long? {
-        val player = currentPlayer ?: return null
-        if (!hasReliableLiveDvrOffset(player)) return null
-
-        val duration = getSeekbarDisplayDuration() ?: return null
-        val rawOffsetFromCurrent = player.currentPosition - position
-        val offsetAtPosition = (player.currentLiveOffset + rawOffsetFromCurrent).coerceAtLeast(0L)
-        val behindPreferredLiveEdge = (offsetAtPosition - PREFERRED_LIVE_OFFSET).coerceAtLeast(0L)
-
-        return (duration - behindPreferredLiveEdge).coerceIn(0L, duration)
-    }
-
-    fun getSeekbarDisplayBufferedPosition(bufferedPosition: Long): Long? {
-        val player = currentPlayer ?: return null
-        if (!hasReliableLiveDvrOffset(player)) return null
-
-        val duration = getSeekbarDisplayDuration() ?: return null
-        val normalized = getSeekbarDisplayPosition(bufferedPosition) ?: duration
-
-        // For live-DVR playback the area from the current position to the live
-        // edge is normally available or about to be available. Keep the
-        // buffered marker at least at the normalized position and never beyond
-        // the display duration.
-        return maxOf(normalized, duration).coerceIn(0L, duration)
-    }
-
-    /**
-     * Check if the stream is currently at the expected live edge, with margins.
-     */
+    /** Check if the stream is at ExoPlayer's live/default position, with margins. */
     fun isAtLiveEdge(): Boolean {
         val player = currentPlayer ?: return false
-        if (!player.isCurrentMediaItemDynamic || player.duration == C.TIME_UNSET) return false
+        if (!player.isCurrentMediaItemDynamic) return false
 
-        // If currentLiveOffset is wrong we fall back to manual calculations.
-        return if (
-            player.currentLiveOffset != C.TIME_UNSET &&
-            player.currentLiveOffset >= 0L &&
-            player.currentLiveOffset < player.duration
-        ) {
-            player.currentLiveOffset < LIVE_MARGIN + PREFERRED_LIVE_OFFSET
-        } else {
-            lastLivestreamChunk?.isPositionLive(player.currentPosition) == true
+        val duration = player.duration
+        if (duration == C.TIME_UNSET || duration <= 0L) return false
+
+        val liveOffset = player.currentLiveOffset
+        if (liveOffset != C.TIME_UNSET && liveOffset >= 0L) {
+            return liveOffset <= PREFERRED_LIVE_OFFSET + LIVE_MARGIN
         }
+
+        val target = getFallbackLiveTarget(player) ?: lastLivestreamChunk?.targetPosition ?: return false
+        return player.currentPosition + LIVE_MARGIN >= target
     }
 }
