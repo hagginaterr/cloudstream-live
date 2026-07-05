@@ -1032,17 +1032,26 @@
                             android:id="@+id/player_rotate_btt"
                             style="@style/VideoButton"
                             android:visibility="gone" />
-<View
-        android:id="@+id/twitch_player_streamer_chip"
-        android:layout_width="1dp"
-        android:layout_height="1dp"
-        android:clickable="false"
-        android:focusable="false"
-        android:visibility="gone" />
+                        <ImageButton
+                            android:id="@+id/twitch_player_streamer_chip"
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
+                            android:background="@drawable/twitch_player_profile_button_bg"
+                            android:clickable="true"
+                            android:contentDescription="Open streamer profile"
+                            android:focusable="true"
+                            android:nextFocusLeft="@id/player_pause_play"
+                            android:nextFocusRight="@id/player_skip_op"
+                            android:nextFocusUp="@id/player_pause_play"
+                            android:nextFocusDown="@id/player_skip_op"
+                            android:padding="0dp"
+                            android:scaleType="centerCrop"
+                            android:src="@drawable/twitch_player_streamer_avatar_placeholder"
+                            android:visibility="gone" />
 <com.google.android.material.button.MaterialButton
                             android:id="@+id/player_skip_op"
                             style="@style/VideoButtonTV"
-                            android:nextFocusLeft="@id/player_lock"
+                            android:nextFocusLeft="@id/twitch_player_streamer_chip"
                             android:nextFocusRight="@id/player_skip_episode"
                             android:nextFocusUp="@id/player_pause_play"
                             android:nextFocusDown="@id/player_skip_episode"
