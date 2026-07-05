@@ -24,8 +24,6 @@ import com.lagradost.cloudstream3.mvvm.launchSafe
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.plugins.PluginManager
 import com.lagradost.cloudstream3.ui.APIRepository
-import com.lagradost.cloudstream3.ui.APIRepository.Companion.noneApi
-import com.lagradost.cloudstream3.ui.APIRepository.Companion.randomApi
 import com.lagradost.cloudstream3.ui.WatchType
 import com.lagradost.cloudstream3.ui.quicksearch.QuickSearchFragment
 import com.lagradost.cloudstream3.ui.search.SEARCH_ACTION_FOCUSED
@@ -498,55 +496,35 @@ class HomeViewModel : ViewModel() {
     }
 
     // only save the key if it is from UI, as we don't want internal functions changing the setting
+        // TwitchOnlyHome by ChatGPT: this fork has a single homepage provider.
+    // Ignore old saved None/Random values and any UI requests for other homepages.
     fun loadAndCancel(
         preferredApiName: String?,
         forceReload: Boolean = true,
         fromUI: Boolean = false
-    ) =
-        ioSafe {
-            //println("trying to load $preferredApiName")
-            // Since plugins are loaded in stages this function can get called multiple times.
-            // The issue with this is that the homepage may be fetched multiple times while the first request is loading
-            // api?.let { expandable[it.name]?.list?.list?.isNotEmpty() } == true
-            val currentPage = page.value
+    ) = ioSafe {
+        val twitchName = "Twitch"
+        val currentPage = page.value
+        val currentLoading = isCurrentlyLoadingName
 
-            // if we don't need to reload and we have a valid homepage or currently loading the same thing then return
-            val currentLoading = isCurrentlyLoadingName
-            if (!forceReload && (currentPage is Resource.Success && currentPage.value.isNotEmpty() || (currentLoading != null && currentLoading == preferredApiName))) {
-                return@ioSafe
-            }
-
-            val api = getApiFromNameNull(preferredApiName)
-            if (preferredApiName == noneApi.name) {
-                // just set to random
-                if (fromUI) DataStoreHelper.currentHomePage = noneApi.name
-                loadAndCancel(noneApi)
-            } else if (preferredApiName == randomApi.name) {
-                // randomize the api, if none exist like if not loaded or not installed
-                // then use nothing
-                val validAPIs = context?.filterProviderByPreferredMedia()
-                if (validAPIs.isNullOrEmpty()) {
-                    loadAndCancel(noneApi)
-                } else {
-                    val apiRandom = validAPIs.random()
-                    loadAndCancel(apiRandom)
-                    if (fromUI) DataStoreHelper.currentHomePage = apiRandom.name
-                }
-            } else if (api == null) {
-                // API is not found aka not loaded or removed, post the loading
-                // progress if waiting for plugins, otherwise nothing
-                if (PluginManager.loadedOnlinePlugins || PluginManager.isSafeMode()) {
-                    loadAndCancel(noneApi)
-                } else {
-                    _page.postValue(Resource.Loading())
-                    if (preferredApiName != null)
-                        _apiName.postValue(preferredApiName)
-                }
-            } else {
-                // if the api is found, then set it to it and save key
-                if (fromUI) DataStoreHelper.currentHomePage = api.name
-                loadAndCancel(api)
-            }
-            reloadAccount()
+        if (!forceReload && (
+                currentPage is Resource.Success && currentPage.value.isNotEmpty() ||
+                    (currentLoading != null && currentLoading == twitchName)
+            )
+        ) {
+            return@ioSafe
         }
+
+        DataStoreHelper.currentHomePage = twitchName
+        val api = getApiFromNameNull(twitchName)
+
+        if (api == null) {
+            _page.postValue(Resource.Loading())
+            _apiName.postValue(twitchName)
+        } else {
+            loadAndCancel(api)
+        }
+
+        reloadAccount()
+    }
 }

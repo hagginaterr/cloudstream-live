@@ -43,8 +43,6 @@ import com.lagradost.cloudstream3.mvvm.Resource
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.mvvm.observe
 import com.lagradost.cloudstream3.mvvm.observeNullable
-import com.lagradost.cloudstream3.ui.APIRepository.Companion.noneApi
-import com.lagradost.cloudstream3.ui.APIRepository.Companion.randomApi
 import com.lagradost.cloudstream3.ui.BaseFragment
 import com.lagradost.cloudstream3.ui.account.AccountHelper.showAccountSelectLinear
 import com.lagradost.cloudstream3.ui.account.AccountViewModel
@@ -367,10 +365,9 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
         }
 
         fun Context.selectHomepage(selectedApiName: String?, callback: (String) -> Unit) {
-            val validAPIs = filterProviderByPreferredMedia().toMutableList()
-
-            validAPIs.add(0, randomApi)
-            validAPIs.add(0, noneApi)
+            val validAPIs = filterProviderByPreferredMedia()
+            .filter { it.name.equals("Twitch", ignoreCase = true) }
+            .toMutableList()
             //val builder: AlertDialog.Builder = AlertDialog.Builder(this)
             //builder.setView(R.layout.home_select_mainpage)
             val builder =
@@ -468,10 +465,8 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                     val remainingApis = sortedApis.filterNot { pinnedphashset.contains(it.name) }
 
                     currentValidApis = mutableListOf<MainAPI>().apply {
-                        addAll(validAPIs.take(2))
-                        addAll(pinnedApis)
-                        addAll(remainingApis)
-                    }
+                    addAll(validAPIs)
+                }
 
                     val names =
                         currentValidApis.map { if (isMultiLang) "${getFlagFromIso(it.lang)?.plus(" ") ?: ""}${it.name}" else it.name }
@@ -481,18 +476,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                     arrayAdapter.notifyDataSetChanged()
                 }
                 // pin provider on hold
-                listView?.setOnItemLongClickListener { _, _, i, _ ->
-                    if (currentValidApis.isNotEmpty() && i > 1) {
-                        val pinnedp = DataStoreHelper.pinnedProviders.toMutableList()
-                        val thisapi = currentValidApis[i].name
-                        if (pinnedp.contains(thisapi)) {
-                            pinnedp.remove(thisapi)
-                        } else {
-                            pinnedp.add(thisapi)
-                        }
-                        DataStoreHelper.pinnedProviders = pinnedp.toTypedArray()
-                        updateList()
-                    }
+                listView?.setOnItemLongClickListener { _, _, _, _ ->
                     true
                 }
 
@@ -580,13 +564,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
         view.context.selectHomepage(currentApiName) { api ->
             homeViewModel.loadAndCancel(api, forceReload = true, fromUI = true)
         }
-        /*val validAPIs = view.context?.filterProviderByPreferredMedia()?.toMutableList() ?: mutableListOf()
-
-        validAPIs.add(0, randomApi)
-        validAPIs.add(0, noneApi)
-        view.popupMenuNoIconsAndNoStringRes(validAPIs.mapIndexed { index, api -> Pair(index, api.name) }) {
-            homeViewModel.loadAndCancel(validAPIs[itemId].name)
-        }*/
+        /* Homepage is pinned to Twitch. */
     }
 
     private var currentApiName: String? = null
@@ -640,7 +618,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             //homeChangeApiLoading.setOnClickListener(apiChangeClickListener)
             homeApiFab.setOnClickListener(apiChangeClickListener)
             homeApiFab.setOnLongClickListener {
-                if (currentApiName == noneApi.name) return@setOnLongClickListener false
+                if (currentApiName?.equals("Twitch", ignoreCase = true) != true) return@setOnLongClickListener false
                 homeViewModel.loadAndCancel(currentApiName, forceReload = true, fromUI = true)
                 showToast(R.string.action_reload, Toast.LENGTH_SHORT)
                 true
@@ -660,7 +638,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
 
             homePreviewReloadProvider.setOnClickListener {
                 homeViewModel.loadAndCancel(
-                    homeViewModel.apiName.value ?: noneApi.name,
+                    homeViewModel.apiName.value ?: "Twitch",
                     forceReload = true,
                     fromUI = true
                 )
@@ -737,8 +715,8 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             binding.apply {
                 homeApiFab.text = apiName
                 homeChangeApi.text = apiName
-                homePreviewReloadProvider.isGone = (apiName == noneApi.name)
-                homePreviewSearchButton.isGone = (apiName == noneApi.name)
+                homePreviewReloadProvider.isGone = false
+                homePreviewSearchButton.isGone = false
             }
         }
 
