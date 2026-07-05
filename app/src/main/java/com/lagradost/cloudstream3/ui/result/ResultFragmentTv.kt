@@ -319,6 +319,9 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     (row.layoutManager as? LinearListLayout)?.initialPrefetchItemCount = 8
         row.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
         row.isNestedScrollingEnabled = false
+        // TwitchTrueProfileRowPagingSetup
+        row.clipToPadding = false
+        row.overScrollMode = View.OVER_SCROLL_NEVER
         row.setRecycledViewPool(SearchAdapter.sharedPool)
         row.adapter = SearchAdapter(
             row,
@@ -340,6 +343,104 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         (row?.adapter as? SearchAdapter)?.submitList(items)
     }
     // END TWITCH_PROFILE_MEDIA_ROWS
+    // TwitchTrueProfileRowPagingPatch: make Twitch profile media categories act
+    // like one-row TV pages and keep the focused card thumbnail as the backdrop.
+    private fun findTwitchProfileImage(view: View?): ImageView? {
+        if (view == null) return null
+        if (view is ImageView && view.drawable != null) return view
+
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                findTwitchProfileImage(view.getChildAt(index))?.let { return it }
+            }
+        }
+
+        return null
+    }
+
+    private fun findTwitchProfileScroll(view: View?): View? {
+        var current = view?.parent as? View
+        while (current != null) {
+            if (current is ScrollView || current is androidx.core.widget.NestedScrollView) return current
+            current = current.parent as? View
+        }
+        return null
+    }
+
+    private fun scrollTwitchProfile(scroll: View, y: Int) {
+        when (scroll) {
+            is androidx.core.widget.NestedScrollView -> scroll.smoothScrollTo(0, maxOf(0, y))
+            is ScrollView -> scroll.smoothScrollTo(0, maxOf(0, y))
+        }
+    }
+
+    private fun applyTwitchProfileFocusedBackdrop(focusedView: View?) {
+        if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
+
+        val source = findTwitchProfileImage(focusedView) ?: return
+        val drawable = source.drawable ?: return
+        val background = binding?.root
+            ?.findViewById<ImageView>(R.id.result_twitch_focus_background)
+            ?: return
+        val scrim = binding?.root?.findViewById<View>(R.id.result_twitch_focus_scrim)
+
+        background.visibility = View.VISIBLE
+        scrim?.visibility = View.VISIBLE
+        background.alpha = 0.55f
+        background.scaleType = ImageView.ScaleType.CENTER_CROP
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            background.setRenderEffect(
+                RenderEffect.createBlurEffect(
+                    18f,
+                    18f,
+                    Shader.TileMode.CLAMP,
+                ),
+            )
+        }
+
+        background.setImageDrawable(
+            drawable.constantState
+                ?.newDrawable()
+                ?.mutate()
+                ?: drawable,
+        )
+    }
+
+    private fun pageTwitchProfileMediaRow(focusedView: View?) {
+        if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR) || focusedView == null) return
+
+        applyTwitchProfileFocusedBackdrop(focusedView)
+
+        val rowRecycler = generateSequence(focusedView.parent as? View) { it.parent as? View }
+            .firstOrNull { it is RecyclerView }
+            ?: return
+        val scroll = findTwitchProfileScroll(rowRecycler) ?: return
+        val rowPage = rowRecycler.parent as? View ?: rowRecycler
+
+        val targetHeight = scroll.height.takeIf { it > 0 }
+            ?: focusedView.resources.displayMetrics.heightPixels
+        rowPage.minimumHeight = targetHeight
+
+        val scrollLocation = IntArray(2)
+        val pageLocation = IntArray(2)
+        scroll.getLocationOnScreen(scrollLocation)
+        rowPage.getLocationOnScreen(pageLocation)
+
+        val currentY = when (scroll) {
+            is androidx.core.widget.NestedScrollView -> scroll.scrollY
+            is ScrollView -> scroll.scrollY
+            else -> 0
+        }
+
+        val target = currentY +
+                (pageLocation[1] - scrollLocation[1]) -
+                (targetHeight * 0.50f).toInt()
+
+        scroll.post {
+            scrollTwitchProfile(scroll, target)
+        }
+    }
 private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?) {
         currentRecommendations = rec ?: emptyList()
         val matchAgainst = validApiName ?: rec?.firstOrNull()?.apiName
@@ -364,9 +465,7 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
                 pastBroadcasts,
                 4,
             ) { callback ->
-                if (callback.action != SEARCH_ACTION_FOCUSED) {
-                SearchHelper.handleSearchClickCallback(callback)
-            }
+                if (callback.action == SEARCH_ACTION_FOCUSED) { pageTwitchProfileMediaRow(callback.view) } else { SearchHelper.handleSearchClickCallback(callback) }
             }
             submitTwitchProfileMediaRow(
                 root.findViewById(R.id.result_clips_list),
@@ -374,9 +473,7 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
                 clips,
                 4,
             ) { callback ->
-                if (callback.action != SEARCH_ACTION_FOCUSED) {
-                SearchHelper.handleSearchClickCallback(callback)
-            }
+                if (callback.action == SEARCH_ACTION_FOCUSED) { pageTwitchProfileMediaRow(callback.view) } else { SearchHelper.handleSearchClickCallback(callback) }
             }
             submitTwitchProfileMediaRow(
                 root.findViewById(R.id.result_highlights_list),
@@ -384,9 +481,7 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
                 highlights,
                 4,
             ) { callback ->
-                if (callback.action != SEARCH_ACTION_FOCUSED) {
-                SearchHelper.handleSearchClickCallback(callback)
-            }
+                if (callback.action == SEARCH_ACTION_FOCUSED) { pageTwitchProfileMediaRow(callback.view) } else { SearchHelper.handleSearchClickCallback(callback) }
             }
 
             rec?.map { it.apiName }?.distinct()?.let { apiNames ->

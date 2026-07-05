@@ -637,6 +637,15 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             )
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
+            // TwitchTrueRowPagingSnapPatch: row pages are full-height; snap one row per up/down move.
+            if (isLayout(TV or EMULATOR)) {
+                homeMasterRecycler.clipToPadding = false
+                homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
+                homeMasterRecycler.isNestedScrollingEnabled = false
+                if (homeMasterRecycler.onFlingListener == null) {
+                    PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
+                }
+            }
             // TwitchOfficialHomeSnapPatch: TV home rows behave like Twitch category pages.
             // Each vertical move lands on one row page instead of a long mixed list.
             if (isLayout(TV or EMULATOR) && homeMasterRecycler.onFlingListener == null) {

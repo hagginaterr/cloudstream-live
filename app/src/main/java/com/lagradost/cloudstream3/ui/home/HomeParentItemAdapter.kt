@@ -83,9 +83,38 @@ open class ParentItemAdapter(
     ) {
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
+        applyTwitchTvRowPageSizing(holder)
         (binding.homeChildRecyclerview.adapter as? HomeChildItemAdapter)?.submitList(item.list.list)
     }
 
+    // TwitchTrueRowPagingPatch: TV home rows must be real full-screen pages.
+    // PagerSnapHelper alone is not enough if each parent row still measures as wrap_content.
+    private fun applyTwitchTvRowPageSizing(holder: ViewHolderState) {
+        if (!isLayout(TV or EMULATOR)) return
+
+        val rowView = holder.itemView
+        val masterRecycler = rowView.parent as? RecyclerView
+        val targetHeight = masterRecycler?.height?.takeIf { it > 0 }
+            ?: rowView.resources.displayMetrics.heightPixels
+
+        val params = rowView.layoutParams ?: RecyclerView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            targetHeight,
+        )
+
+        var changed = false
+        if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT
+            changed = true
+        }
+        if (params.height != targetHeight) {
+            params.height = targetHeight
+            changed = true
+        }
+        if (changed) rowView.layoutParams = params
+
+        (rowView as? ViewGroup)?.clipToPadding = false
+    }
     override fun onBindContent(
         holder: ViewHolderState<Bundle>,
         item: HomeViewModel.ExpandableHomepageList,
@@ -95,6 +124,7 @@ open class ParentItemAdapter(
         val endFocus = FOCUS_SELF
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
+        applyTwitchTvRowPageSizing(holder)
         val info = item.list
         binding.apply {
             val currentAdapter = homeChildRecyclerview.adapter as? HomeChildItemAdapter
