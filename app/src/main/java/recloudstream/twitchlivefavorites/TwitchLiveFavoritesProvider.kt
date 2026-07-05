@@ -1666,7 +1666,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         return clean.contains("clips.twitch.tv/") || clean.contains("/clip/") || twitchProfileMediaMarker(url) == "clip"
     }
 
-    private fun twitchClipFallbackLink(url: String, label: String = "Twitch Clip"): ExtractorLink {
+    private suspend fun twitchClipFallbackLink(url: String, label: String = "Twitch Clip"): ExtractorLink {
         return newExtractorLink(name, label, url) {
             this.type = ExtractorLinkType.VIDEO
             this.quality = getQualityFromName("720p")
