@@ -181,26 +181,19 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     ) {
         if (row == null) return
         row.spanCount = spanCount
-        row.layoutManager = object : androidx.recyclerview.widget.LinearLayoutManager(row.context, androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL, false) {
-            override fun onFocusSearchFailed(focused: android.view.View, focusDirection: Int, recycler: androidx.recyclerview.widget.RecyclerView.Recycler, state: androidx.recyclerview.widget.RecyclerView.State): android.view.View? {
-                if (focusDirection == android.view.View.FOCUS_RIGHT || focusDirection == android.view.View.FOCUS_LEFT) {
-                    return focused
-                }
-                return super.onFocusSearchFailed(focused, focusDirection, recycler, state)
-            }
-        }
+        row.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(
+            row.context,
+            androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL,
+            false,
+        )
         row.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
-        row.nextFocusLeftId = row.id
-        row.nextFocusRightId = row.id
         row.isNestedScrollingEnabled = true
         row.setRecycledViewPool(SearchAdapter.sharedPool)
-        if (row.adapter !is SearchAdapter) {
-            row.adapter = SearchAdapter(
-                row,
-                isHorizontal = true,
-                clickCallback = clickCallback,
-            )
-        }
+        row.adapter = SearchAdapter(
+            row,
+            isHorizontal = true,
+            clickCallback = clickCallback,
+        )
     }
 
     private fun submitTwitchProfileMediaRow(

@@ -1113,7 +1113,7 @@ private suspend fun fetchRecentPastBroadcasts(
                 "videos",
                 extra = mapOf(
                     "user_id" to resolvedUserId,
-                    "first" to "12",
+                    "first" to "50",
                     "type" to "archive",
                 ),
             ),
@@ -1269,14 +1269,26 @@ private fun formatViewerCount(count: Int?): String? {
             ?.ifBlank { null }
     }
     private fun twitchClipDirectVideoUrl(thumbnailUrl: String?): String? {
-        val clean = thumbnailUrl?.ifBlank { null } ?: return null
-        val base = clean.substringBefore("-preview", missingDelimiterValue = "")
-        return if (base.isBlank()) null else "$base.mp4"
+    val clean = thumbnailUrl?.ifBlank { null }?.substringBefore("?")?.substringBefore("#") ?: return null
+    var base: String? = null
+    for (marker in listOf("-preview-", "-social-preview", "-preview")) {
+        val candidate = clean.substringBefore(marker, missingDelimiterValue = "").ifBlank { null }
+        if (candidate != null) {
+            base = candidate
+            break
+        }
     }
-    private fun isTwitchClipDirectVideoUrl(url: String): Boolean {
-        val clean = url.substringBefore("?").lowercase()
-        return clean.startsWith("http") && clean.endsWith(".mp4") && (clean.contains("clips") || clean.contains("jtvnw") || clean.contains("twitch"))
+    val finalBase = base ?: clean.substringBeforeLast('.', missingDelimiterValue = "")
+    if (finalBase.isBlank() || !finalBase.startsWith("http", ignoreCase = true)) return null
+    return if (finalBase.endsWith(".mp4", ignoreCase = true)) finalBase else "$finalBase.mp4"
+}
+
+private fun isTwitchClipDirectVideoUrl(url: String): Boolean {
+        val clean = url.substringBefore("?").substringBefore("#").lowercase()
+        return clean.startsWith("http") && clean.endsWith(".mp4") &&
+            (clean.contains("clips") || clean.contains("jtvnw") || clean.contains("twitch"))
     }
+
 private fun twitchProfileMediaCardUrl(
     url: String,
     marker: String,
@@ -1318,7 +1330,7 @@ private fun twitchProfileVideoThumbnail(url: String): String? {
     val json = twitchGet<TwitchVideosResponse>(
         buildHelixUrl(
             "videos",
-            extra = mapOf("user_id" to user.id, "type" to type, "first" to "20"),
+            extra = mapOf("user_id" to user.id, "type" to type, "first" to "50"),
         ),
     ) ?: return emptyList()
 
@@ -1351,7 +1363,7 @@ private suspend fun fetchTwitchClipRecommendations(user: TwitchUser): List<LiveS
     val json = twitchGet<TwitchClipsResponse>(
         buildHelixUrl(
             "clips",
-            extra = mapOf("broadcaster_id" to user.id, "first" to "20"),
+            extra = mapOf("broadcaster_id" to user.id, "first" to "50"),
         ),
     ) ?: return emptyList()
 
@@ -1362,7 +1374,7 @@ private suspend fun fetchTwitchClipRecommendations(user: TwitchUser): List<LiveS
         val views = formatViewCount(clip.view_count)
         val durationText = if (clip.duration > 0f) "${clip.duration.toInt()}s" else null
         val clipVideoUrl = twitchClipDirectVideoUrl(clip.thumbnail_url)
-        val cardUrl = appendTwitchProfileQueryParam(twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, null, views, durationText), "cs_clip_video", clipVideoUrl)
+        val baseClipUrl = clipVideoUrl ?: watchUrl; val cardUrl = appendTwitchProfileQueryParam(twitchProfileMediaCardUrl(baseClipUrl, "clip", displayTitle, age, null, views, durationText), "cs_clip_video", clipVideoUrl)
         newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(clip.thumbnail_url.ifBlank { null }, nowMs())
             lang = age
@@ -1392,29 +1404,34 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
     }
 
     private suspend fun twitchProfileMediaLoadResponse(url: String): LoadResponse {
-        val marker = twitchProfileMediaMarker(url).orEmpty()
-        val clipVideoUrl = twitchProfileMediaParam(url, "cs_clip_video")
-        val cleanUrl = if (marker == "clip") {
-            clipVideoUrl ?: stripTwitchProfileMediaMarker(url)
-        } else {
-            stripTwitchProfileMediaMarker(url)
-        }
-        val title = twitchProfileMediaParam(url, "cs_title") ?: when (marker) {
-            "clip" -> "Twitch Clip"
-            "highlight" -> "Twitch Highlight"
-            else -> "Twitch Past Broadcast"
-        }
-        val mediaTag = when (marker) {
-            "clip" -> "Clip"
-            "highlight" -> "Highlight"
-            else -> "Past Broadcast"
-        }
-        return newLiveStreamLoadResponse(title, cleanUrl, cleanUrl) {
-            plot = "Open this Twitch $mediaTag."
-            this@newLiveStreamLoadResponse.tags = listOf("Twitch", mediaTag)
-        }
+    val marker = twitchProfileMediaMarker(url).orEmpty()
+    val clipVideoUrl = twitchProfileMediaParam(url, "cs_clip_video")?.takeIf { isTwitchClipDirectVideoUrl(it) }
+    val cleanUrl = if (marker == "clip") {
+        clipVideoUrl ?: stripTwitchProfileMediaMarker(url)
+    } else {
+        stripTwitchProfileMediaMarker(url)
     }
-    // END TWITCH_PROFILE_MEDIA_PROVIDER_ROWS
+    val fallbackTitle = when (marker) {
+        "clip" -> "Twitch Clip"
+        "highlight" -> "Twitch Highlight"
+        else -> "Twitch Past Broadcast"
+    }
+    val title = twitchProfileMediaParam(url, "cs_title") ?: fallbackTitle
+    val mediaTag = when (marker) {
+        "clip" -> "Clip"
+        "highlight" -> "Highlight"
+        else -> "Past Broadcast"
+    }
+    val age = twitchProfileMediaParam(url, "cs_age")
+    val views = twitchProfileMediaParam(url, "cs_views")
+    val duration = twitchProfileMediaParam(url, "cs_duration")
+    return newLiveStreamLoadResponse(title, cleanUrl, cleanUrl) {
+        plot = "Open this Twitch $mediaTag."
+        this@newLiveStreamLoadResponse.tags = listOfNotNull("Twitch", mediaTag, age, views, duration)
+    }
+}
+
+// END TWITCH_PROFILE_MEDIA_PROVIDER_ROWS
     private fun ChannelSummary.toChannelCard(): LiveSearchResponse {
         return newLiveSearchResponse(displayName, channel, TvType.Live, fix = false) {
             posterUrl = image
@@ -1580,7 +1597,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         val response = twitchGet<TwitchSearchResponse>(
             buildHelixUrl(
                 "search/channels",
-                extra = mapOf("query" to query, "first" to "20", "live_only" to "false"),
+                extra = mapOf("query" to query, "first" to "50", "live_only" to "false"),
             ),
         ) ?: return emptyList()
 

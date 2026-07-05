@@ -159,17 +159,16 @@ object SearchResultBuilder {
         cardText?.isVisible = if (isTwitchVodCard) true else showTitle
 
         if (isTwitchVodCard) {
-            textFlag?.apply {
+            textFlag?.isVisible = false
+            textIsDub?.apply {
                 text = twitchVodAge.orEmpty()
                 isVisible = !twitchVodAge.isNullOrBlank()
-                setBackgroundResource(R.drawable.bg_color_both)
             }
-
+            textIsSub?.isVisible = false
             rating?.apply {
                 text = twitchVodViews.orEmpty()
                 isVisible = !twitchVodViews.isNullOrBlank()
             }
-
             textQuality?.apply {
                 text = twitchVodDuration.orEmpty()
                 isVisible = !twitchVodDuration.isNullOrBlank()
