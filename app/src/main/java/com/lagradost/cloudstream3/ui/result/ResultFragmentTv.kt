@@ -3,6 +3,11 @@ package com.lagradost.cloudstream3.ui.result
 import android.animation.Animator
 import android.annotation.SuppressLint
 import android.app.Dialog
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
+import android.widget.ImageView
+import android.widget.ScrollView
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -94,7 +99,132 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         return super.onCreateView(inflater, container, savedInstanceState)
     }
 
+    // TwitchProfileStylePatchV2: profile media rows use a Twitch-like TV presentation.
+    // This avoids fragile adapter callback matching by listening for global focus changes
+    // on the profile page and copying the focused card thumbnail into a blurred backdrop.
+    private var twitchProfileFocusListenerInstalled = false
+
+    private fun findTwitchProfilePosterImage(view: View?): ImageView? {
+        if (view == null) return null
+        if (view is ImageView && view.drawable != null) return view
+
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                findTwitchProfilePosterImage(view.getChildAt(index))?.let { return it }
+            }
+        }
+
+        return null
+    }
+
+    private fun findTwitchProfileScrollContainerFrom(view: View?): View? {
+        var current = view?.parent as? View
+        while (current != null) {
+            if (current is ScrollView || current is androidx.core.widget.NestedScrollView) return current
+            current = current.parent as? View
+        }
+        return findTwitchProfileScrollContainerIn(binding?.root)
+    }
+
+    private fun findTwitchProfileScrollContainerIn(view: View?): View? {
+        if (view == null) return null
+        if (view is ScrollView || view is androidx.core.widget.NestedScrollView) return view
+
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                findTwitchProfileScrollContainerIn(view.getChildAt(index))?.let { return it }
+            }
+        }
+
+        return null
+    }
+
+    private fun scrollTwitchProfileContainer(scrollView: View, y: Int) {
+        when (scrollView) {
+            is androidx.core.widget.NestedScrollView -> scrollView.smoothScrollTo(0, maxOf(0, y))
+            is ScrollView -> scrollView.smoothScrollTo(0, maxOf(0, y))
+        }
+    }
+
+    private fun updateTwitchProfileFocusedBackground(focusedView: View?) {
+        if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
+
+        val source = findTwitchProfilePosterImage(focusedView) ?: return
+        val drawable = source.drawable ?: return
+        val background = binding?.root
+            ?.findViewById<ImageView>(R.id.result_twitch_focus_background)
+            ?: return
+        val scrim = binding?.root?.findViewById<View>(R.id.result_twitch_focus_scrim)
+
+        background.visibility = View.VISIBLE
+        scrim?.visibility = View.VISIBLE
+        background.alpha = 0.55f
+        background.scaleType = ImageView.ScaleType.CENTER_CROP
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            background.setRenderEffect(
+                RenderEffect.createBlurEffect(
+                    18f,
+                    18f,
+                    Shader.TileMode.CLAMP,
+                ),
+            )
+        }
+
+        background.setImageDrawable(
+            drawable.constantState
+                ?.newDrawable()
+                ?.mutate()
+                ?: drawable,
+        )
+    }
+
+    private fun alignTwitchProfileFocusedRow(focusedView: View?) {
+        if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR) || focusedView == null) return
+
+        val scrollView = findTwitchProfileScrollContainerFrom(focusedView) ?: return
+        val row = generateSequence(focusedView.parent as? View) { it.parent as? View }
+            .firstOrNull { it is RecyclerView }
+            ?: focusedView
+
+        val scrollLocation = IntArray(2)
+        val rowLocation = IntArray(2)
+        scrollView.getLocationOnScreen(scrollLocation)
+        row.getLocationOnScreen(rowLocation)
+
+        val target = when (scrollView) {
+            is androidx.core.widget.NestedScrollView -> scrollView.scrollY
+            is ScrollView -> scrollView.scrollY
+            else -> 0
+        } + (rowLocation[1] - scrollLocation[1]) - (scrollView.height * 0.52f).toInt()
+
+        scrollTwitchProfileContainer(scrollView, target)
+    }
+
+    private fun applyTwitchProfileTvStyle() {
+        if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
+
+        binding?.root?.findViewById<View>(R.id.result_twitch_focus_scrim)?.visibility = View.VISIBLE
+
+        if (twitchProfileFocusListenerInstalled) return
+        twitchProfileFocusListenerInstalled = true
+
+        binding?.root?.viewTreeObserver?.addOnGlobalFocusChangeListener { _, newFocus ->
+            if (!isTwitchProfileMediaPage || newFocus == null) return@addOnGlobalFocusChangeListener
+            updateTwitchProfileFocusedBackground(newFocus)
+            alignTwitchProfileFocusedRow(newFocus)
+        }
+
+        binding?.root?.post {
+            val focused = activity?.currentFocus
+            if (focused != null) {
+                updateTwitchProfileFocusedBackground(focused)
+                alignTwitchProfileFocusedRow(focused)
+            }
+        }
+    }
     private fun updateUI(id: Int?) {
+        applyTwitchProfileTvStyle()
         viewModel.reloadEpisodes()
     }
 

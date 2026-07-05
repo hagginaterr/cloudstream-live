@@ -19,6 +19,22 @@ https://developer.android.com/design/ui/tv/samples/jet-fit
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="?attr/primaryBlackBackground">
+    <!-- TwitchProfileStylePatch: blurred focused thumbnail background for Twitch streamer profiles. -->
+    <ImageView
+        android:id="@+id/result_twitch_focus_background"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0.55"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+
+    <View
+        android:id="@+id/result_twitch_focus_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#B8000000"
+        android:visibility="gone" />
+
 
     <FrameLayout
         android:id="@+id/background_poster_holder"
