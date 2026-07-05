@@ -795,7 +795,14 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
         }
     }
 
-    private val pluginsLock = Mutex()
+        private fun forceTwitchHomePageAfterStartup() {
+        val current = DataStoreHelper.currentHomePage
+        if (current == null || current.isBlank() || current.equals("none", ignoreCase = true)) {
+            DataStoreHelper.currentHomePage = BuiltInTwitchLiveFavorites.PROVIDER_NAME
+            MainActivity.reloadHomeEvent(true)
+        }
+    }
+private val pluginsLock = Mutex()
     private fun onAllPluginsLoaded(success: Boolean = false) {
         ioSafe {
             pluginsLock.withLock {
@@ -2000,8 +2007,8 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
             removeKey(USER_SELECTED_HOMEPAGE_API)
         }
 
-        try {
-            if (getKey(HAS_DONE_SETUP_KEY, false) != true) {
+        forceTwitchHomePageAfterStartup()
+        try { if (getKey(HAS_DONE_SETUP_KEY, false) != true) {
                 navController.navigate(R.id.navigation_setup_language)
                 // If no plugins bring up extensions screen
             } else if (PluginManager.getPluginsOnline().isEmpty()

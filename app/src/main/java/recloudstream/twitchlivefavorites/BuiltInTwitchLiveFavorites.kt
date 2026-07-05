@@ -40,7 +40,9 @@ object BuiltInTwitchLiveFavorites {
 
         if (forceHomepage) {
             val current = DataStoreHelper.currentHomePage
-            if (current.isNullOrBlank() || current == "None" || current == LEGACY_PROVIDER_NAME) {
+            if (current.isNullOrBlank() ||
+            current.equals("None", ignoreCase = true) ||
+            current == LEGACY_PROVIDER_NAME) {
                 DataStoreHelper.currentHomePage = PROVIDER_NAME
                 Log.i(TAG, "Set homepage to $PROVIDER_NAME")
                 MainActivity.reloadHomeEvent(true)
