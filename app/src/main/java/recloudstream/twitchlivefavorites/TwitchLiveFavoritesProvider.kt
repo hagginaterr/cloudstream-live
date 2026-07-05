@@ -1,4 +1,4 @@
-﻿package recloudstream.twitchlivefavorites
+package recloudstream.twitchlivefavorites
 
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
@@ -84,6 +84,7 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         // FollowingLiveNowPatch: when signed in, the Live Now row comes directly
         // from Twitch's streams/followed endpoint instead of the local favorites list.
+        // NewFromFollowedChannelsHomePatch: also add fast-capped media rows from followed channels.
         ensureStartupFavoritesSaved()
         val signedInUserId = TwitchAccountAuth.userId()
         val useSignedInFollows = TwitchAccountAuth.isSignedIn() && !signedInUserId.isNullOrBlank()
@@ -91,18 +92,26 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         val usingStarterFavorites = savedFavorites.isEmpty()
         val favorites = if (usingStarterFavorites) starterFavoriteChannels else savedFavorites
 
+        if (useSignedInFollows) {
+            val liveFollowed = fetchLiveFollowedStreams(signedInUserId.orEmpty())
+            maybeScheduleAutoRefresh("followed:${signedInUserId.orEmpty()}")
+
+            val liveItems = when {
+                !hasTwitchCredentials() -> listOf(setupRequiredCard())
+                liveFollowed == null -> listOf(apiErrorCard(lastTwitchApiError.orEmpty()))
+                liveFollowed.isNotEmpty() -> liveFollowed.map { it.toChannelCard(showOfflineLabel = false, directPlay = true) }
+                else -> listOf(statusCard("No followed Twitch channels are live right now", "no-followed-live"))
+            }
+
+            val rows = mutableListOf<HomePageList>(
+                HomePageList(liveFavoritesRowTitle(), liveItems, isHorizontalImages = isHorizontal),
+            )
+            rows.addAll(fetchFollowedHomeMediaRows(signedInUserId.orEmpty()))
+            return newHomePageResponse(rows, hasNext = false)
+        }
+
         val items = when {
             !hasTwitchCredentials() -> listOf(setupRequiredCard())
-            useSignedInFollows -> {
-                val liveFollowed = fetchLiveFollowedStreams(signedInUserId.orEmpty())
-                maybeScheduleAutoRefresh("followed:${signedInUserId.orEmpty()}")
-
-                when {
-                    liveFollowed == null -> listOf(apiErrorCard(lastTwitchApiError.orEmpty()))
-                    liveFollowed.isNotEmpty() -> liveFollowed.map { it.toChannelCard(showOfflineLabel = false, directPlay = true) }
-                    else -> listOf(statusCard("No followed Twitch channels are live right now", "no-followed-live"))
-                }
-            }
             favorites.isEmpty() -> listOf(statusCard("Search Twitch to add favorites", "no-favorites"))
             else -> {
                 val liveFavorites = fetchLiveFavoriteChannels(favorites)
@@ -199,6 +208,17 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         val thumbnail_url: String = "",
     )
 
+    private data class TwitchFollowedChannelsResponse(
+        val data: List<TwitchFollowedChannel> = emptyList(),
+        val pagination: TwitchPagination = TwitchPagination(),
+    )
+
+    private data class TwitchFollowedChannel(
+        val broadcaster_id: String = "",
+        val broadcaster_login: String = "",
+        val broadcaster_name: String = "",
+        val followed_at: String = "",
+    )
         private data class TwitchVideosResponse(
         val data: List<TwitchVideo> = emptyList(),
     )
@@ -660,6 +680,199 @@ private fun getSavedFavoriteChannels(): List<String> {
         return users
     }
 
+    private val followedHomeChannelRequestLimit = 5
+    private val followedHomeMaxItemsPerRow = 12
+
+    private suspend fun fetchFollowedChannelsForHome(userId: String): List<TwitchFollowedChannel> {
+        val cleanUserId = userId.trim()
+        if (cleanUserId.isBlank()) return emptyList()
+
+        val token = TwitchAccountAuth.getValidAccessToken()?.trim().orEmpty()
+        if (token.isBlank()) return emptyList()
+
+        return runCatching {
+            twitchGetWithToken<TwitchFollowedChannelsResponse>(
+                buildHelixUrl(
+                    "channels/followed",
+                    extra = mapOf(
+                        "user_id" to cleanUserId,
+                        "first" to followedHomeChannelRequestLimit.toString(),
+                    ),
+                ),
+                token,
+            )
+        }.getOrNull()
+            ?.data
+            .orEmpty()
+            .filter { it.broadcaster_id.isNotBlank() || it.broadcaster_login.isNotBlank() }
+            .distinctBy { it.broadcaster_id.ifBlank { normalizeChannel(it.broadcaster_login) } }
+            .take(followedHomeChannelRequestLimit)
+    }
+
+    private suspend fun fetchFollowedHomeMediaRows(userId: String): List<HomePageList> {
+        val followed = fetchFollowedChannelsForHome(userId)
+        if (followed.isEmpty()) return emptyList()
+
+        val rows = mutableListOf<HomePageList>()
+
+        val pastBroadcasts = fetchFollowedVideosHome(
+            followed = followed,
+            type = "archive",
+            marker = "past_broadcast",
+            perChannel = 2,
+        )
+        if (pastBroadcasts.isNotEmpty()) {
+            rows.add(HomePageList("Latest Past Broadcasts", pastBroadcasts, isHorizontalImages = isHorizontal))
+        }
+
+        val highlights = fetchFollowedVideosHome(
+            followed = followed,
+            type = "highlight",
+            marker = "highlight",
+            perChannel = 1,
+        )
+        if (highlights.isNotEmpty()) {
+            rows.add(HomePageList("Latest Highlights", highlights, isHorizontalImages = isHorizontal))
+        }
+
+        val clips = fetchFollowedClipsHome(
+            followed = followed,
+            perChannel = 2,
+        )
+        if (clips.isNotEmpty()) {
+            rows.add(HomePageList("Popular Clips From Followed Channels", clips, isHorizontalImages = isHorizontal))
+        }
+
+        return rows
+    }
+
+    private suspend fun fetchFollowedVideosHome(
+        followed: List<TwitchFollowedChannel>,
+        type: String,
+        marker: String,
+        perChannel: Int,
+    ): List<LiveSearchResponse> {
+        val items = mutableListOf<Pair<String, LiveSearchResponse>>()
+
+        followed.take(followedHomeChannelRequestLimit).forEach { followedChannel ->
+            val broadcasterId = followedChannel.broadcaster_id.ifBlank { return@forEach }
+            val displayName = followedChannel.broadcaster_name
+                .ifBlank { followedChannel.broadcaster_login }
+                .ifBlank { "Twitch" }
+
+            val response = twitchGet<TwitchVideosResponse>(
+                buildHelixUrl(
+                    "videos",
+                    extra = mapOf(
+                        "user_id" to broadcasterId,
+                        "type" to type,
+                        "first" to perChannel.toString(),
+                    ),
+                ),
+            ) ?: return@forEach
+
+            response.data.forEach { video ->
+                val sortKey = video.published_at.ifBlank { video.created_at }
+                val card = video.toFollowedVideoHomeCard(marker, displayName) ?: return@forEach
+                items.add(sortKey to card)
+            }
+        }
+
+        return items
+            .sortedByDescending { it.first }
+            .map { it.second }
+            .distinctBy { it.url }
+            .take(followedHomeMaxItemsPerRow)
+    }
+
+    private fun TwitchVideo.toFollowedVideoHomeCard(
+        marker: String,
+        channelDisplayName: String,
+    ): LiveSearchResponse? {
+        val videoId = id.filter { it.isDigit() }
+        if (videoId.isBlank()) return null
+
+        val displayTitle = cleanTwitchText(title) ?: channelDisplayName.ifBlank { "Twitch video" }
+        val watchUrl = url.ifBlank { twitchVideoUrl(videoId) }
+        val createdOrPublished = published_at.ifBlank { created_at }
+        val age = formatTwitchVideoAge(createdOrPublished) ?: formatTwitchVideoDate(createdOrPublished)
+        val views = formatViewCount(view_count)
+        val durationText = formatTwitchDuration(duration) ?: duration.ifBlank { null }
+
+        val mediaCardUrl = if (marker == "past_broadcast") {
+            appendTwitchProfileMediaMarker(
+                twitchVodCardUrl(videoId, displayTitle, age, null, views, durationText),
+                marker,
+            )
+        } else {
+            twitchProfileMediaCardUrl(watchUrl, marker, displayTitle, age, null, views, durationText)
+        }
+
+        val cardUrl = appendDirectPlayMarker(mediaCardUrl)
+        return newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
+            posterUrl = cacheBustImage(twitchProfileVideoThumbnail(thumbnail_url), nowMs())
+            lang = listOfNotNull(channelDisplayName.ifBlank { null }, age, views)
+                .joinToString(" - ")
+                .ifBlank { null }
+        }
+    }
+
+    private suspend fun fetchFollowedClipsHome(
+        followed: List<TwitchFollowedChannel>,
+        perChannel: Int,
+    ): List<LiveSearchResponse> {
+        val items = mutableListOf<Pair<Int, LiveSearchResponse>>()
+
+        followed.take(followedHomeChannelRequestLimit).forEach { followedChannel ->
+            val broadcasterId = followedChannel.broadcaster_id.ifBlank { return@forEach }
+            val displayName = followedChannel.broadcaster_name
+                .ifBlank { followedChannel.broadcaster_login }
+                .ifBlank { "Twitch" }
+
+            val response = twitchGet<TwitchClipsResponse>(
+                buildHelixUrl(
+                    "clips",
+                    extra = mapOf(
+                        "broadcaster_id" to broadcasterId,
+                        "first" to perChannel.toString(),
+                    ),
+                ),
+            ) ?: return@forEach
+
+            response.data.forEach { clip ->
+                val card = clip.toFollowedClipHomeCard(displayName) ?: return@forEach
+                items.add(clip.view_count to card)
+            }
+        }
+
+        return items
+            .sortedByDescending { it.first }
+            .map { it.second }
+            .distinctBy { it.url }
+            .take(followedHomeMaxItemsPerRow)
+    }
+
+    private fun TwitchClip.toFollowedClipHomeCard(channelDisplayName: String): LiveSearchResponse? {
+        val watchUrl = url.ifBlank { return null }
+        val displayTitle = cleanTwitchText(title) ?: channelDisplayName.ifBlank { "Twitch clip" }
+        val age = formatTwitchVideoAge(created_at) ?: formatTwitchVideoDate(created_at)
+        val views = formatViewCount(view_count)
+        val durationText = if (duration > 0f) "${duration.toInt()}s" else null
+        val clipVideoUrl = twitchClipDirectVideoUrl(thumbnail_url)
+        val mediaCardUrl = appendTwitchProfileQueryParam(
+            twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, null, views, durationText),
+            "cs_clip_video",
+            clipVideoUrl,
+        )
+        val cardUrl = appendDirectPlayMarker(mediaCardUrl)
+
+        return newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
+            posterUrl = cacheBustImage(thumbnail_url.ifBlank { null }, nowMs())
+            lang = listOfNotNull(channelDisplayName.ifBlank { null }, age, views)
+                .joinToString(" - ")
+                .ifBlank { null }
+        }
+    }
     private suspend fun fetchLiveFollowedStreams(userId: String): List<FavoriteChannel>? {
         val cleanUserId = userId.trim()
         if (cleanUserId.isBlank()) return null
