@@ -1292,8 +1292,7 @@ private fun handleKeyDownEvent(event: KeyEvent): Boolean? {
             playerGoBack.setOnClickListener {
                 activity?.popCurrentPage("FullScreenPlayer")
             }
-
-            configurePlayerSourceButton(playerSourcesBtt)
+configurePlayerSourceButton(playerSourcesBtt)
             playerSourcesBtt.setOnClickListener { showMirrorsDialogue() }
 
             playerTracksBtt.setOnClickListener {
@@ -1341,16 +1340,28 @@ private fun handleKeyDownEvent(event: KeyEvent): Boolean? {
             rotatedManually = true
         }
     }
-
-        // BEGIN PlayerSourceButtonFocusPatch
+    // BEGIN PlayerSourceButtonFocusPatch
     private fun configurePlayerSourceButton(button: MaterialButton) {
-        button.setIconResource(R.drawable.ic_player_quality_options_modern)
+        val density = button.resources.displayMetrics.density
+        val qualityIconSize = (24f * density + 0.5f).toInt()
+
+        button.text = ""
+        button.hint = null
         button.contentDescription = "Quality options"
+        button.setIconResource(R.drawable.ic_player_quality_options_modern)
+        button.iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+        button.iconPadding = 0
+        button.iconSize = qualityIconSize
+        button.minWidth = 0
+        button.minHeight = 0
+        button.minimumWidth = 0
+        button.minimumHeight = 0
+        button.setPadding(0, 0, 0, 0)
 
         val normalScale = 1f
         val focusedScale = 1.14f
-        val glowZ = 18f * button.resources.displayMetrics.density
-        val focusedStrokeWidth = (3f * button.resources.displayMetrics.density + 0.5f).toInt()
+        val glowZ = 18f * density
+        val focusedStrokeWidth = (3f * density + 0.5f).toInt()
         val normalStrokeWidth = button.strokeWidth
         val normalStrokeColor = button.strokeColor
         val focusStrokeColor = ColorStateList.valueOf(Color.WHITE)

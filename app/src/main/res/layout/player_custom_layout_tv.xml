@@ -1112,9 +1112,16 @@
                             android:nextFocusRight="@id/player_tracks_btt"
                             android:nextFocusUp="@id/player_pause_play"
                             android:nextFocusDown="@id/player_tracks_btt"
-
-                            android:text="@string/video_source"
-                            app:icon="@drawable/ic_baseline_playlist_play_24" />
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:padding="0dp"
+                            android:contentDescription="Quality options"
+                            app:icon="@drawable/ic_player_quality_options_modern"
+                            app:iconGravity="textStart"
+                            app:iconPadding="0dp"
+                            app:iconSize="28dp" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/player_tracks_btt"
