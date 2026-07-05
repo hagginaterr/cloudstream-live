@@ -1032,21 +1032,23 @@
                             android:id="@+id/player_rotate_btt"
                             style="@style/VideoButton"
                             android:visibility="gone" />
-
-                                                <com.google.android.material.button.MaterialButton
+                        <ImageButton
                             android:id="@+id/twitch_player_streamer_chip"
-                            style="@style/VideoButtonTV"
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
+                            android:background="@drawable/twitch_player_profile_button_bg"
+                            android:clickable="true"
+                            android:contentDescription="Open streamer profile"
+                            android:focusable="true"
                             android:nextFocusLeft="@id/player_pause_play"
                             android:nextFocusRight="@id/player_skip_op"
                             android:nextFocusUp="@id/player_pause_play"
                             android:nextFocusDown="@id/player_skip_op"
-                            android:text=""
+                            android:padding="0dp"
+                            android:scaleType="centerCrop"
+                            android:src="@drawable/twitch_player_streamer_avatar_placeholder"
                             android:visibility="gone"
-                            app:icon="@drawable/twitch_player_streamer_avatar_placeholder"
-                            app:iconGravity="textStart"
-                            app:iconPadding="0dp"
-                            app:iconSize="40dp"
-                            app:iconTint="@null"
+                            tools:ignore="HardcodedText"
                             tools:visibility="visible" />
 <com.google.android.material.button.MaterialButton
                             android:id="@+id/player_skip_op"

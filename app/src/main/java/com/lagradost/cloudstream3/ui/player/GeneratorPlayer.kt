@@ -139,6 +139,12 @@ import android.view.KeyEvent
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
 import com.google.android.material.button.MaterialButton
 import com.lagradost.cloudstream3.utils.UIHelper.navigate
+import android.graphics.BitmapShader
+import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Shader
+import android.widget.ImageButton
 
 @OptIn(UnstableApi::class)
 class GeneratorPlayer : FullScreenPlayer() {
@@ -1245,21 +1251,67 @@ private fun twitchChannelFromUrl(value: String?): String? {
         }
     }
 
+        private fun View.twitchButtonDefaultSize(): Int {
+        return (44f * resources.displayMetrics.density + 0.5f).toInt()
+    }
+
+    private fun configureTwitchStreamerProfileButton(button: ImageButton) {
+        button.imageTintList = null
+        button.scaleType = ImageView.ScaleType.CENTER_CROP
+        button.adjustViewBounds = false
+        button.setPadding(0, 0, 0, 0)
+        button.setBackgroundResource(R.drawable.twitch_player_profile_button_bg)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            button.clipToOutline = true
+            button.backgroundTintList = null
+        }
+    }
+
+    private fun Bitmap.toTwitchProfileButtonBitmap(sizePx: Int): Bitmap {
+        val safeSize = sizePx.coerceAtLeast(1)
+        val output = Bitmap.createBitmap(safeSize, safeSize, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val shader = BitmapShader(
+            this,
+            Shader.TileMode.CLAMP,
+            Shader.TileMode.CLAMP,
+        )
+
+        val scale = maxOf(
+            safeSize.toFloat() / width.toFloat(),
+            safeSize.toFloat() / height.toFloat(),
+        )
+        val dx = (safeSize - width * scale) * 0.5f
+        val dy = (safeSize - height * scale) * 0.5f
+        val matrix = Matrix().apply {
+            setScale(scale, scale)
+            postTranslate(dx, dy)
+        }
+
+        shader.setLocalMatrix(matrix)
+        paint.shader = shader
+        val radius = safeSize / 2f
+        canvas.drawCircle(radius, radius, radius, paint)
+        return output
+    }
+
     private fun updateTwitchStreamerOverlay() {
         val root = playerBinding?.root ?: return
-        val button = root.findViewById<MaterialButton>(R.id.twitch_player_streamer_chip) ?: return
+        val button = root.findViewById<ImageButton>(R.id.twitch_player_streamer_chip) ?: return
+
+        configureTwitchStreamerProfileButton(button)
 
         val overlay = currentTwitchStreamerOverlay()
         button.isVisible = overlay != null
         button.isEnabled = overlay != null
         button.isClickable = overlay != null
         button.isFocusable = overlay != null
-        button.iconTint = null
-        button.text = ""
-        button.contentDescription = overlay?.let { "Open  on Twitch" }
+        button.contentDescription = overlay?.let { "Open ${it.displayName} on Twitch" }
 
         if (overlay == null) {
-            button.setIconResource(R.drawable.twitch_player_streamer_avatar_placeholder)
+            button.setImageResource(R.drawable.twitch_player_streamer_avatar_placeholder)
+            button.tag = null
             button.setOnClickListener(null)
             button.setOnKeyListener(null)
             return
@@ -1285,20 +1337,21 @@ private fun twitchChannelFromUrl(value: String?): String? {
 
         val avatarUrl = overlay.avatarUrl
         button.tag = avatarUrl
-        button.setIconResource(R.drawable.twitch_player_streamer_avatar_placeholder)
+        button.setImageResource(R.drawable.twitch_player_streamer_avatar_placeholder)
 
         if (!avatarUrl.isNullOrBlank()) {
             ioSafe {
                 val bitmap = context?.getImageBitmapFromUrl(avatarUrl)
                 runOnMainThread {
-                    val currentButton = root.findViewById<MaterialButton>(R.id.twitch_player_streamer_chip)
+                    val currentButton = root.findViewById<ImageButton>(R.id.twitch_player_streamer_chip)
                     if (currentButton?.tag == avatarUrl && bitmap != null) {
-                        val rounded = RoundedBitmapDrawableFactory.create(resources, bitmap).apply {
-                            isCircular = true
-                            setAntiAlias(true)
-                        }
-                        currentButton.icon = rounded
-                        currentButton.iconTint = null
+                        configureTwitchStreamerProfileButton(currentButton)
+                        val size = minOf(
+                            currentButton.width.takeIf { it > 0 } ?: currentButton.twitchButtonDefaultSize(),
+                            currentButton.height.takeIf { it > 0 } ?: currentButton.twitchButtonDefaultSize(),
+                        )
+                        currentButton.setImageBitmap(bitmap.toTwitchProfileButtonBitmap(size))
+                        currentButton.imageTintList = null
                     }
                 }
             }
