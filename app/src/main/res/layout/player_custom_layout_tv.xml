@@ -856,7 +856,9 @@
                 android:orientation="vertical"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent">
+                app:layout_constraintStart_toStartOf="parent"
+                android:clipToPadding="false"
+                android:clipChildren="false">
 
                 <androidx.constraintlayout.widget.ConstraintLayout
                     android:id="@+id/player_video_bar"
@@ -1005,7 +1007,9 @@
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="64dp"
-        android:paddingEnd="64dp">
+        android:paddingEnd="64dp"
+        android:clipToPadding="false"
+        android:clipChildren="false">
 
         <ImageButton
                                                         android:id="@+id/twitch_player_streamer_chip"

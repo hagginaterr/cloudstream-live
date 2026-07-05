@@ -1095,7 +1095,7 @@ class GeneratorPlayer : FullScreenPlayer() {
             button.foreground = button.context.getDrawable(R.drawable.twitch_player_profile_button_focus_overlay)
         }
 
-        val focusedScale = 1.14f
+        val focusedScale = 1f
         val normalScale = 1f
         val glowZ = 18f * button.resources.displayMetrics.density
 
@@ -1722,7 +1722,7 @@ private fun updateTwitchPlayerControls() {
             button.clipToOutline = true
         }
 
-        val focusedScale = 1.14f
+        val focusedScale = 1f
         val normalScale = 1f
         val glowZ = 18f * button.resources.displayMetrics.density
 
