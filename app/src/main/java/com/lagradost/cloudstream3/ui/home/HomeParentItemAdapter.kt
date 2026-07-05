@@ -97,63 +97,67 @@ open class ParentItemAdapter(
         // TwitchStableTvHomeRowsPatch: each TV home row is one viewport-height page.
     // Do not shift the row during focus or scroll; the XML spacer pins content to the bottom.
     private fun applyTwitchTvRowPageSizing(holder: ViewHolderState<Bundle>) {
-        if (!isLayout(TV or EMULATOR)) return
+    if (!isLayout(TV or EMULATOR)) return
 
-        val rowView = holder.itemView
+    val binding = holder.view as? HomepageParentBinding ?: return
+    val rowView = binding.root
+    val childRow = binding.homeChildRecyclerview
 
-        fun setStableHeight(targetHeight: Int) {
-            if (targetHeight <= 0) return
+    fun applyHeight(targetHeight: Int) {
+        if (targetHeight <= 0) return
 
-            val params = rowView.layoutParams ?: RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                targetHeight,
-            )
+        val params = rowView.layoutParams ?: RecyclerView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            targetHeight,
+        )
 
-            var changed = false
-            if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
-                params.width = ViewGroup.LayoutParams.MATCH_PARENT
-                changed = true
-            }
-            if (params.height != targetHeight) {
-                params.height = targetHeight
-                changed = true
-            }
-
-            if (changed) {
-                rowView.layoutParams = params
-            }
-
-            (rowView as? ViewGroup)?.clipToPadding = false
-
-            (holder.view as? HomepageParentBinding)?.homeChildRecyclerview?.apply {
-                itemAnimator = null
-                isNestedScrollingEnabled = false
-                overScrollMode = View.OVER_SCROLL_NEVER
-            }
+        var changed = false
+        if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT
+            changed = true
+        }
+        if (params.height != targetHeight) {
+            params.height = targetHeight
+            changed = true
         }
 
-        val masterRecycler = rowView.parent as? RecyclerView
-        val targetHeight = masterRecycler?.height?.takeIf { it > 0 }
-            ?: masterRecycler?.measuredHeight?.takeIf { it > 0 }
+        if (changed) {
+            rowView.layoutParams = params
+        }
 
-        if (targetHeight != null) {
-            setStableHeight(targetHeight)
-        } else {
-            rowView.post {
-                val parentRecycler = rowView.parent as? RecyclerView
-                val postedHeight = parentRecycler?.height?.takeIf { it > 0 }
-                    ?: parentRecycler?.measuredHeight?.takeIf { it > 0 }
-                    ?: return@post
-                setStableHeight(postedHeight)
-            }
+        rowView.minimumHeight = targetHeight
+        rowView.translationY = 0f
+        (rowView as? ViewGroup)?.clipToPadding = false
+
+        childRow.itemAnimator = null
+        childRow.isNestedScrollingEnabled = false
+        childRow.overScrollMode = View.OVER_SCROLL_NEVER
+        childRow.clipToPadding = false
+        childRow.setHasFixedSize(true)
+    }
+
+    val parentRecycler = rowView.parent as? RecyclerView
+    val parentHeight = parentRecycler?.height?.takeIf { it > 0 }
+        ?: parentRecycler?.measuredHeight?.takeIf { it > 0 }
+
+    if (parentHeight != null) {
+        applyHeight(parentHeight)
+    } else {
+        rowView.post {
+            val postedParent = rowView.parent as? RecyclerView
+            val postedHeight = postedParent?.height?.takeIf { it > 0 }
+                ?: postedParent?.measuredHeight?.takeIf { it > 0 }
+                ?: rowView.resources.displayMetrics.heightPixels
+            applyHeight(postedHeight)
         }
     }
-    // TwitchHomeBottomPagingPatch: show a subtle bottom indicator when another row/page exists below.
-    private fun updateTwitchTvScrollMoreIndicator(binding: HomepageParentBinding, position: Int) {
-        if (!isLayout(TV or EMULATOR)) return
-        val indicator = binding.root.findViewById<View>(R.id.twitch_home_scroll_more_indicator) ?: return
-        indicator.visibility = if (position < itemCount - 1) View.VISIBLE else View.GONE
-    }
+}
+private fun updateTwitchTvScrollMoreIndicator(binding: HomepageParentBinding, position: Int) {
+    if (!isLayout(TV or EMULATOR)) return
+    binding.root.findViewById<View>(R.id.tv_home_more_indicator)?.visibility =
+        if (position < itemCount - 1) View.VISIBLE else View.GONE
+}
+
     override fun onBindContent(
         holder: ViewHolderState<Bundle>,
         item: HomeViewModel.ExpandableHomepageList,
@@ -197,9 +201,6 @@ open class ParentItemAdapter(
                 nextRight = endFocus,
             )
             homeChildMoreInfo.text = info.name
-                // TwitchTvHomeIndicatorPatch: show a down hint only when another row page exists below.
-                root.findViewById<View>(R.id.tv_home_more_indicator)?.visibility =
-                    if (isLayout(TV or EMULATOR) && position < itemCount - 1) View.VISIBLE else View.GONE
 if (TwitchHomeRefreshFocus.consumeForRow(info.name)) {
                 homeChildRecyclerview.post {
                     homeChildRecyclerview.scrollToPosition(0)
@@ -214,6 +215,7 @@ if (TwitchHomeRefreshFocus.consumeForRow(info.name)) {
                 homeChildRecyclerview.clearOnScrollListeners()
                 homeChildRecyclerview.clearOnScrollListeners()
                 // TwitchStableTvHomeRowsPatch: avoid stacked row listeners during recycled binds.
+                homeChildRecyclerview.clearOnScrollListeners()
                 homeChildRecyclerview.addOnScrollListener(object :
                 RecyclerView.OnScrollListener() {
                 var expandCount = 0

@@ -637,6 +637,9 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             )
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
+                // TwitchLockedBottomHomeRowsPatch: page-sized rows should not animate/re-measure while scrolling.
+                homeMasterRecycler.itemAnimator = null
+                homeMasterRecycler.setHasFixedSize(true)
                 // TwitchStableTvHomeRowsPatch: stable master recycler for page-sized TV rows.
                 homeMasterRecycler.itemAnimator = null
                 homeMasterRecycler.setHasFixedSize(true)

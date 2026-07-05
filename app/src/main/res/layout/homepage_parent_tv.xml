@@ -1,68 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- TwitchOfficialHomeRowsPatch: one focused Twitch-style row per screen on TV. -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:clipToPadding="false">
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_gravity="bottom"
-        android:orientation="vertical"
-        android:paddingBottom="48dp"
-    android:gravity="bottom"
+    android:baselineAligned="false"
     android:clipToPadding="false"
-    android:baselineAligned="false">
+    android:gravity="bottom"
+    android:orientation="vertical">
+
     <Space
         android:id="@+id/tv_home_top_spacer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
-<TextView
-            android:id="@+id/home_child_more_info"
-            style="@style/WatchHeaderText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/navbar_width"
-            android:layout_marginEnd="0dp"
-            android:paddingStart="18dp"
-            android:paddingTop="10dp"
-            android:paddingEnd="12dp"
-            android:paddingBottom="10dp"
-            tools:text="Live Now â€¢ last checked 8:42 PM" />
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/home_child_recyclerview"
-            android:layout_width="match_parent"
-            android:layout_height="230dp"
-            android:clipToPadding="false"
-            android:descendantFocusability="afterDescendants"
-            android:nextFocusUp="@id/home_child_more_info"
-            android:orientation="horizontal"
-            android:paddingStart="@dimen/navbar_width"
-            android:paddingEnd="80dp"
-            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
-            tools:listitem="@layout/home_result_grid" />
-
-    <!-- TwitchHomeBottomPagingPatch: visible only when another TV row/page exists below. -->
     <TextView
-        android:id="@+id/twitch_home_scroll_more_indicator"
+        android:id="@+id/home_child_more_info"
+        style="@style/WatchHeaderText"
         android:layout_width="match_parent"
-        android:layout_height="34dp"
+        android:layout_height="wrap_content"
         android:layout_marginStart="@dimen/navbar_width"
-        android:alpha="0.82"
-        android:focusable="false"
-        android:gravity="center"
-        android:importantForAccessibility="no"
-        android:text="&#x25BE;"
-        android:textColor="@android:color/white"
-        android:textSize="28sp"
-        android:textStyle="bold"
-        android:visibility="gone"
-        tools:visibility="visible" />
+        android:layout_marginEnd="0dp"
+        android:padding="12dp"
+        tools:text="Trending" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/home_child_recyclerview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clipToPadding="false"
+        android:descendantFocusability="afterDescendants"
+        android:nestedScrollingEnabled="false"
+        android:nextFocusUp="@id/home_child_more_info"
+        android:orientation="horizontal"
+        android:overScrollMode="never"
+        android:paddingStart="8dp"
+        android:paddingEnd="5dp"
+        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+        tools:listitem="@layout/home_result_grid" />
 
     <TextView
         android:id="@+id/tv_home_more_indicator"
@@ -80,6 +56,6 @@
         android:textSize="22sp"
         android:textStyle="bold"
         android:visibility="gone"
-        tools:ignore="HardcodedText" />
+        tools:ignore="HardcodedText"
+        tools:visibility="visible" />
 </LinearLayout>
-</FrameLayout>
