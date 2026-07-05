@@ -94,6 +94,12 @@ object TwitchAccountAuth {
             ?: getKey<String>(USER_LOGIN_KEY)
     }
 
+    fun userId(): String? {
+        return getKey<String>(USER_ID_KEY)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
     fun lastImportSummary(): String? {
         val count = getKey<Int>(LAST_IMPORT_COUNT_KEY) ?: return null
         return "$count followed channels imported"
@@ -337,3 +343,4 @@ object TwitchAccountAuth {
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 }
+

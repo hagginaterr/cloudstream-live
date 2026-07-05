@@ -1,4 +1,4 @@
-package recloudstream.twitchlivefavorites
+﻿package recloudstream.twitchlivefavorites
 
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
@@ -82,13 +82,27 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // FollowingLiveNowPatch: when signed in, the Live Now row comes directly
+        // from Twitch's streams/followed endpoint instead of the local favorites list.
         ensureStartupFavoritesSaved()
+        val signedInUserId = TwitchAccountAuth.userId()
+        val useSignedInFollows = TwitchAccountAuth.isSignedIn() && !signedInUserId.isNullOrBlank()
         val savedFavorites = getSavedFavoriteChannels()
         val usingStarterFavorites = savedFavorites.isEmpty()
         val favorites = if (usingStarterFavorites) starterFavoriteChannels else savedFavorites
 
         val items = when {
             !hasTwitchCredentials() -> listOf(setupRequiredCard())
+            useSignedInFollows -> {
+                val liveFollowed = fetchLiveFollowedStreams(signedInUserId.orEmpty())
+                maybeScheduleAutoRefresh("followed:${signedInUserId.orEmpty()}")
+
+                when {
+                    liveFollowed == null -> listOf(apiErrorCard(lastTwitchApiError.orEmpty()))
+                    liveFollowed.isNotEmpty() -> liveFollowed.map { it.toChannelCard(showOfflineLabel = false, directPlay = true) }
+                    else -> listOf(statusCard("No followed Twitch channels are live right now", "no-followed-live"))
+                }
+            }
             favorites.isEmpty() -> listOf(statusCard("Search Twitch to add favorites", "no-favorites"))
             else -> {
                 val liveFavorites = fetchLiveFavoriteChannels(favorites)
@@ -163,6 +177,11 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
 
     private data class TwitchStreamsResponse(
         val data: List<TwitchStream> = emptyList(),
+        val pagination: TwitchPagination = TwitchPagination(),
+    )
+
+    private data class TwitchPagination(
+        val cursor: String? = null,
     )
 
     private data class TwitchStream(
@@ -641,6 +660,81 @@ private fun getSavedFavoriteChannels(): List<String> {
         return users
     }
 
+    private suspend fun fetchLiveFollowedStreams(userId: String): List<FavoriteChannel>? {
+        val cleanUserId = userId.trim()
+        if (cleanUserId.isBlank()) return null
+
+        if (isBackoffActive()) {
+            lastTwitchApiError = "Twitch API backoff is active. Try again in about ${secondsUntilBackoffEnds()}s."
+            return null
+        }
+
+        val token = TwitchAccountAuth.getValidAccessToken()?.trim().orEmpty()
+        if (token.isBlank()) {
+            lastTwitchApiError = "Sign in to Twitch again to load followed live channels."
+            return null
+        }
+
+        val now = nowMs()
+        val cacheKey = "followed:$cleanUserId"
+        if (cacheKey == cachedLiveKey && now < cachedLiveExpiresAtMs) {
+            return cachedLiveFavorites
+        }
+
+        val streams = mutableMapOf<String, TwitchStream>()
+        var cursor: String? = null
+        var guard = 0
+
+        do {
+            val extra = mutableMapOf(
+                "user_id" to cleanUserId,
+                "first" to "100",
+            )
+            if (!cursor.isNullOrBlank()) {
+                extra["after"] = cursor.orEmpty()
+            }
+
+            val response = runCatching {
+                twitchGetWithToken<TwitchStreamsResponse>(
+                    buildHelixUrl("streams/followed", extra = extra),
+                    token,
+                )
+            }.getOrElse { error ->
+                if (shouldTreatAsRateLimit(error)) {
+                    noteRateLimit(error)
+                } else {
+                    lastTwitchApiError = "Could not load followed live channels: ${error.message ?: error.javaClass.simpleName}"
+                }
+
+                if (cacheKey == cachedLiveKey && cachedLiveUpdatedAtMs > 0L) {
+                    cachedLiveExpiresAtMs = now + failedApiRetryDelayMs
+                    return cachedLiveFavorites
+                }
+                return null
+            }
+
+            response.data.forEach { stream ->
+                val login = normalizeChannel(stream.user_login)
+                if (login.isNotBlank()) streams[login] = stream
+            }
+
+            cursor = response.pagination.cursor?.takeIf { it.isNotBlank() }
+            guard++
+        } while (!cursor.isNullOrBlank() && guard < 20)
+
+        val liveChannels = streams.values
+            .map { stream ->
+                favoriteFromApi(normalizeChannel(stream.user_login), user = null, stream = stream)
+            }
+            .sortedWith(compareByDescending<FavoriteChannel> { it.viewerCount ?: 0 }.thenBy { it.displayName.lowercase() })
+
+        cachedLiveKey = cacheKey
+        cachedLiveExpiresAtMs = now + liveCacheTtlMs
+        cachedLiveUpdatedAtMs = now
+        cachedLiveFavorites = liveChannels
+        lastTwitchApiError = null
+        return liveChannels
+    }
     private suspend fun fetchStreams(channels: List<String>): Map<String, TwitchStream>? {
         val normalized = channels
             .map { normalizeChannel(it) }
@@ -1800,3 +1894,4 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         return found
     }
 }
+
