@@ -670,6 +670,88 @@ private fun getSavedFavoriteChannels(): List<String> {
 
     return out
 }
+
+    // BEGIN TwitchPlayerMetadataOnlyPatch
+    private fun cleanTwitchPlayerMetadataLogin(value: String?): String? {
+        val normalized = normalizeChannel(value.orEmpty())
+        val blocked = setOf(
+            "twitch",
+            "twitchtv",
+            "twitchcom",
+            "wwwtwitchtv",
+            "wwwtwitchcom",
+            "clips",
+            "clip",
+            "videos",
+            "video",
+            "source",
+            "auto",
+            "vod",
+            "m3u8",
+        )
+
+        return normalized
+            .takeUnless { it.isBlank() || it in blocked || it.all { char -> char.isDigit() } }
+    }
+
+    private suspend fun twitchPlayerMetadataCarrierUrl(data: String): String? {
+        val explicitLogin = cleanTwitchPlayerMetadataLogin(twitchProfileMediaParam(data, "cs_streamer_login"))
+        val explicitName = twitchProfileMediaParam(data, "cs_streamer_name")?.ifBlank { null }
+        val explicitAvatar = twitchProfileMediaParam(data, "cs_streamer_avatar")?.ifBlank { null }
+
+        if (explicitLogin != null) {
+            val avatar = explicitAvatar ?: fetchTwitchProfileAvatar(explicitLogin)
+            return appendTwitchPlayerStreamerMeta(
+                twitchUrl(explicitLogin),
+                explicitLogin,
+                explicitName ?: explicitLogin,
+                avatar,
+            )
+        }
+
+        if (isTwitchVideoUrl(data)) {
+            val video = fetchVideo(extractVideoId(data))
+            val videoLogin = cleanTwitchPlayerMetadataLogin(video?.user_login)
+            if (videoLogin != null) {
+                val avatar = explicitAvatar ?: fetchTwitchProfileAvatar(videoLogin)
+                return appendTwitchPlayerStreamerMeta(
+                    twitchUrl(videoLogin),
+                    videoLogin,
+                    explicitName ?: video?.user_name?.ifBlank { null } ?: videoLogin,
+                    avatar,
+                )
+            }
+        }
+
+        val channel = cleanTwitchPlayerMetadataLogin(data) ?: return null
+        val info = fetchChannel(channel)
+        val avatar = explicitAvatar ?: fetchTwitchProfileAvatar(channel) ?: info?.image
+        return appendTwitchPlayerStreamerMeta(
+            twitchUrl(channel),
+            channel,
+            explicitName ?: info?.displayName ?: channel,
+            avatar,
+        )
+    }
+
+    private suspend fun annotateTwitchPlayerLinks(
+        data: String,
+        links: List<ExtractorLink>,
+    ): List<ExtractorLink> {
+        val carrier = twitchPlayerMetadataCarrierUrl(data) ?: return links
+
+        return links.onEach { link ->
+            val existing = link.extractorData?.ifBlank { null }
+            if (existing?.contains("cs_streamer_login=", ignoreCase = true) == true) {
+                return@onEach
+            }
+
+            link.extractorData = listOfNotNull(existing, carrier)
+                .joinToString("\n")
+                .ifBlank { null }
+        }
+    }
+    // END TwitchPlayerMetadataOnlyPatch
 private fun buildHelixUrl(
         endpoint: String,
         repeatedKey: String? = null,
@@ -2227,61 +2309,59 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
     ): Boolean {
         if (!data.startsWith("http", ignoreCase = true)) return false
 
+        suspend fun emit(links: List<ExtractorLink>): Boolean {
+            val annotated = annotateTwitchPlayerLinks(data, links)
+            annotated.forEach { callback.invoke(it) }
+            return annotated.isNotEmpty()
+        }
+
         if (isTwitchClipPageUrl(data)) {
-            val clipLinks = fetchTwitchClipLinks(data)
-            clipLinks.forEach { callback.invoke(it) }
-            return clipLinks.isNotEmpty()
+            return emit(fetchTwitchClipLinks(data))
         }
 
         if (isTwitchClipDirectVideoUrl(data)) {
-            callback.invoke(
-                newExtractorLink(
-                    name,
-                    "$name Clip",
-                    data,
-                ) {
-                    this.type = ExtractorLinkType.VIDEO
-                    this.quality = getQualityFromName("720p")
-                    this.referer = "https://clips.twitch.tv/"
-                },
+            return emit(
+                listOf(
+                    newExtractorLink(
+                        name,
+                        "$name Clip",
+                        data,
+                    ) {
+                        this.type = ExtractorLinkType.VIDEO
+                        this.quality = getQualityFromName("720p")
+                        this.referer = "https://clips.twitch.tv/"
+                    },
+                ),
             )
-            return true
         }
 
         if (isTwitchVideoUrl(data)) {
-            val vodLinks = fetchTwitchVodLinks(extractVideoId(data))
-            vodLinks.forEach { callback.invoke(it) }
-            return vodLinks.isNotEmpty()
+            return emit(fetchTwitchVodLinks(extractVideoId(data)))
         }
 
         val liveDvrLinks = fetchCurrentLivePastBroadcastLinks(data)
         if (liveDvrLinks.isNotEmpty()) {
-            liveDvrLinks.forEach { callback.invoke(it) }
-            return true
+            return emit(liveDvrLinks)
         }
 
         val response = runCatching {
             app.get("https://pwn.sh/tools/streamapi.py?url=$data").parsed<ApiResponse>()
         }.getOrNull() ?: return false
 
-        var found = false
-        response.urls?.forEach { (qualityName, streamUrl) ->
+        val links = response.urls?.map { (qualityName, streamUrl) ->
             val quality = getQualityFromName(qualityName.substringBefore("p"))
-            callback.invoke(
-                newExtractorLink(
-                    name,
-                    "$name ${qualityName.replace("${quality}p", "")}",
-                    streamUrl,
-                ) {
-                    this.type = ExtractorLinkType.M3U8
-                    this.quality = quality
-                    this.referer = ""
-                },
-            )
-            found = true
-        }
+            newExtractorLink(
+                name,
+                "$name ${qualityName.replace("${quality}p", "")}",
+                streamUrl,
+            ) {
+                this.type = ExtractorLinkType.M3U8
+                this.quality = quality
+                this.referer = ""
+            }
+        }.orEmpty()
 
-        return found
+        return emit(links)
     }
 }
 

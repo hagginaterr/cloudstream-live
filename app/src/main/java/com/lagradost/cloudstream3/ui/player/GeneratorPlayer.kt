@@ -1066,6 +1066,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                 else -> null
             },
             response?.url,
+            currentSelectedLink?.first?.extractorData,
             currentSelectedLink?.first?.url,
             currentSelectedLink?.first?.referer,
             currentSelectedLink?.first?.source,
