@@ -1,4 +1,4 @@
-package com.lagradost.cloudstream3.ui.home
+﻿package com.lagradost.cloudstream3.ui.home
 
 import android.os.Build
 import android.os.Bundle
@@ -89,10 +89,10 @@ open class ParentItemAdapter(
 
     // TwitchTrueRowPagingPatch: TV home rows must be real full-screen pages.
     // PagerSnapHelper alone is not enough if each parent row still measures as wrap_content.
-    private fun applyTwitchTvRowPageSizing(holder: ViewHolderState) {
+    private fun applyTwitchTvRowPageSizing(holder: ViewHolderState<Bundle>) {
         if (!isLayout(TV or EMULATOR)) return
 
-        val rowView = holder.itemView
+        val rowView = holder.view.root
         val masterRecycler = rowView.parent as? RecyclerView
         val targetHeight = masterRecycler?.height?.takeIf { it > 0 }
             ?: rowView.resources.displayMetrics.heightPixels
