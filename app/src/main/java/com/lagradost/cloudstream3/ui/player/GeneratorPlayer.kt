@@ -135,6 +135,10 @@ import java.util.Calendar
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import android.view.KeyEvent
+import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
+import com.google.android.material.button.MaterialButton
+import com.lagradost.cloudstream3.utils.UIHelper.navigate
 
 @OptIn(UnstableApi::class)
 class GeneratorPlayer : FullScreenPlayer() {
@@ -1030,6 +1034,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         val displayName: String,
         val avatarUrl: String?,
         val profileUrl: String,
+        val apiName: String?,
     )
 
     private fun cleanTwitchOverlayText(value: String?): String? {
@@ -1053,12 +1058,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                 is ExtractorUri -> meta.uri.toString()
                 else -> null
             },
-            when (meta) {
-                is ResultEpisode -> meta.poster
-                else -> null
-            },
             response?.url,
-            response?.posterUrl,
             currentSelectedLink?.first?.url,
             currentSelectedLink?.first?.referer,
             currentSelectedLink?.first?.name,
@@ -1118,6 +1118,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         val explicitName = firstTwitchOverlayParam("cs_streamer_name")
         val explicitChannel = firstTwitchOverlayParam("cs_streamer_login")
         val explicitAvatar = firstTwitchOverlayParam("cs_streamer_avatar")
+        val explicitApiName = firstTwitchOverlayParam("cs_api_name")
 
         val urls = currentTwitchOverlayCandidateUrls()
         val channelFromUrl = urls.mapNotNull { twitchChannelFromUrl(it) }.firstOrNull()
@@ -1147,63 +1148,108 @@ class GeneratorPlayer : FullScreenPlayer() {
             }
             ?: profileChannel
 
-        val avatarUrl = explicitAvatar
-            ?: response?.posterUrl?.takeIf {
-                it.isNotBlank() && !it.contains("%{width}", ignoreCase = true)
-            }
+        // Important: never fall back to response.posterUrl or ResultEpisode.poster here.
+        // Those are media thumbnails for VODs/clips/highlights; this button must only use the streamer avatar.
+        val avatarUrl = explicitAvatar?.takeIf {
+            it.isNotBlank() && !it.contains("%{width}", ignoreCase = true)
+        }
+
+        val apiName = explicitApiName
             ?: when (meta) {
-                is ResultEpisode -> meta.poster?.takeIf { it.isNotBlank() }
+                is ResultEpisode -> meta.apiName
                 else -> null
             }
+            ?: response?.apiName
 
         return TwitchPlayerStreamerOverlay(
             displayName = displayName,
             avatarUrl = avatarUrl,
             profileUrl = "https://www.twitch.tv/$profileChannel",
+            apiName = apiName,
         )
     }
 
-    private fun updateTwitchStreamerOverlay() {
-        val root = playerBinding?.root ?: return
-        val chip = root.findViewById<View>(R.id.twitch_player_streamer_chip) ?: return
-        val name = root.findViewById<TextView>(R.id.twitch_player_streamer_name)
-        val avatar = root.findViewById<ImageView>(R.id.twitch_player_streamer_avatar)
+    private fun openTwitchStreamerProfile(overlay: TwitchPlayerStreamerOverlay) {
+        val act = activity
+        val apiName = overlay.apiName?.takeIf { it.isNotBlank() }
 
-        val overlay = currentTwitchStreamerOverlay()
-        chip.isVisible = overlay != null
-        chip.bringToFront()
-
-        if (overlay == null) {
-            name?.text = null
-            avatar?.setImageResource(R.drawable.twitch_player_streamer_avatar_placeholder)
-            avatar?.tag = null
-            chip.contentDescription = null
-            chip.setOnClickListener(null)
-            return
-        }
-
-        name?.text = overlay.displayName
-        chip.contentDescription = "Open ${overlay.displayName} on Twitch"
-        chip.setOnClickListener {
+        if (act != null && apiName != null) {
             runCatching {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(overlay.profileUrl)))
+                act.navigate(
+                    R.id.navigation_results,
+                    ResultFragment.newInstance(
+                        overlay.profileUrl,
+                        apiName,
+                        overlay.displayName,
+                    ),
+                )
+                return
             }.onFailure { error ->
                 logError(error)
             }
         }
 
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(overlay.profileUrl)))
+        }.onFailure { error ->
+            logError(error)
+        }
+    }
+
+    private fun updateTwitchStreamerOverlay() {
+        val root = playerBinding?.root ?: return
+        val button = root.findViewById<MaterialButton>(R.id.twitch_player_streamer_chip) ?: return
+
+        val overlay = currentTwitchStreamerOverlay()
+        button.isVisible = overlay != null
+        button.isEnabled = overlay != null
+        button.isClickable = overlay != null
+        button.isFocusable = overlay != null
+        button.iconTint = null
+        button.text = ""
+        button.contentDescription = overlay?.let { "Open ${it.displayName} on Twitch" }
+
+        if (overlay == null) {
+            button.setIconResource(R.drawable.twitch_player_streamer_avatar_placeholder)
+            button.setOnClickListener(null)
+            button.setOnKeyListener(null)
+            return
+        }
+
+        button.setOnClickListener {
+            openTwitchStreamerProfile(overlay)
+        }
+
+        button.setOnKeyListener { _, keyCode, event ->
+            if (
+                event.action == KeyEvent.ACTION_UP &&
+                (keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                    keyCode == KeyEvent.KEYCODE_ENTER ||
+                    keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)
+            ) {
+                openTwitchStreamerProfile(overlay)
+                true
+            } else {
+                false
+            }
+        }
+
         val avatarUrl = overlay.avatarUrl
-        avatar?.tag = avatarUrl
-        if (avatarUrl.isNullOrBlank()) {
-            avatar?.setImageResource(R.drawable.twitch_player_streamer_avatar_placeholder)
-        } else {
-            avatar?.setImageResource(R.drawable.twitch_player_streamer_avatar_placeholder)
+        button.tag = avatarUrl
+        button.setIconResource(R.drawable.twitch_player_streamer_avatar_placeholder)
+
+        if (!avatarUrl.isNullOrBlank()) {
             ioSafe {
                 val bitmap = context?.getImageBitmapFromUrl(avatarUrl)
                 runOnMainThread {
-                    val currentAvatar = root.findViewById<ImageView>(R.id.twitch_player_streamer_avatar)
-                    if (currentAvatar?.tag == avatarUrl && bitmap != null) {
-                        currentAvatar.setImageBitmap(bitmap)
+                    val currentButton = root.findViewById<MaterialButton>(R.id.twitch_player_streamer_chip)
+                    if (currentButton?.tag == avatarUrl && bitmap != null) {
+                        val rounded = RoundedBitmapDrawableFactory.create(resources, bitmap).apply {
+                            isCircular = true
+                            setAntiAlias(true)
+                        }
+                        currentButton.icon = rounded
+                        currentButton.iconTint = null
                     }
                 }
             }

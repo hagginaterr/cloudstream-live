@@ -785,7 +785,10 @@ private fun getSavedFavoriteChannels(): List<String> {
                 .ifBlank { followedChannel.broadcaster_login }
                 .ifBlank { "Twitch" }
 
-            val response = twitchGet<TwitchVideosResponse>(
+
+            val followedUser = fetchUsers(listOf(followedChannel.broadcaster_login))[normalizeChannel(followedChannel.broadcaster_login)]
+            val channelAvatar = followedUser?.profile_image_url?.ifBlank { null }
+val response = twitchGet<TwitchVideosResponse>(
                 buildHelixUrl(
                     "videos",
                     extra = mapOf(
@@ -798,7 +801,7 @@ private fun getSavedFavoriteChannels(): List<String> {
 
             response.data.forEach { video ->
                 val sortKey = video.published_at.ifBlank { video.created_at }
-                val card = video.toFollowedVideoHomeCard(marker, displayName, followedChannel.broadcaster_login) ?: return@forEach
+                val card = video.toFollowedVideoHomeCard(marker, displayName, followedChannel.broadcaster_login, channelAvatar) ?: return@forEach
                 items.add(sortKey to card)
             }
         }
@@ -810,7 +813,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             .take(followedHomeMaxItemsPerRow)
     }
 
-    private fun TwitchVideo.toFollowedVideoHomeCard( marker: String, channelDisplayName: String, channelLogin: String, ): LiveSearchResponse? {
+    private fun TwitchVideo.toFollowedVideoHomeCard(marker: String, channelDisplayName: String, channelLogin: String, channelAvatar: String?): LiveSearchResponse? {
         val videoId = id.filter { it.isDigit() }
         if (videoId.isBlank()) return null
 
@@ -830,7 +833,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             twitchProfileMediaCardUrl(watchUrl, marker, displayTitle, age, null, views, durationText)
         }
 
-        val metaCardUrl = appendTwitchStreamerMeta(mediaCardUrl, channelDisplayName, user_login, null)
+        val metaCardUrl = appendTwitchStreamerMeta(mediaCardUrl, channelDisplayName, channelLogin, channelAvatar)
         val cardUrl = appendDirectPlayMarker(metaCardUrl)
         return newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(twitchProfileVideoThumbnail(thumbnail_url), nowMs())
@@ -852,7 +855,10 @@ private fun getSavedFavoriteChannels(): List<String> {
                 .ifBlank { followedChannel.broadcaster_login }
                 .ifBlank { "Twitch" }
 
-            val response = twitchGet<TwitchClipsResponse>(
+
+            val followedUser = fetchUsers(listOf(followedChannel.broadcaster_login))[normalizeChannel(followedChannel.broadcaster_login)]
+            val channelAvatar = followedUser?.profile_image_url?.ifBlank { null }
+val response = twitchGet<TwitchClipsResponse>(
                 buildHelixUrl(
                     "clips",
                     extra = mapOf(
@@ -863,7 +869,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             ) ?: return@forEach
 
             response.data.forEach { clip ->
-                val card = clip.toFollowedClipHomeCard(displayName, followedChannel.broadcaster_login) ?: return@forEach
+                val card = clip.toFollowedClipHomeCard(displayName, followedChannel.broadcaster_login, channelAvatar) ?: return@forEach
                 items.add(clip.view_count to card)
             }
         }
@@ -875,7 +881,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             .take(followedHomeMaxItemsPerRow)
     }
 
-    private fun TwitchClip.toFollowedClipHomeCard(channelDisplayName: String, channelLogin: String): LiveSearchResponse? {
+    private fun TwitchClip.toFollowedClipHomeCard(channelDisplayName: String, channelLogin: String, channelAvatar: String?): LiveSearchResponse? {
         val watchUrl = url.ifBlank { return null }
         val displayTitle = cleanTwitchText(title) ?: channelDisplayName.ifBlank { "Twitch clip" }
         val age = formatTwitchVideoAge(created_at) ?: formatTwitchVideoDate(created_at)
@@ -887,7 +893,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             "cs_clip_video",
             clipVideoUrl,
         )
-        val metaCardUrl = appendTwitchStreamerMeta(mediaCardUrl, channelDisplayName, broadcaster_name, null)
+        val metaCardUrl = appendTwitchStreamerMeta(mediaCardUrl, channelDisplayName, channelLogin, channelAvatar)
         val cardUrl = appendDirectPlayMarker(metaCardUrl)
 
         return newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {

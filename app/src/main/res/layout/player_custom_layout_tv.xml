@@ -845,52 +845,6 @@
                     app:tint="?attr/colorPrimaryDark"
                     tools:ignore="ContentDescription" />
             </LinearLayout>
-
-                <LinearLayout
-        android:id="@+id/twitch_player_streamer_chip"
-        android:layout_width="wrap_content"
-        android:layout_height="52dp"
-        android:layout_marginStart="64dp"
-        android:layout_marginBottom="14dp"
-        android:background="@drawable/twitch_player_streamer_chip_bg"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center_vertical"
-        android:minWidth="150dp"
-        android:nextFocusDown="@id/player_pause_play"
-        android:nextFocusRight="@id/player_pause_play"
-        android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="14dp"
-        android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/bottom_player_bar"
-        app:layout_constraintStart_toStartOf="parent"
-        tools:visibility="visible">
-
-        <ImageView
-            android:id="@+id/twitch_player_streamer_avatar"
-            android:layout_width="38dp"
-            android:layout_height="38dp"
-            android:background="@drawable/twitch_player_streamer_avatar_placeholder"
-            android:clipToOutline="true"
-            android:importantForAccessibility="no"
-            android:scaleType="centerCrop"
-            android:src="@drawable/twitch_player_streamer_avatar_placeholder" />
-
-        <TextView
-            android:id="@+id/twitch_player_streamer_name"
-            style="@style/ResultMarqueeButtonText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:ellipsize="end"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:maxWidth="300dp"
-            android:textColor="@android:color/white"
-            android:textSize="17sp"
-            tools:text="Streamer" />
-    </LinearLayout>
 <LinearLayout
                 android:id="@+id/bottom_player_bar"
                 android:layout_width="match_parent"
@@ -1079,10 +1033,25 @@
                             style="@style/VideoButton"
                             android:visibility="gone" />
 
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/player_skip_op"
+                                                <com.google.android.material.button.MaterialButton
+                            android:id="@+id/twitch_player_streamer_chip"
                             style="@style/VideoButtonTV"
                             android:nextFocusLeft="@id/player_pause_play"
+                            android:nextFocusRight="@id/player_skip_op"
+                            android:nextFocusUp="@id/player_pause_play"
+                            android:nextFocusDown="@id/player_skip_op"
+                            android:text=""
+                            android:visibility="gone"
+                            app:icon="@drawable/twitch_player_streamer_avatar_placeholder"
+                            app:iconGravity="textStart"
+                            app:iconPadding="0dp"
+                            app:iconSize="40dp"
+                            app:iconTint="@null"
+                            tools:visibility="visible" />
+<com.google.android.material.button.MaterialButton
+                            android:id="@+id/player_skip_op"
+                            style="@style/VideoButtonTV"
+                            android:nextFocusLeft="@id/twitch_player_streamer_chip"
                             android:nextFocusRight="@id/player_skip_episode"
                             android:nextFocusUp="@id/player_pause_play"
                             android:nextFocusDown="@id/player_skip_episode"

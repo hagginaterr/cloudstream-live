@@ -698,50 +698,6 @@
                     app:tint="?attr/colorPrimaryDark"
                     tools:ignore="ContentDescription" />
             </LinearLayout>
-
-                <LinearLayout
-        android:id="@+id/twitch_player_streamer_chip"
-        android:layout_width="wrap_content"
-        android:layout_height="44dp"
-        android:layout_marginStart="18dp"
-        android:layout_marginBottom="8dp"
-        android:background="@drawable/twitch_player_streamer_chip_bg"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center_vertical"
-        android:minWidth="120dp"
-        android:orientation="horizontal"
-        android:paddingStart="7dp"
-        android:paddingEnd="12dp"
-        android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/bottom_player_bar"
-        app:layout_constraintStart_toStartOf="parent"
-        tools:visibility="visible">
-
-        <ImageView
-            android:id="@+id/twitch_player_streamer_avatar"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:background="@drawable/twitch_player_streamer_avatar_placeholder"
-            android:clipToOutline="true"
-            android:importantForAccessibility="no"
-            android:scaleType="centerCrop"
-            android:src="@drawable/twitch_player_streamer_avatar_placeholder" />
-
-        <TextView
-            android:id="@+id/twitch_player_streamer_name"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="9dp"
-            android:ellipsize="end"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:maxWidth="260dp"
-            android:textColor="@android:color/white"
-            android:textSize="15sp"
-            android:textStyle="bold"
-            tools:text="Streamer" />
-    </LinearLayout>
 <LinearLayout
                 android:id="@+id/bottom_player_bar"
                 android:layout_width="match_parent"
@@ -896,7 +852,7 @@
                             android:id="@+id/player_lock"
                             style="@style/VideoButton"
                             android:nextFocusLeft="@id/player_skip_episode"
-                            android:nextFocusRight="@id/player_resize_btt"
+                            android:nextFocusRight="@id/twitch_player_streamer_chip"
                             android:text="@string/video_lock"
                             app:icon="@drawable/video_locked"
 
@@ -908,10 +864,24 @@
                             android:layout_height="match_parent"
                             android:orientation="horizontal">
 
-                            <com.google.android.material.button.MaterialButton
+                                                        <com.google.android.material.button.MaterialButton
+                                android:id="@+id/twitch_player_streamer_chip"
+                                style="@style/VideoButton"
+                                android:layout_height="40dp"
+                                android:nextFocusLeft="@id/player_lock"
+                                android:nextFocusRight="@id/player_rotate_btt"
+                                android:text=""
+                                android:visibility="gone"
+                                app:icon="@drawable/twitch_player_streamer_avatar_placeholder"
+                                app:iconGravity="textStart"
+                                app:iconPadding="0dp"
+                                app:iconSize="34dp"
+                                app:iconTint="@null"
+                                tools:visibility="visible" />
+<com.google.android.material.button.MaterialButton
                                 android:id="@+id/player_rotate_btt"
                                 style="@style/VideoButton"
-                                android:nextFocusLeft="@id/player_lock"
+                                android:nextFocusLeft="@id/twitch_player_streamer_chip"
 
                                 android:nextFocusRight="@id/player_resize_btt"
                                 android:text="@string/rotate_video"
