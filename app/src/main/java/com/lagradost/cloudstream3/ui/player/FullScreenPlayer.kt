@@ -1293,9 +1293,8 @@ private fun handleKeyDownEvent(event: KeyEvent): Boolean? {
                 activity?.popCurrentPage("FullScreenPlayer")
             }
 
-            playerSourcesBtt.setOnClickListener {
-                showMirrorsDialogue()
-            }
+            configurePlayerSourceButton(playerSourcesBtt)
+            playerSourcesBtt.setOnClickListener { showMirrorsDialogue() }
 
             playerTracksBtt.setOnClickListener {
                 showTracksDialogue()
@@ -1343,7 +1342,56 @@ private fun handleKeyDownEvent(event: KeyEvent): Boolean? {
         }
     }
 
-    private fun PlayerCustomLayoutBinding.hideControlsNames() {
+        // BEGIN PlayerSourceButtonFocusPatch
+    private fun configurePlayerSourceButton(button: MaterialButton) {
+        button.setIconResource(R.drawable.ic_player_quality_options_modern)
+        button.contentDescription = "Quality options"
+
+        val normalScale = 1f
+        val focusedScale = 1.14f
+        val glowZ = 18f * button.resources.displayMetrics.density
+        val focusedStrokeWidth = (3f * button.resources.displayMetrics.density + 0.5f).toInt()
+        val normalStrokeWidth = button.strokeWidth
+        val normalStrokeColor = button.strokeColor
+        val focusStrokeColor = ColorStateList.valueOf(Color.WHITE)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            button.foreground =
+                button.context.getDrawable(R.drawable.player_quality_button_focus_overlay)
+        }
+
+        fun applyFocusState(hasFocus: Boolean, animate: Boolean) {
+            button.isSelected = hasFocus
+
+            if (animate) {
+                button.animate()
+                    .scaleX(if (hasFocus) focusedScale else normalScale)
+                    .scaleY(if (hasFocus) focusedScale else normalScale)
+                    .setDuration(120L)
+                    .start()
+            } else {
+                button.scaleX = if (hasFocus) focusedScale else normalScale
+                button.scaleY = if (hasFocus) focusedScale else normalScale
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val z = if (hasFocus) glowZ else 0f
+                button.elevation = z
+                button.translationZ = z
+            }
+
+            button.strokeWidth = if (hasFocus) focusedStrokeWidth else normalStrokeWidth
+            button.strokeColor = if (hasFocus) focusStrokeColor else normalStrokeColor
+        }
+
+        applyFocusState(button.hasFocus(), animate = false)
+        button.setOnFocusChangeListener { _, hasFocus ->
+            applyFocusState(hasFocus, animate = true)
+        }
+    }
+    // END PlayerSourceButtonFocusPatch
+
+private fun PlayerCustomLayoutBinding.hideControlsNames() {
         fun iterate(layout: LinearLayout) {
             layout.children.forEach {
                 if (it is MaterialButton) {
