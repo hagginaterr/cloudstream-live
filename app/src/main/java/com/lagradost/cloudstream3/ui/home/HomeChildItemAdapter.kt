@@ -250,7 +250,7 @@ open class HomeChildItemAdapter(
                 updateLayoutParms(binding.backgroundCard, setWidth, setHeight)
 
                 if (isFirstItem) { // to fix tv
-                    binding.backgroundCard.nextFocusLeftId = R.id.nav_rail_view
+                    binding.backgroundCard.nextFocusLeftId = R.id.navigation_home
                 }
             }
         }

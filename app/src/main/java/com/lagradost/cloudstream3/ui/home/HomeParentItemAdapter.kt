@@ -121,7 +121,7 @@ open class ParentItemAdapter(
         item: HomeViewModel.ExpandableHomepageList,
         position: Int,
     ) {
-        val startFocus = R.id.nav_rail_view
+        val startFocus = R.id.navigation_home
         val endFocus = FOCUS_SELF
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
