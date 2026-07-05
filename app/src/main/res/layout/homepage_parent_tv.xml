@@ -3,17 +3,11 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
+    android:layout_height="wrap_content"
     android:baselineAligned="false"
     android:clipToPadding="false"
-    android:gravity="bottom"
+    android:descendantFocusability="afterDescendants"
     android:orientation="vertical">
-
-    <Space
-        android:id="@+id/tv_home_top_spacer"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
 
     <TextView
         android:id="@+id/home_child_more_info"

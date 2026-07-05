@@ -28,6 +28,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.AppContextUtils.isRecyclerScrollable
 import recloudstream.twitchlivefavorites.TwitchHomeRefreshFocus
+import android.graphics.Rect
 
 class LoadClickCallback(
     val action: Int = 0,
@@ -96,60 +97,82 @@ open class ParentItemAdapter(
     // Keep sizing stable during bind/scroll; bottom alignment is handled by homepage_parent_tv.xml.
         // TwitchStableTvHomeRowsPatch: each TV home row is one viewport-height page.
     // Do not shift the row during focus or scroll; the XML spacer pins content to the bottom.
-    private fun applyTwitchTvRowPageSizing(holder: ViewHolderState<Bundle>) {
+    // BEGIN TwitchBottomLockedHomeRowsPatch
+private class TwitchBottomLockedHomeRowDecoration : RecyclerView.ItemDecoration() {
+    override fun getItemOffsets(
+        outRect: Rect,
+        view: View,
+        parent: RecyclerView,
+        state: RecyclerView.State,
+    ) {
+        if (!isLayout(TV or EMULATOR)) return
+
+        val parentHeight = parent.height
+            .takeIf { it > 0 }
+            ?: parent.measuredHeight.takeIf { it > 0 }
+            ?: return
+
+        val rowHeight = view.measuredHeight
+            .takeIf { it > 0 }
+            ?: view.height.takeIf { it > 0 }
+            ?: return
+
+        outRect.left = 0
+        outRect.right = 0
+        outRect.bottom = 0
+        outRect.top = (parentHeight - rowHeight).coerceAtLeast(0)
+    }
+}
+
+private fun installTwitchBottomLockedHomeRows(parentRecycler: RecyclerView) {
+    if (!isLayout(TV or EMULATOR)) return
+
+    val installed = parentRecycler.getTag(R.id.home_master_recycler) == "twitch_bottom_locked_rows"
+    parentRecycler.itemAnimator = null
+    parentRecycler.clipToPadding = false
+    parentRecycler.overScrollMode = View.OVER_SCROLL_NEVER
+    parentRecycler.isNestedScrollingEnabled = false
+
+    if (!installed) {
+        parentRecycler.addItemDecoration(TwitchBottomLockedHomeRowDecoration())
+        parentRecycler.setTag(R.id.home_master_recycler, "twitch_bottom_locked_rows")
+        parentRecycler.post {
+            parentRecycler.invalidateItemDecorations()
+        }
+    }
+}
+// END TwitchBottomLockedHomeRowsPatch
+private fun applyTwitchTvRowPageSizing(holder: ViewHolderState<Bundle>) {
     if (!isLayout(TV or EMULATOR)) return
 
     val binding = holder.view as? HomepageParentBinding ?: return
-    val rowView = binding.root
-    val childRow = binding.homeChildRecyclerview
+    val parentRecycler = binding.root.parent as? RecyclerView
+    if (parentRecycler != null) {
+        installTwitchBottomLockedHomeRows(parentRecycler)
+    }
 
-    fun applyHeight(targetHeight: Int) {
-        if (targetHeight <= 0) return
-
-        val params = rowView.layoutParams ?: RecyclerView.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            targetHeight,
-        )
-
+    binding.root.translationY = 0f
+    binding.root.layoutParams?.let { params ->
         var changed = false
         if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
             params.width = ViewGroup.LayoutParams.MATCH_PARENT
             changed = true
         }
-        if (params.height != targetHeight) {
-            params.height = targetHeight
+        if (params.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
+            params.height = ViewGroup.LayoutParams.WRAP_CONTENT
             changed = true
         }
-
         if (changed) {
-            rowView.layoutParams = params
+            binding.root.layoutParams = params
         }
-
-        rowView.minimumHeight = targetHeight
-        rowView.translationY = 0f
-        (rowView as? ViewGroup)?.clipToPadding = false
-
-        childRow.itemAnimator = null
-        childRow.isNestedScrollingEnabled = false
-        childRow.overScrollMode = View.OVER_SCROLL_NEVER
-        childRow.clipToPadding = false
-        childRow.setHasFixedSize(true)
     }
 
-    val parentRecycler = rowView.parent as? RecyclerView
-    val parentHeight = parentRecycler?.height?.takeIf { it > 0 }
-        ?: parentRecycler?.measuredHeight?.takeIf { it > 0 }
-
-    if (parentHeight != null) {
-        applyHeight(parentHeight)
-    } else {
-        rowView.post {
-            val postedParent = rowView.parent as? RecyclerView
-            val postedHeight = postedParent?.height?.takeIf { it > 0 }
-                ?: postedParent?.measuredHeight?.takeIf { it > 0 }
-                ?: rowView.resources.displayMetrics.heightPixels
-            applyHeight(postedHeight)
-        }
+    binding.homeChildRecyclerview.apply {
+        itemAnimator = null
+        isNestedScrollingEnabled = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        clipToPadding = false
+        setHasFixedSize(true)
     }
 }
 private fun updateTwitchTvScrollMoreIndicator(binding: HomepageParentBinding, position: Int) {
@@ -213,10 +236,9 @@ if (TwitchHomeRefreshFocus.consumeForRow(info.name)) {
             }
                             // TwitchTvHomeScrollStutterPatch: onBind can run repeatedly, so avoid stacking listeners.
                 homeChildRecyclerview.clearOnScrollListeners()
+// TwitchStableTvHomeRowsPatch: avoid stacked row listeners during recycled binds.
                 homeChildRecyclerview.clearOnScrollListeners()
-                // TwitchStableTvHomeRowsPatch: avoid stacked row listeners during recycled binds.
-                homeChildRecyclerview.clearOnScrollListeners()
-                homeChildRecyclerview.addOnScrollListener(object :
+homeChildRecyclerview.addOnScrollListener(object :
                 RecyclerView.OnScrollListener() {
                 var expandCount = 0
                 val name = item.list.name

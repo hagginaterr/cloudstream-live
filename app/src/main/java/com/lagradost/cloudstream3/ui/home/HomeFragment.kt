@@ -637,6 +637,14 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             )
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
+                // TwitchBottomLockedHomeRowsPatch: one snap helper; decoration creates page height without row resizing.
+                if (isLayout(TV or EMULATOR) && homeMasterRecycler.onFlingListener == null) {
+                    PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
+                }
+                // TwitchBottomLockedHomeRowsPatch: decorated pages; rows stay wrap_content for recycle stability.
+                homeMasterRecycler.itemAnimator = null
+                homeMasterRecycler.clipToPadding = false
+                homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
                 // TwitchLockedBottomHomeRowsPatch: page-sized rows should not animate/re-measure while scrolling.
                 homeMasterRecycler.itemAnimator = null
                 homeMasterRecycler.setHasFixedSize(true)
@@ -652,13 +660,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                     PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
                 }
             }
-            // TwitchOfficialHomeSnapPatch: TV home rows behave like Twitch category pages.
-            // Each vertical move lands on one row page instead of a long mixed list.
-            if (isLayout(TV or EMULATOR) && homeMasterRecycler.onFlingListener == null) {
-                PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
-            }
-
-            homeApiFab.isVisible = isLayout(PHONE)
+homeApiFab.isVisible = isLayout(PHONE)
 
             homePreviewReloadProvider.setOnClickListener {
                 homeViewModel.loadAndCancel(
