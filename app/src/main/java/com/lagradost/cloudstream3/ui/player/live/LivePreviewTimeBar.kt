@@ -23,38 +23,27 @@ class LivePreviewTimeBar(val ctx: Context, attrs: AttributeSet) : PreviewTimeBar
         val controller =
             _currentPlayerView?.get()?.findViewById<PlayerControlView>(R.id.exo_controller)
 
-        controller?.setProgressUpdateListener { _, _ ->
-            currentPlayer?.let { current ->
-                getLiveDisplayPosition(current)?.let { displayPosition ->
-                    setPosition(displayPosition)
-                }
-            }
+        controller?.setProgressUpdateListener { position, bufferedPosition ->
+            setPosition(position)
+            setBufferedPosition(bufferedPosition)
         }
     }
 
-    /**
-     * Media3 reports Twitch live-DVR / live-with-past-broadcast playback using the raw
-     * sliding-window/VOD position. After a tiny DPAD seek back, that raw position can be
-     * visually around the middle of the time bar even though playback only moved a few
-     * seconds. For live-DVR UI we render progress as distance behind the live edge instead.
-     */
-    private fun getLiveDisplayPosition(player: Player): Long? {
-        val duration = player.duration
-        if (!player.isCurrentMediaItemDynamic || duration == C.TIME_UNSET || duration <= 0L) {
-            return null
-        }
+    override fun setPosition(position: Long) {
+        super.setPosition(normalizeLiveDvrPosition(position))
+    }
 
-        if (isAtLiveEdge()) {
-            return duration
-        }
+    override fun setBufferedPosition(bufferedPosition: Long) {
+        super.setBufferedPosition(normalizeLiveDvrPosition(bufferedPosition))
+    }
 
-        val liveOffset = player.currentLiveOffset
-        if (liveOffset == C.TIME_UNSET || liveOffset < 0L || liveOffset >= duration) {
-            return null
-        }
+    private fun normalizeLiveDvrPosition(position: Long): Long {
+        if (position == C.TIME_UNSET || position < 0L) return position
 
-        val behindPreferredLiveEdge = (liveOffset - PREFERRED_LIVE_OFFSET).coerceAtLeast(0L)
-        return (duration - behindPreferredLiveEdge).coerceIn(0L, duration)
+        val player = currentPlayer ?: return position
+        return LiveHelper.getLiveManager(player)
+            ?.getSeekbarDisplayPosition(position)
+            ?: position
     }
 
     fun isAtLiveEdge(): Boolean {

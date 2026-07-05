@@ -42,6 +42,14 @@ class LivestreamChunk(
         // println("Ahead of live: ${position-livePosition}")
         return position - livePosition
     }
+    // BEGIN TwitchLiveDvrSeekbarDisplayPatch
+    fun getTimeBehindPreferredLiveEdgeForDisplay(position: Long): Long {
+        val currentTime = System.currentTimeMillis()
+        val livePosition = targetPosition + (currentTime - receiveTimeMs)
+        val preferredLivePosition = livePosition - PREFERRED_LIVE_OFFSET
+        return maxOf(0L, preferredLivePosition - position)
+    }
+    // END TwitchLiveDvrSeekbarDisplayPatch
 }
 
 // There are two types of livestreams we need to manage
@@ -74,16 +82,44 @@ class LiveManager {
         val ahead = if (player.currentLiveOffset != C.TIME_UNSET && player.currentLiveOffset < player.duration) {
             val relativeOffset = player.currentLiveOffset - player.currentPosition + position
             PREFERRED_LIVE_OFFSET - relativeOffset
-        } else {
+        }
+    // BEGIN TwitchLiveDvrSeekbarDisplayPatch
+    fun getTimeBehindPreferredLiveEdgeForDisplay(position: Long): Long {
+        val currentTime = System.currentTimeMillis()
+        val livePosition = targetPosition + (currentTime - receiveTimeMs)
+        val preferredLivePosition = livePosition - PREFERRED_LIVE_OFFSET
+        return maxOf(0L, preferredLivePosition - position)
+    }
+    // END TwitchLiveDvrSeekbarDisplayPatch else {
             lastLivestreamChunk?.getTimeAheadOfLive(position) ?: 0
         }
 
         // Ensure min of 0
         return maxOf(0, ahead)
     }
+    // BEGIN TwitchLiveDvrSeekbarDisplayPatch
+    fun getSeekbarDisplayPosition(position: Long): Long? {
+        val player = currentPlayer ?: return null
+        val duration = player.duration
+        if (!player.isCurrentMediaItemDynamic || duration == C.TIME_UNSET || duration <= 0L) {
+            return null
+        }
 
-    /** Check if the stream is currently at the expected live edge, with margins */
-    fun isAtLiveEdge(): Boolean {
+        val behindPreferredLiveEdge = if (
+            player.currentLiveOffset != C.TIME_UNSET &&
+            player.currentLiveOffset >= 0L &&
+            player.currentLiveOffset < duration
+        ) {
+            val offsetAtPosition = player.currentLiveOffset + (player.currentPosition - position)
+            maxOf(0L, offsetAtPosition - PREFERRED_LIVE_OFFSET)
+        } else {
+            lastLivestreamChunk?.getTimeBehindPreferredLiveEdgeForDisplay(position) ?: return null
+        }
+
+        return (duration - behindPreferredLiveEdge).coerceIn(0L, duration)
+    }
+    // END TwitchLiveDvrSeekbarDisplayPatch
+: Boolean {
         val player = currentPlayer ?: return false
         if (!player.isCurrentMediaItemDynamic || player.duration == C.TIME_UNSET) return false
 
