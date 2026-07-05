@@ -44,8 +44,33 @@ open class LinearListLayout(context: Context?) :
     var nextFocusUp: Int = View.NO_ID
     var nextFocusDown: Int = View.NO_ID
 
+    private var attachedRecyclerView: RecyclerView? = null
+
+    override fun onAttachedToWindow(view: RecyclerView) {
+        super.onAttachedToWindow(view)
+        attachedRecyclerView = view
+        if (isLayout(TV) && orientation == HORIZONTAL) {
+            setInitialPrefetchItemCount(maxOf(8, getInitialPrefetchItemCount()))
+        }
+    }
+
+    override fun onDetachedFromWindow(view: RecyclerView, recycler: RecyclerView.Recycler) {
+        if (attachedRecyclerView === view) {
+            attachedRecyclerView = null
+        }
+        super.onDetachedFromWindow(view, recycler)
+    }
+
     fun setHorizontal() {
+
         orientation = HORIZONTAL
+
+        if (isLayout(TV)) {
+
+            setInitialPrefetchItemCount(maxOf(8, getInitialPrefetchItemCount()))
+
+        }
+
     }
 
     fun setVertical() {
@@ -119,6 +144,39 @@ open class LinearListLayout(context: Context?) :
         }
     }
 
+    private fun isHorizontalFocusDirection(direction: Int): Boolean {
+        return direction == View.FOCUS_RIGHT || direction == View.FOCUS_LEFT
+    }
+
+    private fun getHorizontalFocusStep(direction: Int): Int {
+        var step = if (direction == View.FOCUS_RIGHT) 1 else -1
+        if (isLayoutRTL) {
+            step = -step
+        }
+        return step
+    }
+
+    private fun focusHorizontalPositionLater(position: Int, focused: View, direction: Int) {
+        val row = attachedRecyclerView ?: (focused.parent as? RecyclerView)
+        try {
+            row?.stopScroll()
+            scrollToPosition(position)
+        } catch (e: Exception) {
+            logError(e)
+        }
+
+        fun requestTargetFocus() {
+            val target = getViewFromPos(position) ?: findViewByPosition(position)
+            target?.requestFocus(direction)
+        }
+
+        if (row != null) {
+            row.post { requestTargetFocus() }
+            row.postDelayed({ requestTargetFocus() }, 50L)
+        } else {
+            focused.post { requestTargetFocus() }
+        }
+    }
     override fun onInterceptFocusSearch(focused: View, direction: Int): View? {
         val dir = if (orientation == HORIZONTAL) {
             if (direction == View.FOCUS_DOWN) getNextDirection(
@@ -188,29 +246,43 @@ open class LinearListLayout(context: Context?) :
                     if (orientation == HORIZONTAL) FocusDirection.Start else FocusDirection.Up
                 )
             } else {
-                getViewFromPos(lookFor) ?: run {
+            getViewFromPos(lookFor) ?: run {
+                if (isLayout(TV) && orientation == HORIZONTAL && isHorizontalFocusDirection(direction)) {
+                    focusHorizontalPositionLater(lookFor, focused, direction)
+                    focused
+                } else {
                     scrollToPosition(lookFor)
-
-                    // TvHorizontalFocusGuard by ChatGPT: keep focus in this row while
-                    // RecyclerView lays out the next off-screen item. Returning null here
-                    // lets Android TV choose another row, which can jump upward when
-                    // pressing DPAD_RIGHT through past broadcasts or highlights.
-                    if (isLayout(TV) && orientation == HORIZONTAL) {
-                        focused.post {
-                            getViewFromPos(lookFor)?.requestFocus()
-                        }
-                        focused
-                    } else {
-                        null
-                    }
+                    null
                 }
             }
-        } catch (e: Exception) {
+        }
+    } catch (e: Exception) {
             logError(e)
             return null
         }
     }
 
+    override fun onFocusSearchFailed(
+        focused: View,
+        direction: Int,
+        recycler: RecyclerView.Recycler,
+        state: RecyclerView.State
+    ): View? {
+        if (isLayout(TV) && orientation == HORIZONTAL && isHorizontalFocusDirection(direction)) {
+            try {
+                val position = getPosition(getCorrectParent(focused)) ?: getPosition(focused) ?: return focused
+                val lookFor = position + getHorizontalFocusStep(direction)
+                if (lookFor in 0 until itemCount) {
+                    focusHorizontalPositionLater(lookFor, focused, direction)
+                    return focused
+                }
+            } catch (e: Exception) {
+                logError(e)
+                return focused
+            }
+        }
+        return super.onFocusSearchFailed(focused, direction, recycler, state)
+    }
     override fun requestChildRectangleOnScreen(
         parent: RecyclerView,
         child: View,
@@ -219,19 +291,22 @@ open class LinearListLayout(context: Context?) :
         focusedChildVisible: Boolean
     ): Boolean {
         if (isLayout(TV) && orientation == HORIZONTAL) {
+            val parentStart = parent.paddingLeft
+            val parentEnd = parent.width - parent.paddingRight
+            val childStart = getDecoratedLeft(child)
+            val childEnd = getDecoratedRight(child)
             val dx = when {
-                isLayoutRTL -> getDecoratedRight(child) - (parent.width - parent.paddingRight)
-                else -> getDecoratedLeft(child) - parent.paddingLeft
+                childStart < parentStart -> childStart - parentStart
+                childEnd > parentEnd -> childEnd - parentEnd
+                else -> 0
             }
-            return if (dx != 0) {
-                when {
-                    immediate -> parent.scrollBy(dx, 0)
-                    else -> parent.smoothScrollBy(dx, 0)
-                }
-                true
-            } else {
-                false
+
+            if (dx != 0) {
+                parent.stopScroll()
+                parent.scrollBy(dx, 0)
+                return true
             }
+            return false
         } else {
             return super.requestChildRectangleOnScreen(
                 parent,
