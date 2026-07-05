@@ -268,6 +268,24 @@ private data class TwitchSearchResponse(
         val displayName: String? = null,
         val name: String? = null,
     )
+    private data class TwitchGqlClipPlaybackResponse(
+        val data: TwitchGqlClipPlaybackData? = null,
+    )
+
+    private data class TwitchGqlClipPlaybackData(
+        val clip: TwitchGqlClipPlaybackClip? = null,
+    )
+
+    private data class TwitchGqlClipPlaybackClip(
+        val title: String? = null,
+        val videoQualities: List<TwitchGqlClipQuality> = emptyList(),
+    )
+
+    private data class TwitchGqlClipQuality(
+        val quality: String? = null,
+        val sourceURL: String? = null,
+    )
+
 private data class ApiResponse(
         val success: Boolean = false,
         val urls: Map<String, String>? = null,
@@ -729,7 +747,7 @@ private fun getSavedFavoriteChannels(): List<String> {
             description = stream?.title?.ifBlank { null } ?: user?.description?.ifBlank { null },
             gameName = stream?.game_name?.ifBlank { null },
             viewerCount = stream?.viewer_count,
-        
+
         userId = user?.id?.ifBlank { null } ?: stream?.user_id?.ifBlank { null },)
     }
 
@@ -1330,7 +1348,7 @@ private fun twitchProfileVideoThumbnail(url: String): String? {
     val json = twitchGet<TwitchVideosResponse>(
         buildHelixUrl(
             "videos",
-            extra = mapOf("user_id" to user.id, "type" to type, "first" to "50"),
+            extra = mapOf("user_id" to user.id, "type" to type, "first" to "12"),
         ),
     ) ?: return emptyList()
 
@@ -1363,7 +1381,7 @@ private suspend fun fetchTwitchClipRecommendations(user: TwitchUser): List<LiveS
     val json = twitchGet<TwitchClipsResponse>(
         buildHelixUrl(
             "clips",
-            extra = mapOf("broadcaster_id" to user.id, "first" to "50"),
+            extra = mapOf("broadcaster_id" to user.id, "first" to "12"),
         ),
     ) ?: return emptyList()
 
@@ -1406,11 +1424,7 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
     private suspend fun twitchProfileMediaLoadResponse(url: String): LoadResponse {
     val marker = twitchProfileMediaMarker(url).orEmpty()
     val clipVideoUrl = twitchProfileMediaParam(url, "cs_clip_video")?.takeIf { isTwitchClipDirectVideoUrl(it) }
-    val cleanUrl = if (marker == "clip") {
-        clipVideoUrl ?: stripTwitchProfileMediaMarker(url)
-    } else {
-        stripTwitchProfileMediaMarker(url)
-    }
+    val cleanUrl = stripTwitchProfileMediaMarker(url)
     val fallbackTitle = when (marker) {
         "clip" -> "Twitch Clip"
         "highlight" -> "Twitch Highlight"
@@ -1633,13 +1647,86 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             .distinctBy { it.url }
     }
 
-    override suspend fun loadLinks(
+
+    private fun extractTwitchClipSlug(url: String): String {
+        val clean = stripTwitchProfileMediaMarker(url)
+            .substringBefore("?")
+            .substringBefore("#")
+            .trim()
+            .trimEnd('/')
+        return when {
+            clean.contains("clips.twitch.tv/", ignoreCase = true) -> clean.substringAfterLast("/")
+            clean.contains("/clip/", ignoreCase = true) -> clean.substringAfterLast("/clip/").substringAfterLast("/")
+            else -> ""
+        }.trim().trim('/')
+    }
+
+    private fun isTwitchClipPageUrl(url: String): Boolean {
+        val clean = url.lowercase()
+        return clean.contains("clips.twitch.tv/") || clean.contains("/clip/") || twitchProfileMediaMarker(url) == "clip"
+    }
+
+    private fun twitchClipFallbackLink(url: String, label: String = "Twitch Clip"): ExtractorLink {
+        return newExtractorLink(name, label, url) {
+            this.type = ExtractorLinkType.VIDEO
+            this.quality = getQualityFromName("720p")
+            this.referer = "https://clips.twitch.tv/"
+            this.headers = mapOf("User-Agent" to twitchWebUserAgent)
+        }
+    }
+
+    private suspend fun fetchTwitchClipLinks(url: String): List<ExtractorLink> {
+        val direct = twitchProfileMediaParam(url, "cs_clip_video")?.takeIf { isTwitchClipDirectVideoUrl(it) }
+        val slug = extractTwitchClipSlug(url)
+        val directFallback = direct?.let { listOf(twitchClipFallbackLink(it)) } ?: emptyList()
+        if (slug.isBlank()) return directFallback
+
+        val query = """
+            query ClipAccessToken(${'$'}slug: ID!) {
+              clip(slug: ${'$'}slug) {
+                title
+                videoQualities {
+                  quality
+                  sourceURL
+                }
+              }
+            }
+        """.trimIndent()
+
+        val response: TwitchGqlClipPlaybackResponse? = twitchGqlPost(
+            mapOf(
+                "operationName" to "ClipAccessToken",
+                "query" to query,
+                "variables" to mapOf("slug" to slug),
+            ),
+        )
+
+        val links = response?.data?.clip?.videoQualities.orEmpty().mapNotNull { item ->
+            val source = item.sourceURL?.ifBlank { null } ?: return@mapNotNull null
+            val qualityName = item.quality?.ifBlank { null } ?: "720"
+            val quality = getQualityFromName("${qualityName.substringBefore("p")}p")
+            newExtractorLink(name, "$name Clip ${qualityName}p", source) {
+                this.type = ExtractorLinkType.VIDEO
+                this.quality = quality
+                this.referer = "https://clips.twitch.tv/"
+                this.headers = mapOf("User-Agent" to twitchWebUserAgent)
+            }
+        }.distinctBy { it.url }
+
+        return links.ifEmpty { directFallback }
+    }
+override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         if (!data.startsWith("http", ignoreCase = true)) return false
+        if (isTwitchClipPageUrl(data)) {
+            val clipLinks = fetchTwitchClipLinks(data)
+            clipLinks.forEach { callback.invoke(it) }
+            return clipLinks.isNotEmpty()
+        }
         if (isTwitchClipDirectVideoUrl(data)) {
         callback.invoke(
             newExtractorLink(

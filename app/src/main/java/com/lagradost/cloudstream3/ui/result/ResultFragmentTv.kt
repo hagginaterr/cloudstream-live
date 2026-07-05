@@ -542,11 +542,7 @@ activity?.window?.decorView?.clearFocus()
                 SearchAdapter(
                     resultRecommendationsList,
                     isHorizontal = true,
-                ) { callback ->
-                    if (callback.action == SEARCH_ACTION_FOCUSED) {
-                        toggleEpisodes(false)
-                    } else SearchHelper.handleSearchClickCallback(callback)
-                }
+                ) { callback -> SearchHelper.handleSearchClickCallback(callback) }
 
             resultEpisodes.setRecycledViewPool(EpisodeAdapter.sharedPool)
             resultEpisodes.adapter =
