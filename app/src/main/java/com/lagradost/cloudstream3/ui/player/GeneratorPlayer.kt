@@ -1460,8 +1460,11 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
 
         button.setOnLongClickListener {
-            cycleTwitchPlayerChatCorner(focusOverlay = false)
-            updateTwitchPlayerChatOverlay()
+            if (twitchPlayerChatVisible) {
+                cycleTwitchPlayerChatCorner(focusOverlay = false)
+                updateTwitchPlayerChatOverlay()
+            }
+
             focusTwitchPlayerChatButton()
             true
         }
