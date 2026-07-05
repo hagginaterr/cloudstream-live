@@ -13,12 +13,12 @@ import com.github.rubensousa.previewseekbar.media3.PreviewTimeBar
 import java.lang.ref.WeakReference
 
 @OptIn(UnstableApi::class)
-class LivePreviewTimeBar(val ctx: Context, attrs: AttributeSet) : PreviewTimeBar(ctx, attrs) {
+class LivePreviewTimeBar(ctx: Context, attrs: AttributeSet) : PreviewTimeBar(ctx, attrs) {
     private var _currentPlayerView: WeakReference<PlayerView>? = null
     val currentPlayer: Player? get() = _currentPlayerView?.get()?.player
 
     fun registerPlayerView(player: PlayerView?) {
-        _currentPlayerView = WeakReference(player)
+        _currentPlayerView = player?.let { WeakReference(it) }
 
         val controller =
             _currentPlayerView?.get()?.findViewById<PlayerControlView>(R.id.exo_controller)
