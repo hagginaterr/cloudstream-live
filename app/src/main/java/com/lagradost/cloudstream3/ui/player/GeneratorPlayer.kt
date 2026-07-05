@@ -1059,12 +1059,16 @@ class GeneratorPlayer : FullScreenPlayer() {
                 else -> null
             },
             response?.url,
+            currentSelectedLink?.first?.extractorData,
             currentSelectedLink?.first?.url,
             currentSelectedLink?.first?.referer,
             currentSelectedLink?.first?.name,
             currentSelectedLink?.second?.uri?.toString(),
             currentSelectedLink?.second?.name,
-        ).filter { it.isNotBlank() }.distinct()
+        ).flatMap { it.split('\n') }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
     }
 
     private fun firstTwitchOverlayParam(key: String): String? {
@@ -1074,7 +1078,35 @@ class GeneratorPlayer : FullScreenPlayer() {
         return null
     }
 
-    private fun twitchChannelFromUrl(value: String?): String? {
+    private fun cleanTwitchChannel(value: String?): String? {
+        val raw = value?.trim()?.ifBlank { null } ?: return null
+        val channel = raw
+            .removePrefix("@")
+            .filter { it.isLetterOrDigit() || it == '_' }
+            .lowercase()
+            .ifBlank { null }
+            ?: return null
+
+        val blocked = setOf(
+            "twitch",
+            "twitchtv",
+            "twitchcom",
+            "wwwtwitchtv",
+            "wwwtwitchcom",
+            "clips",
+            "clip",
+            "videos",
+            "video",
+            "source",
+            "auto",
+            "vod",
+            "m3u8",
+        )
+
+        return channel.takeUnless { it in blocked || it.all { char -> char.isDigit() } }
+    }
+
+private fun twitchChannelFromUrl(value: String?): String? {
         val raw = value?.trim()?.ifBlank { null } ?: return null
         val clean = raw.substringBefore("?").substringBefore("#").trim().trimEnd('/')
         val lower = clean.lowercase()
@@ -1086,17 +1118,11 @@ class GeneratorPlayer : FullScreenPlayer() {
         if (firstPathPart.equals("videos", ignoreCase = true)) return null
         if (firstPathPart.equals("clip", ignoreCase = true)) return null
 
-        val channel = firstPathPart.filter { it.isLetterOrDigit() || it == '_' }.lowercase()
-        return channel.ifBlank { null }
+        return cleanTwitchChannel(firstPathPart)
     }
 
     private fun twitchChannelFromName(value: String?): String? {
-        return value
-            ?.trim()
-            ?.removePrefix("@")
-            ?.filter { it.isLetterOrDigit() || it == '_' }
-            ?.lowercase()
-            ?.ifBlank { null }
+        return cleanTwitchChannel(value)
     }
 
     private fun isLikelyTwitchMediaThumbnail(value: String?): Boolean {
@@ -1136,8 +1162,8 @@ class GeneratorPlayer : FullScreenPlayer() {
         val meta = currentMeta
         val response = viewModel.state.generatorState?.response
         val explicitName = firstTwitchOverlayParam("cs_streamer_name")
-        val explicitChannel = firstTwitchOverlayParam("cs_streamer_login")
-        val explicitAvatar = firstTwitchOverlayParam("cs_streamer_avatar")
+        val explicitChannel = cleanTwitchChannel(firstTwitchOverlayParam("cs_streamer_login"))
+        val explicitAvatar = strictTwitchProfileAvatar(firstTwitchOverlayParam("cs_streamer_avatar"))
         val explicitApiName = firstTwitchOverlayParam("cs_api_name")
 
         val urls = currentTwitchOverlayCandidateUrls()
@@ -1177,15 +1203,15 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         return TwitchPlayerStreamerOverlay(
             displayName = displayName,
-            avatarUrl = strictTwitchProfileAvatar(explicitAvatar),
-            profileUrl = "https://www.twitch.tv/",
+            avatarUrl = explicitAvatar,
+            profileUrl = "https://www.twitch.tv/$profileChannel",
             apiName = apiName,
         )
     }
 
     private fun twitchResultNavigationDestinationId(): Int {
         val act = activity ?: return 0
-        val candidates = listOf("navigation_results_tv", "navigation_results", "global_to_navigation_results_tv", "global_to_navigation_results_phone", "navigation_results_phone", "action_navigation_results_phone_to_navigation_quick_search", "action_navigation_results_phone_to_navigation_player", "action_navigation_results_tv_to_navigation_quick_search", "action_navigation_results_tv_to_navigation_player", "action_navigation_results_to_navigation_quick_search", "action_navigation_results_to_navigation_player", "result", "results", "resultFragment", "result_fragment", "fragment_result", "result_fragment_tv", "resultFragmentTv", "navigation_result")
+        val candidates = listOf("navigation_results_tv", "navigation_results", "global_to_navigation_results_tv", "global_to_navigation_results_phone", "navigation_results_phone", "action_navigation_results_phone_to_navigation_quick_search", "action_navigation_results_phone_to_navigation_player", "action_navigation_results_tv_to_navigation_quick_search", "action_navigation_results_tv_to_navigation_player", "action_navigation_results_to_navigation_quick_search", "action_navigation_results_to_navigation_player", "navigation_result", "result", "results", "resultFragment", "result_fragment", "fragment_result", "result_fragment_tv", "resultFragmentTv")
         return candidates
             .asSequence()
             .map { act.resources.getIdentifier(it, "id", act.packageName) }
