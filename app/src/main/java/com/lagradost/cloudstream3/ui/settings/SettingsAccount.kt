@@ -69,6 +69,9 @@ import com.lagradost.cloudstream3.utils.setText
 import com.lagradost.cloudstream3.utils.txt
 import qrcode.QRCode
 
+
+import recloudstream.twitchlivefavorites.TwitchAccountAuth
+import recloudstream.twitchlivefavorites.TwitchStartupAuthPrompt
 class SettingsAccount : BasePreferenceFragmentCompat(), BiometricCallback {
     companion object {
         /** Used by nginx plugin too */
@@ -440,6 +443,30 @@ class SettingsAccount : BasePreferenceFragmentCompat(), BiometricCallback {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         hideKeyboard()
         setPreferencesFromResource(R.xml.settings_account, rootKey)
+        findPreference<androidx.preference.Preference>("twitch_account_key")?.apply {
+            title = "Twitch Account"
+            summary = TwitchAccountAuth.displayName()?.let { name ->
+                TwitchAccountAuth.lastImportSummary()?.let { "$name - $it" } ?: "Signed in as $name"
+            } ?: "Sign in with Twitch to import followed channels into favorites"
+            setOnPreferenceClickListener {
+                val currentActivity = activity ?: return@setOnPreferenceClickListener false
+                if (TwitchAccountAuth.isSignedIn()) {
+                    androidx.appcompat.app.AlertDialog.Builder(currentActivity, R.style.AlertDialogCustom)
+                        .setTitle("Twitch Account")
+                        .setMessage("Signed in as ${TwitchAccountAuth.displayName() ?: "Twitch"}. ${TwitchAccountAuth.lastImportSummary() ?: "Followed channels are imported into favorites."}")
+                        .setPositiveButton("Refresh follows") { _, _ -> TwitchStartupAuthPrompt.show(currentActivity, force = true) }
+                        .setNegativeButton("Sign out") { _, _ ->
+                            TwitchAccountAuth.clearAccount()
+                            summary = "Sign in with Twitch to import followed channels into favorites"
+                        }
+                        .setNeutralButton(R.string.cancel, null)
+                        .show()
+                } else {
+                    TwitchStartupAuthPrompt.show(currentActivity, force = true)
+                }
+                true
+            }
+        }
 
         //Hides the security  category on TV as it's only Biometric for now
         getPref(R.string.pref_category_security_key)?.hideOn(TV or EMULATOR)

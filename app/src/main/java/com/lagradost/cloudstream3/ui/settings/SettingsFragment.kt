@@ -223,7 +223,8 @@ class SettingsFragment : BaseFragment<MainSettingsBinding>(
         binding.apply {
             // Twitch-only settings cleanup.
             settingsProviders.visibility = View.GONE
-            settingsCredits.visibility = View.GONE
+            settingsCredits.visibility = View.VISIBLE
+            settingsCredits.text = "Accounts"
             settingsExtensions.visibility = View.GONE
             settingsUpdates.text = getString(R.string.pref_category_backup)
 

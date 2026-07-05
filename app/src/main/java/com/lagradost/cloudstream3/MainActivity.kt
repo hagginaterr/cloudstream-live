@@ -1,6 +1,7 @@
 package com.lagradost.cloudstream3
 
 import recloudstream.twitchlivefavorites.BuiltInTwitchLiveFavorites
+import recloudstream.twitchlivefavorites.TwitchStartupAuthPrompt
 
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
@@ -1298,6 +1299,7 @@ private val pluginsLock = Mutex()
         // overscan
         val padding = settingsManager.getInt(getString(R.string.overscan_key), 0).toPx
         binding?.homeRoot?.setPadding(padding, padding, padding, padding)
+        TwitchStartupAuthPrompt.maybeShow(this)
 
         changeStatusBarState(isLayout(EMULATOR))
 

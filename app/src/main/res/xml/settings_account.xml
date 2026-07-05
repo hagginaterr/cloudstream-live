@@ -4,6 +4,11 @@
 
     <PreferenceCategory
         android:title="@string/pref_category_accounts">
+        <Preference
+            android:icon="@drawable/ic_baseline_live_tv_24"
+            android:key="twitch_account_key"
+            android:title="Twitch Account"
+            android:summary="Sign in with Twitch to import followed channels into favorites" />
 
         <Preference
             android:icon="@drawable/mal_logo"

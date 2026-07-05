@@ -406,7 +406,9 @@ private fun getSavedFavoriteChannels(): List<String> {
     }
 
     private fun hasTwitchCredentials(): Boolean {
-        return TwitchCredentials.CLIENT_ID.isNotBlank() && TwitchCredentials.CLIENT_SECRET.isNotBlank()
+        return TwitchCredentials.CLIENT_ID.isNotBlank() && (
+            TwitchCredentials.CLIENT_SECRET.isNotBlank() || TwitchAccountAuth.isSignedIn()
+        )
     }
 
     private fun nowMs(): Long = System.currentTimeMillis()
@@ -504,6 +506,10 @@ private fun getSavedFavoriteChannels(): List<String> {
     }
 
     private suspend fun getAppAccessToken(): String? {
+        TwitchAccountAuth.getValidAccessToken()?.let { userToken ->
+            lastTwitchApiError = null
+            return userToken
+        }
         if (!hasTwitchCredentials()) {
             lastTwitchApiError = "Twitch API credentials are missing."
             return null
