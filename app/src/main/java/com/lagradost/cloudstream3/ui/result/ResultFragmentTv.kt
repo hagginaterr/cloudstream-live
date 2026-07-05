@@ -71,6 +71,9 @@ import com.lagradost.cloudstream3.utils.getImageFromDrawable
 import com.lagradost.cloudstream3.utils.setText
 import com.lagradost.cloudstream3.utils.setTextHtml
 import com.lagradost.cloudstream3.utils.txt
+import android.view.Gravity
+import android.widget.LinearLayout
+import android.widget.TextView
 
 class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     BindingCreator.Inflate(FragmentResultTvBinding::inflate)
@@ -180,26 +183,9 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     }
 
     private fun alignTwitchProfileFocusedRow(focusedView: View?) {
-        if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR) || focusedView == null) return
-
-        val scrollView = findTwitchProfileScrollContainerFrom(focusedView) ?: return
-        val row = generateSequence(focusedView.parent as? View) { it.parent as? View }
-            .firstOrNull { it is RecyclerView }
-            ?: focusedView
-
-        val scrollLocation = IntArray(2)
-        val rowLocation = IntArray(2)
-        scrollView.getLocationOnScreen(scrollLocation)
-        row.getLocationOnScreen(rowLocation)
-
-        val target = when (scrollView) {
-            is androidx.core.widget.NestedScrollView -> scrollView.scrollY
-            is ScrollView -> scrollView.scrollY
-            else -> 0
-        } + (rowLocation[1] - scrollLocation[1]) - (scrollView.height * 0.52f).toInt()
-
-        scrollTwitchProfileContainer(scrollView, target)
-    }
+    if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
+    updateTwitchProfileFocusedBackground(focusedView)
+}
 
     private fun applyTwitchProfileTvStyle() {
         if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
@@ -343,6 +329,127 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
         (row?.adapter as? SearchAdapter)?.submitList(items)
     }
     // END TWITCH_PROFILE_MEDIA_ROWS
+
+// BEGIN TwitchStableProfileRowsPatch
+private val twitchProfileMoreIndicatorTag = "twitch_profile_more_indicator"
+
+private fun View.twitchProfileDp(value: Int): Int {
+    return (value * resources.displayMetrics.density + 0.5f).toInt()
+}
+
+private fun ViewGroup.removeTwitchProfileMoreIndicators() {
+    for (index in childCount - 1 downTo 0) {
+        if (getChildAt(index)?.tag == twitchProfileMoreIndicatorTag) {
+            removeViewAt(index)
+        }
+    }
+}
+
+private fun ViewGroup.addTwitchProfileMoreIndicator() {
+    removeTwitchProfileMoreIndicators()
+
+    val indicator = TextView(context).apply {
+        tag = twitchProfileMoreIndicatorTag
+        text = "\u2193"
+        setTextColor(android.graphics.Color.WHITE)
+        textSize = 22f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        minWidth = twitchProfileDp(46)
+        isFocusable = false
+        isClickable = false
+        background = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            context.getDrawable(R.drawable.tv_home_more_indicator_bg)
+        } else {
+            null
+        }
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            twitchProfileDp(32),
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = twitchProfileDp(6)
+            bottomMargin = twitchProfileDp(14)
+        }
+    }
+
+    addView(indicator)
+}
+
+private fun currentTwitchProfilePageHeight(): Int {
+    val scroll = findTwitchProfileScrollContainerIn(binding?.root)
+        ?: findTwitchProfileScroll(binding?.root)
+
+    return scroll?.height?.takeIf { it > 0 }
+        ?: binding?.root?.height?.takeIf { it > 0 }
+        ?: resources.displayMetrics.heightPixels
+}
+
+private fun applyTwitchProfileStablePage(
+    row: com.lagradost.cloudstream3.ui.AutofitRecyclerView?,
+    hasNextPage: Boolean,
+) {
+    if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR) || row == null) return
+
+    row.itemAnimator = null
+    row.isNestedScrollingEnabled = false
+    row.overScrollMode = View.OVER_SCROLL_NEVER
+    row.clipToPadding = false
+    row.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+
+    val rowPage = row.parent as? ViewGroup ?: return
+    val targetHeight = currentTwitchProfilePageHeight()
+
+    rowPage.minimumHeight = targetHeight
+    rowPage.clipToPadding = false
+
+    rowPage.layoutParams?.let { params ->
+        if (params.height != targetHeight) {
+            params.height = targetHeight
+            rowPage.layoutParams = params
+        }
+    }
+
+    if (rowPage is LinearLayout) {
+        rowPage.orientation = LinearLayout.VERTICAL
+        rowPage.gravity = Gravity.BOTTOM
+    }
+
+    rowPage.removeTwitchProfileMoreIndicators()
+    if (hasNextPage) {
+        rowPage.addTwitchProfileMoreIndicator()
+    }
+}
+
+private fun applyTwitchProfileStablePages(
+    pastBroadcasts: List<SearchResponse>,
+    clips: List<SearchResponse>,
+    highlights: List<SearchResponse>,
+) {
+    if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
+
+    binding?.apply {
+        val pastRow = resultRecommendationsList
+        val clipsRow = root.findViewById<com.lagradost.cloudstream3.ui.AutofitRecyclerView>(R.id.result_clips_list)
+        val highlightsRow = root.findViewById<com.lagradost.cloudstream3.ui.AutofitRecyclerView>(R.id.result_highlights_list)
+
+        applyTwitchProfileStablePage(
+            pastRow,
+            clips.isNotEmpty() || highlights.isNotEmpty(),
+        )
+        applyTwitchProfileStablePage(
+            clipsRow,
+            highlights.isNotEmpty(),
+        )
+        applyTwitchProfileStablePage(
+            highlightsRow,
+            false,
+        )
+    }
+}
+// END TwitchStableProfileRowsPatch
+
     // TwitchTrueProfileRowPagingPatch: make Twitch profile media categories act
     // like one-row TV pages and keep the focused card thumbnail as the backdrop.
     private fun findTwitchProfileImage(view: View?): ImageView? {
@@ -408,39 +515,9 @@ class ResultFragmentTv : BaseFragment<FragmentResultTvBinding>(
     }
 
     private fun pageTwitchProfileMediaRow(focusedView: View?) {
-        if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR) || focusedView == null) return
-
-        applyTwitchProfileFocusedBackdrop(focusedView)
-
-        val rowRecycler = generateSequence(focusedView.parent as? View) { it.parent as? View }
-            .firstOrNull { it is RecyclerView }
-            ?: return
-        val scroll = findTwitchProfileScroll(rowRecycler) ?: return
-        val rowPage = rowRecycler.parent as? View ?: rowRecycler
-
-        val targetHeight = scroll.height.takeIf { it > 0 }
-            ?: focusedView.resources.displayMetrics.heightPixels
-        rowPage.minimumHeight = targetHeight
-
-        val scrollLocation = IntArray(2)
-        val pageLocation = IntArray(2)
-        scroll.getLocationOnScreen(scrollLocation)
-        rowPage.getLocationOnScreen(pageLocation)
-
-        val currentY = when (scroll) {
-            is androidx.core.widget.NestedScrollView -> scroll.scrollY
-            is ScrollView -> scroll.scrollY
-            else -> 0
-        }
-
-        val target = currentY +
-                (pageLocation[1] - scrollLocation[1]) -
-                (targetHeight * 0.50f).toInt()
-
-        scroll.post {
-            scrollTwitchProfile(scroll, target)
-        }
-    }
+    if (!isTwitchProfileMediaPage || !isLayout(TV or EMULATOR)) return
+    applyTwitchProfileFocusedBackdrop(focusedView)
+}
 private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?) {
         currentRecommendations = rec ?: emptyList()
         val matchAgainst = validApiName ?: rec?.firstOrNull()?.apiName
@@ -484,7 +561,11 @@ private fun setRecommendations(rec: List<SearchResponse>?, validApiName: String?
                 if (callback.action == SEARCH_ACTION_FOCUSED) { pageTwitchProfileMediaRow(callback.view) } else { SearchHelper.handleSearchClickCallback(callback) }
             }
 
-            rec?.map { it.apiName }?.distinct()?.let { apiNames ->
+                            // TwitchStableProfileRowsPatch: apply stable page sizing after profile media rows bind.
+                root.post {
+                    applyTwitchProfileStablePages(pastBroadcasts, clips, highlights)
+                }
+rec?.map { it.apiName }?.distinct()?.let { apiNames ->
                 resultRecommendationsFilterSelection.isVisible = apiNames.size > 1
                 resultRecommendationsFilterSelection.update(apiNames.map { txt(it) to it })
                 resultRecommendationsFilterSelection.select(apiNames.indexOf(matchAgainst))
