@@ -92,6 +92,7 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         val savedFavorites = getSavedFavoriteChannels()
         val usingStarterFavorites = savedFavorites.isEmpty()
         val favorites = if (usingStarterFavorites) starterFavoriteChannels else savedFavorites
+        refreshCloudStreamFavoritePosters(favorites)
 
         if (useSignedInFollows) {
             val liveFollowed = fetchLiveFollowedStreams(signedInUserId.orEmpty())
@@ -121,9 +122,19 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
                 when {
                     liveFavorites == null -> listOf(apiErrorCard(lastTwitchApiError.orEmpty()))
                     liveFavorites.isNotEmpty() -> liveFavorites.map { it.toChannelCard(showOfflineLabel = false, directPlay = true) }
-                    usingStarterFavorites -> favorites.map {
-                        fallbackChannel(it).toChannelCard(showOfflineLabel = true, directPlay = true)
-                    }
+                    usingStarterFavorites -> {
+                            val starterUsers = fetchUsers(favorites)
+                            favorites.map { channel ->
+                                val normalized = normalizeChannel(channel)
+                                val user = starterUsers[normalized]
+                                val favorite = if (user != null) {
+                                    favoriteFromApi(normalized, user, stream = null)
+                                } else {
+                                    fallbackChannel(normalized)
+                                }
+                                favorite.toChannelCard(showOfflineLabel = true, directPlay = true)
+                            }
+                        }
                     else -> listOf(statusCard("No saved favorites are live right now", "no-favorites"))
                 }
             }
@@ -411,6 +422,54 @@ private data class ApiResponse(
         )
     }
 
+    private suspend fun refreshCloudStreamFavoritePosters(channels: List<String>) {
+        if (!hasTwitchCredentials() || channels.isEmpty()) return
+
+        val missingPosterChannels = channels
+            .map { normalizeChannel(it) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .filter { channel ->
+                val current = DataStoreHelper.getFavoritesData(twitchFavoriteId(channel))
+                current != null && current.posterUrl.isNullOrBlank()
+            }
+
+        if (missingPosterChannels.isEmpty()) return
+
+        val users = fetchUsers(missingPosterChannels)
+        var changed = false
+
+        missingPosterChannels.forEach { channel ->
+            val user = users[channel] ?: return@forEach
+            val avatar = user.profile_image_url.ifBlank { null } ?: return@forEach
+            val current = DataStoreHelper.getFavoritesData(twitchFavoriteId(channel)) ?: return@forEach
+
+            if (current.posterUrl == avatar) return@forEach
+
+            DataStoreHelper.setFavoritesData(
+                twitchFavoriteId(channel),
+                DataStoreHelper.FavoritesData(
+                    favoritesTime = current.favoritesTime,
+                    id = current.id,
+                    latestUpdatedTime = nowMs(),
+                    name = current.name,
+                    url = current.url,
+                    apiName = current.apiName,
+                    type = current.type,
+                    posterUrl = avatar,
+                    year = current.year,
+                    plot = current.plot ?: user.description.ifBlank { "Twitch streamer" },
+                    tags = current.tags ?: listOf("Twitch"),
+                ),
+            )
+            changed = true
+        }
+
+        if (changed) {
+            runCatching { MainActivity.bookmarksUpdatedEvent(true) }
+            runCatching { MainActivity.reloadLibraryEvent(true) }
+        }
+    }
     private fun ensureStartupFavoritesSaved() {
         val currentChannels = getCloudStreamTwitchFavoriteChannels()
             .map { normalizeChannel(it) }
@@ -1054,9 +1113,11 @@ val response = twitchGet<TwitchClipsResponse>(
             guard++
         } while (!cursor.isNullOrBlank() && guard < 20)
 
+        val users = fetchUsers(streams.keys.toList())
         val liveChannels = streams.values
             .map { stream ->
-                favoriteFromApi(normalizeChannel(stream.user_login), user = null, stream = stream)
+                val login = normalizeChannel(stream.user_login)
+                favoriteFromApi(login, users[login], stream)
             }
             .sortedWith(compareByDescending<FavoriteChannel> { it.viewerCount ?: 0 }.thenBy { it.displayName.lowercase() })
 
@@ -1923,7 +1984,7 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
     private fun ChannelSummary.toChannelCard(): LiveSearchResponse {
         val resultUrl = appendTwitchStreamerMeta(channel, displayName, channel, image)
         return newLiveSearchResponse(displayName, resultUrl, TvType.Live, fix = false) {
-            posterUrl = .ifBlank { null }
+            posterUrl = image?.ifBlank { null }
             lang = language
         }
     }
@@ -2073,8 +2134,8 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
                 "Past broadcast",
                 cleanTwitchText(video?.description),
             ).joinToString("\n\n").ifBlank { null }
-            posterUrl = .ifBlank { null }
-            backgroundPosterUrl = .ifBlank { null }
+            posterUrl = poster?.ifBlank { null }
+            backgroundPosterUrl = poster?.ifBlank { null }
             this@newLiveStreamLoadResponse.tags = tagList
             recommendations = profileRecommendations
         }
