@@ -71,7 +71,7 @@ class TvHomeRowsLayoutManager(context: Context) : LinearLayoutManager(context, R
         parent: RecyclerView,
         state: RecyclerView.State,
         child: View,
-        focused: View,
+        focused: View?,
     ): Boolean {
         if (!state.isPreLayout && alignChildToShelf(parent, child, immediate = false)) {
             return true

@@ -421,7 +421,7 @@ open class HomeChildItemAdapter(
         val camel = split('_')
             .filter { it.isNotBlank() }
             .joinToString("") { part ->
-                part.substring(0, 1).toUpperCase(Locale.US) + part.substring(1)
+                part.substring(0, 1).uppercase(Locale.US) + part.substring(1)
             }
         return "get$camel"
     }
