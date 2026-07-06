@@ -72,6 +72,9 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     private var cachedLiveExpiresAtMs: Long = 0L
     private var cachedLiveFavorites: List<FavoriteChannel> = emptyList()
     private var cachedLiveUpdatedAtMs: Long = 0L
+private var cachedRecentTopClipsKey: String = ""
+private var cachedRecentTopClipsExpiresAtMs: Long = 0L
+private var cachedRecentTopClips: List<SearchResponse> = emptyList()
     private var rateLimitedUntilMs: Long = 0L
     private var lastTwitchApiError: String? = null
     @Volatile private var lastHomeRenderedAtMs: Long = 0L
@@ -859,8 +862,12 @@ private fun buildHelixUrl(
             ?.profile_image_url
             ?.ifBlank { null }
     }
-    private val followedHomeChannelRequestLimit = 5
-    private val followedHomeMaxItemsPerRow = 12
+    private val followedHomeChannelRequestLimit = 25
+    private val followedHomeMaxItemsPerRow = 25
+private val recentTopClipsMaxItems = 25
+private val recentTopClipsMinViews = 100
+private val recentTopClipsLookbackDays = 30
+private val recentTopClipsPerChannel = 25
 
     private suspend fun fetchFollowedChannelsForHome(userId: String): List<TwitchFollowedChannel> {
         val cleanUserId = userId.trim()
@@ -889,41 +896,16 @@ private fun buildHelixUrl(
     }
 
     private suspend fun fetchFollowedHomeMediaRows(userId: String): List<HomePageList> {
-        val followed = fetchFollowedChannelsForHome(userId)
-        if (followed.isEmpty()) return emptyList()
-
-        val rows = mutableListOf<HomePageList>()
-
-        val pastBroadcasts = fetchFollowedVideosHome(
-            followed = followed,
-            type = "archive",
-            marker = "past_broadcast",
-            perChannel = 2,
-        )
-        if (pastBroadcasts.isNotEmpty()) {
-            rows.add(HomePageList("Latest Past Broadcasts", pastBroadcasts, isHorizontalImages = isHorizontal))
-        }
-
-        val highlights = fetchFollowedVideosHome(
-            followed = followed,
-            type = "highlight",
-            marker = "highlight",
-            perChannel = 1,
-        )
-        if (highlights.isNotEmpty()) {
-            rows.add(HomePageList("Latest Highlights", highlights, isHorizontalImages = isHorizontal))
-        }
-
-        val clips = fetchFollowedClipsHome(
-            followed = followed,
-            perChannel = 2,
-        )
-        if (clips.isNotEmpty()) {
-            rows.add(HomePageList("Popular Clips From Followed Channels", clips, isHorizontalImages = isHorizontal))
-        }
-
-        return rows
+    val followed = fetchFollowedChannelsForHome(userId)
+    val recentTopClips = fetchFollowedClipsHome(followed, recentTopClipsPerChannel)
+    val clipItems: List<SearchResponse> = if (recentTopClips.isNotEmpty()) {
+        recentTopClips
+    } else {
+        listOf(statusCard("No recent 100+ view clips from followed Twitch channels", "no-recent-top-clips"))
     }
+    return listOf(HomePageList("Recent Top Clips", clipItems, isHorizontalImages = isHorizontal))
+}
+
 
     private suspend fun fetchFollowedVideosHome(
         followed: List<TwitchFollowedChannel>,
@@ -994,40 +976,79 @@ val response = twitchGet<TwitchVideosResponse>(
         }
     }
 
-    private suspend fun fetchFollowedClipsHome(
-        followed: List<TwitchFollowedChannel>,
-        perChannel: Int,
-    ): List<LiveSearchResponse> {
-        val items = mutableListOf<Pair<Int, LiveSearchResponse>>()
+    private fun twitchIsoUtc(timestampMs: Long): String {
+    val format = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+    format.timeZone = java.util.TimeZone.getTimeZone("UTC")
+    return format.format(java.util.Date(timestampMs))
+}
+private suspend fun fetchFollowedClipsHome(
+    followed: List<TwitchFollowedChannel>,
+    perChannel: Int,
+): List<SearchResponse> {
+    val cleanFollowed = followed
+        .filter { it.broadcaster_id.isNotBlank() || it.broadcaster_login.isNotBlank() }
+        .distinctBy { it.broadcaster_id.ifBlank { normalizeChannel(it.broadcaster_login) } }
+        .take(followedHomeChannelRequestLimit)
 
-        followed.take(followedHomeChannelRequestLimit).forEach { followedChannel ->
-            val broadcasterId = followedChannel.broadcaster_id.ifBlank { return@forEach }
-            val displayName = followedChannel.broadcaster_name
-                .ifBlank { followedChannel.broadcaster_login }
-                .ifBlank { "Twitch" }
-            val channelAvatar = fetchTwitchProfileAvatar(followedChannel.broadcaster_login)
-val response = twitchGet<TwitchClipsResponse>(
-                buildHelixUrl(
-                    "clips",
-                    extra = mapOf(
-                        "broadcaster_id" to broadcasterId,
-                        "first" to perChannel.toString(),
-                    ),
-                ),
-            ) ?: return@forEach
+    if (cleanFollowed.isEmpty()) return emptyList()
 
-            response.data.forEach { clip ->
-                val card = clip.toFollowedClipHomeCard(displayName, followedChannel.broadcaster_login, channelAvatar) ?: return@forEach
-                items.add(clip.view_count to card)
-            }
-        }
-
-        return items
-            .sortedByDescending { it.first }
-            .map { it.second }
-            .distinctBy { it.url }
-            .take(followedHomeMaxItemsPerRow)
+    val cacheKey = cleanFollowed
+        .joinToString("|") { it.broadcaster_id.ifBlank { normalizeChannel(it.broadcaster_login) } } +
+        ":days=$recentTopClipsLookbackDays:min=$recentTopClipsMinViews:max=$recentTopClipsMaxItems"
+    val now = nowMs()
+    if (cacheKey == cachedRecentTopClipsKey && now < cachedRecentTopClipsExpiresAtMs) {
+        return cachedRecentTopClips
     }
+
+    val startedAt = twitchIsoUtc(now - recentTopClipsLookbackDays * 24L * 60L * 60L * 1000L)
+    val endedAt = twitchIsoUtc(now)
+    val perChannelLimit = perChannel.coerceIn(1, 100)
+    val items = mutableListOf<Triple<Int, String, SearchResponse>>()
+
+    cleanFollowed.forEach { followedChannel ->
+        val broadcasterId = followedChannel.broadcaster_id.ifBlank { return@forEach }
+        val channelLogin = normalizeChannel(followedChannel.broadcaster_login)
+        val displayName = followedChannel.broadcaster_name
+            .ifBlank { followedChannel.broadcaster_login }
+            .ifBlank { "Twitch" }
+        val channelAvatar = fetchTwitchProfileAvatar(channelLogin.ifBlank { displayName })
+        val response = twitchGet<TwitchClipsResponse>(
+            buildHelixUrl(
+                "clips",
+                extra = mapOf(
+                    "broadcaster_id" to broadcasterId,
+                    "started_at" to startedAt,
+                    "ended_at" to endedAt,
+                    "first" to perChannelLimit.toString(),
+                ),
+            ),
+        ) ?: return@forEach
+
+        response.data
+            .asSequence()
+            .filter { it.view_count >= recentTopClipsMinViews }
+            .mapNotNull { clip ->
+                val card = clip.toFollowedClipHomeCard(displayName, channelLogin, channelAvatar) ?: return@mapNotNull null
+                Triple(clip.view_count, clip.created_at, card as SearchResponse)
+            }
+            .forEach { items.add(it) }
+    }
+
+    val result = items
+        .sortedWith(
+            compareByDescending<Triple<Int, String, SearchResponse>> { it.first }
+                .thenByDescending { it.second }
+        )
+        .map { it.third }
+        .distinctBy { it.url }
+        .take(recentTopClipsMaxItems)
+
+    cachedRecentTopClipsKey = cacheKey
+    cachedRecentTopClipsExpiresAtMs = now + liveCacheTtlMs
+    cachedRecentTopClips = result
+    return result
+}
+
 
     private fun TwitchClip.toFollowedClipHomeCard(channelDisplayName: String, channelLogin: String, channelAvatar: String?): LiveSearchResponse? {
         val watchUrl = url.ifBlank { return null }
