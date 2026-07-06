@@ -6,7 +6,9 @@
     android:layout_width="match_parent"
 
     android:layout_height="match_parent"
-    tools:context=".ui.home.HomeFragment">
+    tools:context=".ui.home.HomeFragment"
+  android:clipChildren="false"
+  android:clipToPadding="false">
     <!-- TwitchOfficialHomeBackgroundPatch: blurred focused thumbnail background for TV home. -->
     <ImageView
         android:id="@+id/home_twitch_focus_background"
@@ -170,7 +172,7 @@
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/home_master_recycler"
-        android:layout_width="match_parent"
+  android:layout_width="match_parent"
   android:layout_height="@dimen/tv_home_row_carousel_height"
         android:descendantFocusability="afterDescendants"
         android:nextFocusLeft="@id/navigation_home"
@@ -180,8 +182,9 @@
         tools:visibility="gone"
   android:clipToPadding="false"
   android:overScrollMode="never"
-  tools:comment="TwitchBottomRowCarouselPatch"
-  android:layout_gravity="bottom|start"/>
+  tools:comment="TwitchBottomSingleRowPatch"
+  android:layout_gravity="bottom|start"
+  android:clipChildren="false"/>
 
     <LinearLayout
         android:id="@+id/home_api_holder"
