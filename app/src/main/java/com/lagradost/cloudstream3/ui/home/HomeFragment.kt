@@ -616,7 +616,8 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
         }
         binding.apply {
             // TwitchNoHomePreviewButtonsPatch: the top preview carousel is gone, so hide its toolbar buttons.
-            homePreviewReloadProvider.isGone = true
+            // TwitchBottomRowCarouselPatch: keep refresh available over the blurred hero area.
+            homePreviewReloadProvider.isVisible = isLayout(TV or EMULATOR)
             homePreviewSearchButton.isGone = true
             //homeChangeApiLoading.setOnClickListener(apiChangeClickListener)
             //homeChangeApiLoading.setOnClickListener(apiChangeClickListener)
@@ -645,6 +646,12 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                 homeMasterRecycler.itemAnimator = null
                 homeMasterRecycler.clipToPadding = false
                 homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
+                // TwitchBottomRowCarouselPatch: one visible row viewport, snap up/down by row.
+                homeMasterRecycler.setHasFixedSize(true)
+                homeMasterRecycler.isNestedScrollingEnabled = false
+                if (isLayout(TV or EMULATOR) && homeMasterRecycler.onFlingListener == null) {
+                    PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
+                }
 homeApiFab.isVisible = isLayout(PHONE)
 
             homePreviewReloadProvider.setOnClickListener {
@@ -676,34 +683,11 @@ homeApiFab.isVisible = isLayout(PHONE)
                             }
                         }
                     } else {
-                        // Header scrolling is only relevant to TV/Emulator
-
-                        val view = recyclerView.findViewHolderForAdapterPosition(0)?.itemView
-                        val scrollParent = binding.homeApiHolder
-
-                        if (view == null) {
-                            // The first view is not visible, so we can assume we have scrolled past it
-                            scrollParent.isVisible = false
-                        } else {
-                            // A bit weird, but this is a major limitation we are working around here
-                            // 1. We cant have a real parent to the recyclerview as android cant layout that without lagging
-                            // 2. We cant put the view in the recyclerview, as it should always be shown
-                            // 3. We cant mirror the view in the recyclerview as then it causes focus issues when swaping out the mirror view
-                            //
-                            // This means that if we want to have a parent view to the recyclerview we are out of luck
-                            // Instead this uses getLocationInWindow to calculate how much the view should be scrolled
-                            // as recyclerView has no scrollY (always 0)
-                            //
-                            // Then it manually "scrolls" it to the correct position
-                            //
-                            // Hopefully getLocationInWindow acts correctly on all devices
-                            val rect = IntArray(2)
-                            view.getLocationInWindow(rect)
-                            scrollParent.isVisible = true
-                            scrollParent.translationY = rect[1].toFloat() - 60.toPx
-                        }
-                    }
-                    super.onScrolled(recyclerView, dx, dy)
+                    // TwitchBottomRowCarouselPatch: bottom carousel leaves hero area free; keep top toolbar fixed.
+                    binding.homeApiHolder.isVisible = true
+                    binding.homeApiHolder.translationY = 0f
+                }
+                super.onScrolled(recyclerView, dx, dy)
                 }
             })
 
@@ -726,7 +710,8 @@ homeApiFab.isVisible = isLayout(PHONE)
             binding.apply {
                 homeApiFab.text = apiName
                 homeChangeApi.text = apiName
-                homePreviewReloadProvider.isGone = true
+                // TwitchBottomRowCarouselPatch: keep refresh available over the blurred hero area.
+                homePreviewReloadProvider.isVisible = isLayout(TV or EMULATOR)
                 homePreviewSearchButton.isGone = true
             }
         }

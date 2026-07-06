@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
+  xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+  android:layout_height="@dimen/tv_home_row_carousel_height"
     android:baselineAligned="false"
     android:clipToPadding="false"
     android:descendantFocusability="afterDescendants"
-    android:orientation="vertical">
+    android:orientation="vertical"
+  android:gravity="bottom"
+  tools:comment="TwitchBottomRowCarouselPatch">
 
     <TextView
         android:id="@+id/home_child_more_info"
