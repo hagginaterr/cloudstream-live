@@ -30,6 +30,9 @@ import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.UIHelper.isBottomLayout
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
+import android.widget.TextView
+import com.lagradost.cloudstream3.databinding.HomeResultGridTvBinding
+import java.util.Locale
 
 object TwitchHomeFocusedBackground {
     private fun findPosterImage(view: View): ImageView? {
@@ -201,13 +204,16 @@ open class HomeChildItemAdapter(
     protected var setHeight = 0
 
     override fun onCreateContent(parent: ViewGroup): ViewHolderState<Boolean> {
-        val expanded = parent.context.isBottomLayout()
         val inflater = LayoutInflater.from(parent.context)
-        val binding = if (expanded) HomeResultGridExpandedBinding.inflate(
-            inflater,
-            parent,
-            false
-        ) else HomeResultGridBinding.inflate(inflater, parent, false)
+        val binding = when {
+            isLayout(TV) -> HomeResultGridTvBinding.inflate(inflater, parent, false)
+            parent.context.isBottomLayout() -> HomeResultGridExpandedBinding.inflate(
+                inflater,
+                parent,
+                false
+            )
+            else -> HomeResultGridBinding.inflate(inflater, parent, false)
+        }
         return HomeScrollViewHolderState(binding)
     }
 
@@ -240,6 +246,237 @@ open class HomeChildItemAdapter(
         }
     }
 
+    // Twitch-style TV home cards
+    private data class TwitchTvMetadata(
+        val title: String,
+        val streamer: String?,
+        val category: String?,
+        val viewers: String?,
+    )
+
+    private fun configureTwitchTvCardSize(root: View, backgroundCard: FrameLayout) {
+        if (!isLayout(TV)) {
+            updateLayoutParms(backgroundCard, setWidth, setHeight)
+            return
+        }
+
+        val resize = resize@{
+            val parentRecycler = root.parent as? RecyclerView
+            val availableWidth = if (parentRecycler != null && parentRecycler.width > 0) {
+                parentRecycler.width - parentRecycler.paddingLeft - parentRecycler.paddingRight
+            } else {
+                root.resources.displayMetrics.widthPixels - 128.toPx
+            }
+
+            if (availableWidth <= 0) return@resize
+
+            val gap = 18.toPx
+            val cardWidth = ((availableWidth - gap * 3) / 4).coerceAtLeast(220.toPx)
+            val thumbnailHeight = (cardWidth * 9f / 16f).toInt()
+            val rootParams = root.layoutParams ?: return@resize
+
+            if (rootParams.width != cardWidth) {
+                rootParams.width = cardWidth
+                root.layoutParams = rootParams
+            }
+
+            val marginParams = root.layoutParams as? ViewGroup.MarginLayoutParams
+            if (marginParams != null && marginParams.marginEnd != gap) {
+                marginParams.marginEnd = gap
+                root.layoutParams = marginParams
+            }
+
+            updateLayoutParms(backgroundCard, cardWidth, thumbnailHeight)
+        }
+
+        resize()
+        root.post { resize() }
+    }
+
+    private fun bindTwitchTvMetadata(itemView: View, item: SearchResponse) {
+        if (!isLayout(TV)) return
+
+        val titleText: TextView? = itemView.findViewById(R.id.imageText)
+        val streamerText: TextView? = itemView.findViewById(R.id.streamer_text)
+        val categoryText: TextView? = itemView.findViewById(R.id.category_text)
+        val viewerCountText: TextView? = itemView.findViewById(R.id.viewer_count_text)
+        if (titleText == null && streamerText == null && categoryText == null && viewerCountText == null) return
+
+        val metadata = item.toTwitchTvMetadata()
+        titleText.setVisibleTvText(metadata.title)
+        streamerText.setVisibleTvText(metadata.streamer)
+        categoryText.setVisibleTvText(metadata.category)
+        viewerCountText.setVisibleTvText(metadata.viewers)
+    }
+
+    private fun TextView?.setVisibleTvText(value: String?) {
+        if (this == null) return
+        val cleanValue = value?.cleanTvText().orEmpty()
+        text = cleanValue
+        visibility = if (cleanValue.isBlank()) View.GONE else View.VISIBLE
+    }
+
+    private fun SearchResponse.toTwitchTvMetadata(): TwitchTvMetadata {
+        val nameParts = name
+            .split('\n')
+            .map { it.cleanTvText() }
+            .filter { it.isNotBlank() }
+
+        val title = firstTextField(
+            "streamTitle",
+            "stream_title",
+            "title",
+            "streamName",
+            "stream_name",
+            "status",
+            "description",
+        ) ?: when {
+            nameParts.size >= 2 -> nameParts[0]
+            else -> name.cleanTvText()
+        }
+
+        val streamer = firstTextField(
+            "streamerName",
+            "streamer_name",
+            "channelName",
+            "channel_name",
+            "channel",
+            "userName",
+            "user_name",
+            "broadcasterName",
+            "broadcaster_name",
+            "displayName",
+            "display_name",
+            "login",
+        ) ?: when {
+            nameParts.size >= 3 -> nameParts[1]
+            nameParts.size == 2 -> nameParts[1]
+            else -> streamerNameFromUrl(url)
+        }
+
+        val category = firstTextField(
+            "categoryName",
+            "category_name",
+            "gameName",
+            "game_name",
+            "category",
+            "game",
+            "directory",
+            "section",
+        ) ?: when {
+            nameParts.size >= 3 -> nameParts[2]
+            else -> null
+        }
+
+        val viewers = firstField(
+            "viewerCount",
+            "viewer_count",
+            "viewCount",
+            "view_count",
+            "viewers",
+            "viewersText",
+            "viewers_text",
+            "viewerText",
+            "viewer_text",
+            "liveViewers",
+            "live_viewers",
+            "watching",
+        ).asViewerText()
+
+        return TwitchTvMetadata(
+            title = title.cleanTvText(),
+            streamer = streamer?.cleanTvText()?.takeUnless { it.equals(title, ignoreCase = true) },
+            category = category?.cleanTvText(),
+            viewers = viewers?.cleanTvText(),
+        )
+    }
+
+    private fun SearchResponse.firstTextField(vararg names: String): String? {
+        return firstField(*names).asCleanText()
+    }
+
+    private fun SearchResponse.firstField(vararg names: String): Any? {
+        for (name in names) {
+            var current: Class<*>? = javaClass
+            while (current != null) {
+                val fieldValue = runCatching {
+                    current.getDeclaredField(name).apply { isAccessible = true }.get(this)
+                }.getOrNull()
+                if (fieldValue != null) return fieldValue
+                current = current.superclass
+            }
+
+            val getter = name.toGetterName()
+            val methodValue = runCatching {
+                javaClass.methods.firstOrNull { method ->
+                    method.parameterTypes.isEmpty() && (method.name == name || method.name == getter)
+                }?.invoke(this)
+            }.getOrNull()
+            if (methodValue != null) return methodValue
+        }
+        return null
+    }
+
+    private fun String.toGetterName(): String {
+        val camel = split('_')
+            .filter { it.isNotBlank() }
+            .joinToString("") { part ->
+                part.substring(0, 1).toUpperCase(Locale.US) + part.substring(1)
+            }
+        return "get$camel"
+    }
+
+    private fun Any?.asCleanText(): String? {
+        return when (this) {
+            null -> null
+            is String -> cleanTvText()
+            is Number -> toString()
+            else -> toString().cleanTvText()
+        }?.takeIf { it.isNotBlank() }
+    }
+
+    private fun Any?.asViewerText(): String? {
+        return when (this) {
+            null -> null
+            is Number -> toLong().formatViewerCount()
+            is String -> {
+                val cleaned = cleanTvText()
+                when {
+                    cleaned.isBlank() -> null
+                    cleaned.contains("view", ignoreCase = true) -> cleaned
+                    else -> cleaned.replace(",", "").toLongOrNull()?.formatViewerCount() ?: "$cleaned viewers"
+                }
+            }
+            else -> toString().asViewerText()
+        }
+    }
+
+    private fun Long.formatViewerCount(): String {
+        val compact = when {
+            this >= 1_000_000L -> String.format(Locale.US, "%.1fM", this / 1_000_000.0).replace(".0M", "M")
+            this >= 1_000L -> String.format(Locale.US, "%.1fK", this / 1_000.0).replace(".0K", "K")
+            else -> toString()
+        }
+        return "$compact ${if (this == 1L) "viewer" else "viewers"}"
+    }
+
+    private fun streamerNameFromUrl(value: String): String? {
+        val lastSegment = value
+            .substringBefore('?')
+            .substringBefore('#')
+            .trimEnd('/')
+            .substringAfterLast('/')
+            .cleanTvText()
+            .replace("%20", " ")
+        return lastSegment.takeIf { candidate ->
+            candidate.isNotBlank() && candidate.length <= 48 && !candidate.contains(".")
+        }
+    }
+
+    private fun String.cleanTvText(): String {
+        return trim().replace(Regex("\\s+"), " ")
+    }
+    // End Twitch-style TV home cards
     protected fun applyBinding(holder: ViewHolderState<Boolean>, isFirstItem: Boolean) {
         when (val binding = holder.view) {
             is HomeResultGridBinding -> {
@@ -250,7 +487,16 @@ open class HomeChildItemAdapter(
                 updateLayoutParms(binding.backgroundCard, setWidth, setHeight)
 
                 if (isFirstItem) { // to fix tv
-                    binding.backgroundCard.nextFocusLeftId = R.id.navigation_home
+                    binding.backgroundCard.nextFocusLeftId = R.id.nav_rail_view
+                }
+            }
+
+            is HomeResultGridTvBinding -> {
+                configureTwitchTvCardSize(binding.root, binding.backgroundCard)
+
+                if (isFirstItem) {
+                    binding.root.nextFocusLeftId = R.id.nav_rail_view
+                    binding.backgroundCard.nextFocusLeftId = R.id.nav_rail_view
                 }
             }
         }
@@ -290,6 +536,8 @@ open class HomeChildItemAdapter(
                 TwitchHomeFocusedBackground.update(holder.itemView)
             }
         }
+        bindTwitchTvMetadata(holder.itemView, item)
+
         holder.itemView.tag = position
     }
 }
