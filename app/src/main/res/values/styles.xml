@@ -764,6 +764,8 @@
     <!-- https://github.com/material-components/material-components-android/blob/4e4e8f3388beb7e82a87cb67142aa34444a79740/lib/java/com/google/android/material/navigation/res/values/attrs.xml#L129 -->
     <!-- https://developer.android.com/design/ui/tv/guides/components/navigation-drawer -->
     <style name="CustomIndicator" parent="Widget.Material3Expressive.NavigationRailView.ActiveIndicator">
+    <!-- TvHomeFocusVisibilityPatch: remove the white active-indicator circle so TV focus outline is easier to see. -->
+    <item name="android:color">@android:color/transparent</item>
         <item name="expandedHeight">48dp</item>
         <item name="expandedWidth">180dp</item>
         <item name="android:height">48dp</item>
