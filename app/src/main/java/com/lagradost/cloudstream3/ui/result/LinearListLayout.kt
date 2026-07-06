@@ -240,7 +240,8 @@ open class LinearListLayout(context: Context?) :
                 // stay in this row. Android TV focus search can otherwise escape
                 // vertically to a row above/below when the user fast-scrolls.
                 if (isLayout(TV) && orientation == HORIZONTAL) {
-                    focused
+                    // TvHomeSidebarEdgePatch: honor an explicit row-edge target on TV.
+                    getNextDirection(focused, FocusDirection.End) ?: focused
                 } else {
                     getNextDirection(
                         focused,
@@ -249,7 +250,8 @@ open class LinearListLayout(context: Context?) :
                 }
             } else if (lookFor < 0) {
                 if (isLayout(TV) && orientation == HORIZONTAL) {
-                    focused
+                    // TvHomeSidebarEdgePatch: first item DPAD-left can leave to the sidebar.
+                    getNextDirection(focused, FocusDirection.Start) ?: focused
                 } else {
                     getNextDirection(
                         focused,
@@ -287,6 +289,13 @@ open class LinearListLayout(context: Context?) :
                     focusHorizontalPositionLater(lookFor, focused, direction)
                     return focused
                 }
+
+                // TvHomeSidebarEdgePatch: if focus search falls off a row edge, honor
+                // nextFocusLeft/nextFocusRight before falling back to row trapping.
+                return getNextDirection(
+                    focused,
+                    if (direction == View.FOCUS_LEFT) FocusDirection.Start else FocusDirection.End
+                ) ?: focused
             } catch (e: Exception) {
                 logError(e)
                 return focused
