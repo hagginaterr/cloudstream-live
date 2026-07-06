@@ -645,6 +645,74 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
     }
 
     @SuppressLint("SetTextI18n")
+    // Modern Android TV browse shelf: content stays in the lower viewport,
+    // while the full-screen RecyclerView still allows reliable D-pad row focus search.
+    private fun configureModernTvHomeRows(
+        homeMasterRecycler: RecyclerView,
+        root: View,
+    ) {
+        if (!isLayout(TV)) return
+
+        if (homeMasterRecycler.layoutManager !is TvHomeRowsLayoutManager) {
+            homeMasterRecycler.layoutManager = TvHomeRowsLayoutManager(requireContext())
+        }
+        homeMasterRecycler.clipToPadding = true
+        homeMasterRecycler.clipChildren = true
+        homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
+        homeMasterRecycler.itemAnimator = null
+
+        val applyShelfViewport = {
+            val rootHeight = root.height
+            if (rootHeight > 0) {
+                val density = resources.displayMetrics.density
+                val bottomInset = (24f * density).toInt()
+                val minimumShelfHeight = (240f * density).toInt().coerceAtMost(rootHeight / 2)
+                val desiredTopPadding = (rootHeight * 0.52f).toInt()
+                val maxTopPadding = (rootHeight - minimumShelfHeight - bottomInset).coerceAtLeast(0)
+                val topPadding = desiredTopPadding.coerceAtMost(maxTopPadding).coerceAtLeast(0)
+
+                if (homeMasterRecycler.paddingTop != topPadding ||
+                    homeMasterRecycler.paddingBottom != bottomInset
+                ) {
+                    homeMasterRecycler.setPadding(
+                        homeMasterRecycler.paddingLeft,
+                        topPadding,
+                        homeMasterRecycler.paddingRight,
+                        bottomInset,
+                    )
+                    homeMasterRecycler.requestLayout()
+                }
+
+                val shelfHeight = homeMasterRecycler.height - topPadding - bottomInset
+                if (shelfHeight > 0) {
+                    for (index in 0 until homeMasterRecycler.childCount) {
+                        val child = homeMasterRecycler.getChildAt(index)
+                        val params = child.layoutParams
+                        if (params.height != shelfHeight) {
+                            params.height = shelfHeight
+                            child.layoutParams = params
+                        }
+                        child.minimumHeight = shelfHeight
+                    }
+                }
+            }
+        }
+
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            applyShelfViewport()
+        }
+        homeMasterRecycler.addOnChildAttachStateChangeListener(
+            object : RecyclerView.OnChildAttachStateChangeListener {
+                override fun onChildViewAttachedToWindow(view: View) {
+                    applyShelfViewport()
+                }
+
+                override fun onChildViewDetachedFromWindow(view: View) = Unit
+            }
+        )
+        homeMasterRecycler.post { applyShelfViewport() }
+    }
+
     override fun onBindingCreated(binding: FragmentHomeBinding) {
         context?.let { HomeChildItemAdapter.updatePosterSize(it) }
         (activity as? ComponentActivity)?.attachBackPressedCallback("HomeFragment_BackPress") {
@@ -674,53 +742,10 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             )
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
+            configureModernTvHomeRows(homeMasterRecycler, root)
             // Keep TV home rows locked inside the bottom half of the screen.
             // Parent row items are measured to this viewport so the next row cannot peek through.
-            if (isLayout(TV)) {
-                val rootView = root
-                val lockHomeRowsToBottomHalf = {
-                    val rootHeight = rootView.height
-                    if (rootHeight > 0) {
-                        val targetHeight = (rootHeight * 0.50f).toInt()
-                        val params = homeMasterRecycler.layoutParams
-                        var changed = params.height != targetHeight
-                        params.height = targetHeight
-                        if (params is android.widget.FrameLayout.LayoutParams &&
-                            params.gravity != android.view.Gravity.BOTTOM
-                        ) {
-                            params.gravity = android.view.Gravity.BOTTOM
-                            changed = true
-                        }
-                        if (changed) {
-                            homeMasterRecycler.layoutParams = params
-                            homeMasterRecycler.requestLayout()
-                        }
-                        for (index in 0 until homeMasterRecycler.childCount) {
-                            val child = homeMasterRecycler.getChildAt(index)
-                            val childParams = child.layoutParams
-                            if (childParams.height != targetHeight) {
-                                childParams.height = targetHeight
-                                child.layoutParams = childParams
-                            }
-                            child.minimumHeight = targetHeight
-                        }
-                    }
-                }
-
-                homeMasterRecycler.clipToPadding = true
-                homeMasterRecycler.clipChildren = true
-                homeMasterRecycler.overScrollMode = android.view.View.OVER_SCROLL_NEVER
-                rootView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                    lockHomeRowsToBottomHalf()
-                }
-                homeMasterRecycler.post { lockHomeRowsToBottomHalf() }
-
-                if (homeMasterRecycler.onFlingListener == null) {
-                    androidx.recyclerview.widget.LinearSnapHelper().attachToRecyclerView(homeMasterRecycler)
-                }
-            }
-
-                // TwitchBottomSingleRowPatch: fixed bottom viewport and no vertical bounce.
+// TwitchBottomSingleRowPatch: fixed bottom viewport and no vertical bounce.
                 if (isLayout(TV or EMULATOR) &&
                     homeMasterRecycler.layoutManager !is TwitchBottomHomeRowsLayoutManager
                 ) {

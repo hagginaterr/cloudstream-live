@@ -77,27 +77,35 @@ open class ParentItemAdapter(
 
     // Match each TV parent row to the visible bottom-half RecyclerView viewport.
     // This makes vertical row navigation behave like one row per screen.
-    private fun lockTvParentItemToRecyclerViewport(binding: HomepageParentBinding) {
-        if (!isLayout(TV)) return
-        binding.root.post {
-            val recyclerHeight = (binding.root.parent as? RecyclerView)?.height ?: 0
-            if (recyclerHeight <= 0) return@post
-            val params = binding.root.layoutParams
-            if (params.height != recyclerHeight) {
-                params.height = recyclerHeight
-                binding.root.layoutParams = params
-            }
-            binding.root.minimumHeight = recyclerHeight
+// Row height follows the visible lower shelf viewport from the master RecyclerView.
+// This keeps one row on-screen without hiding the next row from D-pad focus search.
+private fun configureModernTvParentRow(binding: HomepageParentBinding) {
+    if (!isLayout(TV)) return
+
+    binding.root.post {
+        val parentRecycler = binding.root.parent as? RecyclerView ?: return@post
+        val rowHeight = parentRecycler.height -
+                parentRecycler.paddingTop -
+                parentRecycler.paddingBottom
+        if (rowHeight <= 0) return@post
+
+        val params = binding.root.layoutParams
+        if (params.height != rowHeight) {
+            params.height = rowHeight
+            binding.root.layoutParams = params
         }
+        binding.root.minimumHeight = rowHeight
     }
-    override fun onUpdateContent(
+}
+
+override fun onUpdateContent(
         holder: ViewHolderState<Bundle>,
         item: HomeViewModel.ExpandableHomepageList,
         position: Int,
     ) {
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
-        lockTvParentItemToRecyclerViewport(binding)
+        configureModernTvParentRow(binding)
 
         configureNormalTvRow(binding)
         (binding.homeChildRecyclerview.adapter as? HomeChildItemAdapter)?.submitList(item.list.list)
@@ -141,7 +149,7 @@ open class ParentItemAdapter(
         val endFocus = FOCUS_SELF
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
-        lockTvParentItemToRecyclerViewport(binding)
+        configureModernTvParentRow(binding)
 
         configureNormalTvRow(binding)
 
