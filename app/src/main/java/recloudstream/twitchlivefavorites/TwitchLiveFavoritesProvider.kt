@@ -1,4 +1,5 @@
 package recloudstream.twitchlivefavorites
+import com.fasterxml.jackson.annotation.JsonProperty
 
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
@@ -144,6 +145,7 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
 
     private data class ChannelSummary(
         val channel: String,
+        @JsonProperty("display_name")
         val displayName: String,
         val image: String? = null,
         val language: String? = null,
@@ -153,6 +155,7 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
 
     private data class FavoriteChannel(
         val channel: String,
+        @JsonProperty("display_name")
         val displayName: String,
         val image: String?,
         val poster: String?,
@@ -160,8 +163,10 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
         val language: String?,
         val rank: Int?,
         val description: String?,
+        @JsonProperty("game_name")
         val gameName: String? = null,
         val viewerCount: Int? = null,
+        @JsonProperty("user_id")
         val userId: String? = null,
     )
 
@@ -304,6 +309,7 @@ private data class TwitchSearchResponse(
     )
 
     private data class TwitchGqlGame(
+        @JsonProperty("display_name")
         val displayName: String? = null,
         val name: String? = null,
     )
@@ -1917,7 +1923,7 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
     private fun ChannelSummary.toChannelCard(): LiveSearchResponse {
         val resultUrl = appendTwitchStreamerMeta(channel, displayName, channel, image)
         return newLiveSearchResponse(displayName, resultUrl, TvType.Live, fix = false) {
-            posterUrl = image
+            posterUrl = .ifBlank { null }
             lang = language
         }
     }
@@ -2067,8 +2073,8 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
                 "Past broadcast",
                 cleanTwitchText(video?.description),
             ).joinToString("\n\n").ifBlank { null }
-            posterUrl = poster
-            backgroundPosterUrl = poster
+            posterUrl = .ifBlank { null }
+            backgroundPosterUrl = .ifBlank { null }
             this@newLiveStreamLoadResponse.tags = tagList
             recommendations = profileRecommendations
         }

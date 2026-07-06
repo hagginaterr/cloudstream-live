@@ -1,4 +1,5 @@
 package recloudstream.twitchlivefavorites
+import com.fasterxml.jackson.annotation.JsonProperty
 
 import com.lagradost.cloudstream3.MainActivity
 import com.lagradost.cloudstream3.TvType
@@ -40,6 +41,7 @@ object TwitchAccountAuth {
 
     data class ImportResult(
         val importedCount: Int,
+        @JsonProperty("display_name")
         val displayName: String?,
         val removedCount: Int = 0,
         val followedCount: Int = importedCount,

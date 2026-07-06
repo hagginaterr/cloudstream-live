@@ -1,4 +1,5 @@
 package recloudstream.twitchlivefavorites
+import com.fasterxml.jackson.annotation.JsonProperty
 
 import android.content.Context
 import com.lagradost.cloudstream3.CloudStreamApp
@@ -16,10 +17,13 @@ object TwitchAccountRestoreStore {
     private const val USER_DISPLAY_KEY = "twitch_user_display_name"
 
     data class RestoredAccount(
+        @JsonProperty("access_token")
         val accessToken: String,
         val refreshToken: String?,
         val expiresAt: Long,
+        @JsonProperty("user_id")
         val userId: String?,
+        @JsonProperty("user_login")
         val userLogin: String?,
         val userDisplayName: String?,
     )
