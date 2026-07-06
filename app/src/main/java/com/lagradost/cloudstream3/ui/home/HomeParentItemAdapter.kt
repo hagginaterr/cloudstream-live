@@ -75,6 +75,21 @@ open class ParentItemAdapter(
         super.submitList(list?.sortedBy { it.list.list.isEmpty() }, commitCallback)
     }
 
+    // Match each TV parent row to the visible bottom-half RecyclerView viewport.
+    // This makes vertical row navigation behave like one row per screen.
+    private fun lockTvParentItemToRecyclerViewport(binding: HomepageParentBinding) {
+        if (!isLayout(TV)) return
+        binding.root.post {
+            val recyclerHeight = (binding.root.parent as? RecyclerView)?.height ?: 0
+            if (recyclerHeight <= 0) return@post
+            val params = binding.root.layoutParams
+            if (params.height != recyclerHeight) {
+                params.height = recyclerHeight
+                binding.root.layoutParams = params
+            }
+            binding.root.minimumHeight = recyclerHeight
+        }
+    }
     override fun onUpdateContent(
         holder: ViewHolderState<Bundle>,
         item: HomeViewModel.ExpandableHomepageList,
@@ -82,6 +97,7 @@ open class ParentItemAdapter(
     ) {
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
+        lockTvParentItemToRecyclerViewport(binding)
 
         configureNormalTvRow(binding)
         (binding.homeChildRecyclerview.adapter as? HomeChildItemAdapter)?.submitList(item.list.list)
@@ -125,6 +141,7 @@ open class ParentItemAdapter(
         val endFocus = FOCUS_SELF
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
+        lockTvParentItemToRecyclerViewport(binding)
 
         configureNormalTvRow(binding)
 

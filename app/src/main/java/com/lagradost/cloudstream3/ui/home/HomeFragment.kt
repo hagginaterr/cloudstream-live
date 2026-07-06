@@ -674,6 +674,52 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             )
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
+            // Keep TV home rows locked inside the bottom half of the screen.
+            // Parent row items are measured to this viewport so the next row cannot peek through.
+            if (isLayout(TV)) {
+                val rootView = root
+                val lockHomeRowsToBottomHalf = {
+                    val rootHeight = rootView.height
+                    if (rootHeight > 0) {
+                        val targetHeight = (rootHeight * 0.50f).toInt()
+                        val params = homeMasterRecycler.layoutParams
+                        var changed = params.height != targetHeight
+                        params.height = targetHeight
+                        if (params is android.widget.FrameLayout.LayoutParams &&
+                            params.gravity != android.view.Gravity.BOTTOM
+                        ) {
+                            params.gravity = android.view.Gravity.BOTTOM
+                            changed = true
+                        }
+                        if (changed) {
+                            homeMasterRecycler.layoutParams = params
+                            homeMasterRecycler.requestLayout()
+                        }
+                        for (index in 0 until homeMasterRecycler.childCount) {
+                            val child = homeMasterRecycler.getChildAt(index)
+                            val childParams = child.layoutParams
+                            if (childParams.height != targetHeight) {
+                                childParams.height = targetHeight
+                                child.layoutParams = childParams
+                            }
+                            child.minimumHeight = targetHeight
+                        }
+                    }
+                }
+
+                homeMasterRecycler.clipToPadding = true
+                homeMasterRecycler.clipChildren = true
+                homeMasterRecycler.overScrollMode = android.view.View.OVER_SCROLL_NEVER
+                rootView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    lockHomeRowsToBottomHalf()
+                }
+                homeMasterRecycler.post { lockHomeRowsToBottomHalf() }
+
+                if (homeMasterRecycler.onFlingListener == null) {
+                    androidx.recyclerview.widget.LinearSnapHelper().attachToRecyclerView(homeMasterRecycler)
+                }
+            }
+
                 // TwitchBottomSingleRowPatch: fixed bottom viewport and no vertical bounce.
                 if (isLayout(TV or EMULATOR) &&
                     homeMasterRecycler.layoutManager !is TwitchBottomHomeRowsLayoutManager
