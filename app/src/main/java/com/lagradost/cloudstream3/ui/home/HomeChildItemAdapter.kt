@@ -39,6 +39,7 @@ import android.widget.TextView
 import com.lagradost.cloudstream3.databinding.HomeResultGridTvBinding
 import java.util.Locale
 import com.lagradost.cloudstream3.utils.TvPerformanceProfileManager
+import recloudstream.twitchlivefavorites.TwitchHomeRefreshFocus
 
 object TwitchHomeFocusedBackground {
     private fun findPosterImage(view: View): ImageView? {
@@ -684,7 +685,13 @@ minPosterSize = (114.toPx.toFloat() * mul).toInt()
             clickCallback = { click ->
                 // ok, so here we hijack the callback to fix the focus
                 when (click.action) {
-                    SEARCH_ACTION_LOAD -> (holder as? HomeScrollViewHolderState)?.wasFocused = true
+                    SEARCH_ACTION_LOAD -> {
+                    (holder as? HomeScrollViewHolderState)?.wasFocused = true
+
+                    if (isLayout(TV or EMULATOR)) {
+                        TwitchHomeRefreshFocus.suppressFocusReapplyBriefly()
+                    }
+                }
                 }
                 clickCallback(click)
             },

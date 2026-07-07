@@ -139,8 +139,16 @@ override fun onUpdateContent(
 
             if (TwitchHomeRefreshFocus.consumeForRow(info.name)) {
                 homeChildRecyclerview.post {
+                    if (!homeChildRecyclerview.isAttachedToWindow) return@post
+                    if (homeChildRecyclerview.hasFocus()) return@post
+                    if (TwitchHomeRefreshFocus.isFocusReapplySuppressed()) return@post
+
                     homeChildRecyclerview.scrollToPosition(0)
                     homeChildRecyclerview.post {
+                        if (!homeChildRecyclerview.isAttachedToWindow) return@post
+                        if (homeChildRecyclerview.hasFocus()) return@post
+                        if (TwitchHomeRefreshFocus.isFocusReapplySuppressed()) return@post
+
                         homeChildRecyclerview.findViewHolderForAdapterPosition(0)
                             ?.itemView
                             ?.requestFocus()
