@@ -5,7 +5,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.DialogInterface
 import android.content.Intent
-import android.graphics.Rect
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -26,7 +25,6 @@ import androidx.fragment.app.activityViewModels
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.PagerSnapHelper
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.chip.Chip
@@ -83,40 +81,6 @@ import com.lagradost.cloudstream3.utils.UIHelper.popupMenuNoIconsAndNoStringRes
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
 
 private const val TAG = "HomeFragment"
-
-private class TwitchBottomHomeRowsLayoutManager(context: Context) :
-    LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false) {
-    override fun requestChildRectangleOnScreen(
-        parent: RecyclerView,
-        child: View,
-        rect: Rect,
-        immediate: Boolean,
-        focusedChildVisible: Boolean,
-    ): Boolean {
-        // TwitchBottomSingleRowPatch: horizontal card focus changes should not make
-        // the vertical home-row pager bounce. If the row itself is fully visible,
-        // leave it locked in place; up/down row changes still scroll normally.
-        if (orientation == LinearLayoutManager.VERTICAL) {
-            val rowTop = getDecoratedTop(child)
-            val rowBottom = getDecoratedBottom(child)
-            val viewportTop = paddingTop
-            val viewportBottom = height - paddingBottom
-
-            if (rowTop >= viewportTop && rowBottom <= viewportBottom) {
-                return false
-            }
-        }
-
-        return super.requestChildRectangleOnScreen(
-            parent,
-            child,
-            rect,
-            immediate,
-            focusedChildVisible,
-        )
-    }
-}
-
 
 class HomeFragment : BaseFragment<FragmentHomeBinding>(
     BindingCreator.Bind(FragmentHomeBinding::bind)
@@ -643,31 +607,31 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
         // Fix grid
         configEvent.invoke()
     }
-
-    @SuppressLint("SetTextI18n")
-    // Modern Android TV browse shelf: content stays in the lower viewport,
-    // while the full-screen RecyclerView still allows reliable D-pad row focus search.
-    private fun configureModernTvHomeRows(
+    private fun configureTwitchTvHomeRows(
         homeMasterRecycler: RecyclerView,
         root: View,
     ) {
-        if (!isLayout(TV)) return
+        if (!isLayout(TV or EMULATOR)) return
 
-        if (homeMasterRecycler.layoutManager !is TvHomeRowsLayoutManager) {
-            homeMasterRecycler.layoutManager = TvHomeRowsLayoutManager(requireContext())
-        }
+        homeMasterRecycler.onFlingListener = null
+        homeMasterRecycler.layoutManager = LinearLayoutManager(
+            root.context,
+            LinearLayoutManager.VERTICAL,
+            false,
+        )
+        homeMasterRecycler.itemAnimator = null
         homeMasterRecycler.clipToPadding = true
         homeMasterRecycler.clipChildren = true
         homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
-        homeMasterRecycler.itemAnimator = null
+        homeMasterRecycler.isNestedScrollingEnabled = false
+        homeMasterRecycler.setHasFixedSize(false)
 
         val applyShelfViewport = {
             val rootHeight = root.height
             if (rootHeight > 0) {
-                val density = resources.displayMetrics.density
-                val bottomInset = (24f * density).toInt()
-                val minimumShelfHeight = (240f * density).toInt().coerceAtMost(rootHeight / 2)
+                val bottomInset = 28.toPx
                 val desiredTopPadding = (rootHeight * 0.52f).toInt()
+                val minimumShelfHeight = 260.toPx.coerceAtMost(rootHeight / 2)
                 val maxTopPadding = (rootHeight - minimumShelfHeight - bottomInset).coerceAtLeast(0)
                 val topPadding = desiredTopPadding.coerceAtMost(maxTopPadding).coerceAtLeast(0)
 
@@ -680,7 +644,6 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                         homeMasterRecycler.paddingRight,
                         bottomInset,
                     )
-                    homeMasterRecycler.requestLayout()
                 }
 
                 val shelfHeight = homeMasterRecycler.height - topPadding - bottomInset
@@ -708,11 +671,11 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                 }
 
                 override fun onChildViewDetachedFromWindow(view: View) = Unit
-            }
+            },
         )
         homeMasterRecycler.post { applyShelfViewport() }
     }
-
+    @SuppressLint("SetTextI18n")
     override fun onBindingCreated(binding: FragmentHomeBinding) {
         context?.let { HomeChildItemAdapter.updatePosterSize(it) }
         (activity as? ComponentActivity)?.attachBackPressedCallback("HomeFragment_BackPress") {
@@ -742,39 +705,9 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             )
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
-            configureModernTvHomeRows(homeMasterRecycler, root)
-            // Keep TV home rows locked inside the bottom half of the screen.
-            // Parent row items are measured to this viewport so the next row cannot peek through.
-// TwitchBottomSingleRowPatch: fixed bottom viewport and no vertical bounce.
-                if (isLayout(TV or EMULATOR) &&
-                    homeMasterRecycler.layoutManager !is TwitchBottomHomeRowsLayoutManager
-                ) {
-                    homeMasterRecycler.layoutManager = TwitchBottomHomeRowsLayoutManager(binding.root.context)
-                }
-                homeMasterRecycler.itemAnimator = null
-                homeMasterRecycler.clipToPadding = false
-                homeMasterRecycler.clipChildren = false
-                homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
-                homeMasterRecycler.setHasFixedSize(true)
-                homeMasterRecycler.isNestedScrollingEnabled = false
-                if (isLayout(TV or EMULATOR) && homeMasterRecycler.onFlingListener == null) {
-                    PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
-                }
-                // TwitchNormalRowsPatch: stable normal rows; no snap helper and no runtime row-page resizing.
-                homeMasterRecycler.itemAnimator = null
-                homeMasterRecycler.clipToPadding = false
-                homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
-// TwitchBottomLockedHomeRowsPatch: decorated pages; rows stay wrap_content for recycle stability.
-                homeMasterRecycler.itemAnimator = null
-                homeMasterRecycler.clipToPadding = false
-                homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
-                // TwitchBottomRowCarouselPatch: one visible row viewport, snap up/down by row.
-                homeMasterRecycler.setHasFixedSize(true)
-                homeMasterRecycler.isNestedScrollingEnabled = false
-                if (isLayout(TV or EMULATOR) && homeMasterRecycler.onFlingListener == null) {
-                    PagerSnapHelper().attachToRecyclerView(homeMasterRecycler)
-                }
-homeApiFab.isVisible = isLayout(PHONE)
+            configureTwitchTvHomeRows(homeMasterRecycler, root)
+
+            homeApiFab.isVisible = isLayout(PHONE)
 
             homePreviewReloadProvider.setOnClickListener {
                 homeViewModel.loadAndCancel(

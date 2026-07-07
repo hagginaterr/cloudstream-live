@@ -1,5 +1,6 @@
 package com.lagradost.cloudstream3.ui.home
 
+import java.net.URLDecoder
 import androidx.recyclerview.widget.RecyclerView
 import android.content.Context
 import android.view.LayoutInflater
@@ -316,13 +317,25 @@ open class HomeChildItemAdapter(
         visibility = if (cleanValue.isBlank()) View.GONE else View.VISIBLE
     }
 
-    private fun SearchResponse.toTwitchTvMetadata(): TwitchTvMetadata {
+        private fun SearchResponse.toTwitchTvMetadata(): TwitchTvMetadata {
         val nameParts = name
             .split('\n')
             .map { it.cleanTvText() }
             .filter { it.isNotBlank() }
 
-        val title = firstTextField(
+        val langText = firstTextField("lang", "subtitle", "subTitle")
+        val langParts = langText
+            ?.split(" - ")
+            ?.map { it.cleanTvText() }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+
+        val urlTitle = urlQueryParam("cs_stream_title", "cs_title", "cs_clip_title")
+        val urlStreamer = urlQueryParam("cs_streamer_name", "cs_broadcaster_name")
+        val urlCategory = urlQueryParam("cs_category", "cs_game_name", "cs_game")
+        val urlViewers = urlQueryParam("cs_viewers", "cs_viewer_count", "cs_view_count")
+
+        val title = urlTitle ?: firstTextField(
             "streamTitle",
             "stream_title",
             "title",
@@ -331,11 +344,11 @@ open class HomeChildItemAdapter(
             "status",
             "description",
         ) ?: when {
-            nameParts.size >= 2 -> nameParts[0]
+            nameParts.isNotEmpty() -> nameParts[0]
             else -> name.cleanTvText()
         }
 
-        val streamer = firstTextField(
+        val streamer = urlStreamer ?: firstTextField(
             "streamerName",
             "streamer_name",
             "channelName",
@@ -349,12 +362,16 @@ open class HomeChildItemAdapter(
             "display_name",
             "login",
         ) ?: when {
-            nameParts.size >= 3 -> nameParts[1]
-            nameParts.size == 2 -> nameParts[1]
+            nameParts.size >= 2 -> nameParts[1]
             else -> streamerNameFromUrl(url)
         }
 
-        val category = firstTextField(
+        val categoryFromLang = langParts.firstOrNull { part ->
+            !part.contains("view", ignoreCase = true) &&
+                !part.equals(streamer, ignoreCase = true) &&
+                !part.equals(title, ignoreCase = true)
+        }
+        val category = urlCategory ?: firstTextField(
             "categoryName",
             "category_name",
             "gameName",
@@ -363,12 +380,13 @@ open class HomeChildItemAdapter(
             "game",
             "directory",
             "section",
-        ) ?: when {
+        ) ?: categoryFromLang ?: when {
             nameParts.size >= 3 -> nameParts[2]
             else -> null
         }
 
-        val viewers = firstField(
+        val viewersFromLang = langParts.firstOrNull { it.contains("view", ignoreCase = true) }
+        val viewers = urlViewers ?: firstField(
             "viewerCount",
             "viewer_count",
             "viewCount",
@@ -381,7 +399,7 @@ open class HomeChildItemAdapter(
             "liveViewers",
             "live_viewers",
             "watching",
-        ).asViewerText()
+        ).asViewerText() ?: viewersFromLang
 
         return TwitchTvMetadata(
             title = title.cleanTvText(),
@@ -390,6 +408,30 @@ open class HomeChildItemAdapter(
             viewers = viewers?.cleanTvText(),
         )
     }
+
+    private fun SearchResponse.urlQueryParam(vararg names: String): String? {
+        val query = url.substringAfter("?", "")
+        if (query.isBlank() || query == url) return null
+
+        val wanted = names.toSet()
+        return query
+            .split("&")
+            .asSequence()
+            .mapNotNull { part ->
+                val key = part.substringBefore("=", "")
+                if (key !in wanted) return@mapNotNull null
+                part.substringAfter("=", "")
+                    .decodeTwitchTvQueryParam()
+                    .cleanTvText()
+                    .takeIf { it.isNotBlank() }
+            }
+            .firstOrNull()
+    }
+
+    private fun String.decodeTwitchTvQueryParam(): String {
+        return runCatching { URLDecoder.decode(this, "UTF-8") }.getOrDefault(this)
+    }
+
 
     private fun SearchResponse.firstTextField(vararg names: String): String? {
         return firstField(*names).asCleanText()

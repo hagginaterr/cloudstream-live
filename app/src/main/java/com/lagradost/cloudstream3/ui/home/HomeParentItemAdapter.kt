@@ -1,5 +1,7 @@
 package com.lagradost.cloudstream3.ui.home
 
+import androidx.recyclerview.widget.LinearLayoutManager
+import android.view.KeyEvent
 import android.os.Build
 import android.os.Bundle
 import android.os.Parcelable
@@ -75,29 +77,6 @@ open class ParentItemAdapter(
         super.submitList(list?.sortedBy { it.list.list.isEmpty() }, commitCallback)
     }
 
-    // Match each TV parent row to the visible bottom-half RecyclerView viewport.
-    // This makes vertical row navigation behave like one row per screen.
-// Row height follows the visible lower shelf viewport from the master RecyclerView.
-// This keeps one row on-screen without hiding the next row from D-pad focus search.
-private fun configureModernTvParentRow(binding: HomepageParentBinding) {
-    if (!isLayout(TV)) return
-
-    binding.root.post {
-        val parentRecycler = binding.root.parent as? RecyclerView ?: return@post
-        val rowHeight = parentRecycler.height -
-                parentRecycler.paddingTop -
-                parentRecycler.paddingBottom
-        if (rowHeight <= 0) return@post
-
-        val params = binding.root.layoutParams
-        if (params.height != rowHeight) {
-            params.height = rowHeight
-            binding.root.layoutParams = params
-        }
-        binding.root.minimumHeight = rowHeight
-    }
-}
-
 override fun onUpdateContent(
         holder: ViewHolderState<Bundle>,
         item: HomeViewModel.ExpandableHomepageList,
@@ -105,28 +84,17 @@ override fun onUpdateContent(
     ) {
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
-        configureModernTvParentRow(binding)
-
-        configureNormalTvRow(binding)
+        configureTwitchTvRow(binding)
         (binding.homeChildRecyclerview.adapter as? HomeChildItemAdapter)?.submitList(item.list.list)
     }
 
-    private fun configureNormalTvRow(binding: HomepageParentBinding) {
+        private fun configureTwitchTvRow(binding: HomepageParentBinding) {
         if (!isLayout(TV or EMULATOR)) return
 
         binding.root.translationY = 0f
-        binding.root.minimumHeight = 0
         binding.root.layoutParams?.let { params ->
-            var changed = false
             if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
                 params.width = ViewGroup.LayoutParams.MATCH_PARENT
-                changed = true
-            }
-            if (params.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
-                params.height = ViewGroup.LayoutParams.WRAP_CONTENT
-                changed = true
-            }
-            if (changed) {
                 binding.root.layoutParams = params
             }
         }
@@ -137,6 +105,66 @@ override fun onUpdateContent(
             overScrollMode = View.OVER_SCROLL_NEVER
             clipToPadding = false
             setHasFixedSize(true)
+            setOnKeyListener { _, keyCode, event ->
+                if (!isLayout(TV) || event.action != KeyEvent.ACTION_DOWN) {
+                    false
+                } else {
+                    when (keyCode) {
+                        KeyEvent.KEYCODE_DPAD_DOWN -> moveTvHomeFocusToSiblingRow(binding, 1)
+                        KeyEvent.KEYCODE_DPAD_UP -> moveTvHomeFocusToSiblingRow(binding, -1)
+                        else -> false
+                    }
+                }
+            }
+        }
+    }
+
+    private fun moveTvHomeFocusToSiblingRow(
+        binding: HomepageParentBinding,
+        direction: Int,
+    ): Boolean {
+        val parentRecycler = binding.root.parent as? RecyclerView ?: return false
+        val adapterCount = parentRecycler.adapter?.itemCount ?: return false
+        val currentPosition = parentRecycler.getChildAdapterPosition(binding.root)
+        if (currentPosition == RecyclerView.NO_POSITION) return false
+
+        val targetPosition = (currentPosition + direction).coerceIn(0, adapterCount - 1)
+        if (targetPosition == currentPosition) return false
+
+        parentRecycler.stopScroll()
+        (parentRecycler.layoutManager as? LinearLayoutManager)
+            ?.scrollToPositionWithOffset(targetPosition, parentRecycler.paddingTop)
+            ?: parentRecycler.scrollToPosition(targetPosition)
+
+        parentRecycler.post {
+            requestFocusOnTvRow(parentRecycler, targetPosition, attempt = 0)
+        }
+        return true
+    }
+
+    private fun requestFocusOnTvRow(
+        parentRecycler: RecyclerView,
+        targetPosition: Int,
+        attempt: Int,
+    ) {
+        val targetRoot = parentRecycler
+            .findViewHolderForAdapterPosition(targetPosition)
+            ?.itemView
+        val childRecycler = targetRoot?.findViewById<RecyclerView>(R.id.home_child_recyclerview)
+        val currentColumn = (parentRecycler.rootView.findFocus()?.tag as? Int)?.coerceAtLeast(0) ?: 0
+        val targetItem = childRecycler
+            ?.findViewHolderForAdapterPosition(currentColumn)
+            ?.itemView
+            ?: childRecycler
+                ?.findViewHolderForAdapterPosition(0)
+                ?.itemView
+
+        if (targetItem?.requestFocus() == true) return
+
+        if (attempt < 4) {
+            parentRecycler.postDelayed({
+                requestFocusOnTvRow(parentRecycler, targetPosition, attempt + 1)
+            }, 70L)
         }
     }
 
@@ -149,9 +177,7 @@ override fun onUpdateContent(
         val endFocus = FOCUS_SELF
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
-        configureModernTvParentRow(binding)
-
-        configureNormalTvRow(binding)
+        configureTwitchTvRow(binding)
 
         val info = item.list
         binding.apply {

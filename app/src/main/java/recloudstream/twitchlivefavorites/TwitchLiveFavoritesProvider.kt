@@ -280,7 +280,23 @@ private var cachedRecentTopClips: List<SearchResponse> = emptyList()
         val thumbnail_url: String = "",
         val duration: Double = 0.0,
     )
-private data class TwitchSearchResponse(
+
+    private data class TwitchGamesResponse(
+        val data: List<TwitchGame> = emptyList(),
+    )
+
+    private data class TwitchGame(
+        val id: String = "",
+        val name: String = "",
+        val box_art_url: String = "",
+    )
+
+    private data class TwitchFollowedClipHomeItem(
+        val clip: TwitchClip,
+        val channelDisplayName: String,
+        val channelLogin: String,
+        val channelAvatar: String?,
+    )private data class TwitchSearchResponse(
         val data: List<TwitchSearchChannel> = emptyList(),
     )
 
@@ -853,8 +869,27 @@ private fun buildHelixUrl(
         }
         return users
     }
+    private suspend fun fetchGameNames(gameIds: List<String>): Map<String, String> {
+        val cleanIds = gameIds
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (cleanIds.isEmpty()) return emptyMap()
 
+        val names = mutableMapOf<String, String>()
+        cleanIds.chunked(100).forEach { chunk ->
+            val response = twitchGet<TwitchGamesResponse>(
+                buildHelixUrl("games", repeatedKey = "id", repeatedValues = chunk),
+            ) ?: return@forEach
 
+            response.data.forEach { game ->
+                if (game.id.isNotBlank() && game.name.isNotBlank()) {
+                    names[game.id] = game.name
+                }
+            }
+        }
+        return names
+    }
     private suspend fun fetchTwitchProfileAvatar(channel: String?): String? {
         val normalized = normalizeChannel(channel.orEmpty())
         if (normalized.isBlank()) return null
@@ -1003,7 +1038,7 @@ private suspend fun fetchFollowedClipsHome(
     val startedAt = twitchIsoUtc(now - recentTopClipsLookbackDays * 24L * 60L * 60L * 1000L)
     val endedAt = twitchIsoUtc(now)
     val perChannelLimit = perChannel.coerceIn(1, 100)
-    val items = mutableListOf<Triple<Int, String, SearchResponse>>()
+    val candidates = mutableListOf<TwitchFollowedClipHomeItem>()
 
     cleanFollowed.forEach { followedChannel ->
         val broadcasterId = followedChannel.broadcaster_id.ifBlank { return@forEach }
@@ -1027,19 +1062,31 @@ private suspend fun fetchFollowedClipsHome(
         response.data
             .asSequence()
             .filter { it.view_count >= recentTopClipsMinViews }
-            .mapNotNull { clip ->
-                val card = clip.toFollowedClipHomeCard(displayName, channelLogin, channelAvatar) ?: return@mapNotNull null
-                Triple(clip.view_count, clip.created_at, card as SearchResponse)
+            .map { clip ->
+                TwitchFollowedClipHomeItem(
+                    clip = clip,
+                    channelDisplayName = displayName,
+                    channelLogin = channelLogin,
+                    channelAvatar = channelAvatar,
+                )
             }
-            .forEach { items.add(it) }
+            .forEach { candidates.add(it) }
     }
 
-    val result = items
+    val gameNames = fetchGameNames(candidates.map { it.clip.game_id })
+    val result = candidates
         .sortedWith(
-            compareByDescending<Triple<Int, String, SearchResponse>> { it.first }
-                .thenByDescending { it.second }
+            compareByDescending<TwitchFollowedClipHomeItem> { it.clip.view_count }
+                .thenByDescending { it.clip.created_at }
         )
-        .map { it.third }
+        .mapNotNull { item ->
+            item.clip.toFollowedClipHomeCard(
+                item.channelDisplayName,
+                item.channelLogin,
+                item.channelAvatar,
+                gameNames[item.clip.game_id],
+            ) as? SearchResponse
+        }
         .distinctBy { it.url }
         .take(recentTopClipsMaxItems)
 
@@ -1049,8 +1096,12 @@ private suspend fun fetchFollowedClipsHome(
     return result
 }
 
-
-    private fun TwitchClip.toFollowedClipHomeCard(channelDisplayName: String, channelLogin: String, channelAvatar: String?): LiveSearchResponse? {
+    private fun TwitchClip.toFollowedClipHomeCard(
+        channelDisplayName: String,
+        channelLogin: String,
+        channelAvatar: String?,
+        gameName: String?,
+    ): LiveSearchResponse? {
         val watchUrl = url.ifBlank { return null }
         val displayTitle = cleanTwitchText(title) ?: channelDisplayName.ifBlank { "Twitch clip" }
         val age = formatTwitchVideoAge(created_at) ?: formatTwitchVideoDate(created_at)
@@ -1058,20 +1109,27 @@ private suspend fun fetchFollowedClipsHome(
         val durationText = if (duration > 0f) "${duration.toInt()}s" else null
         val clipVideoUrl = twitchClipDirectVideoUrl(thumbnail_url)
         val mediaCardUrl = appendTwitchProfileQueryParam(
-            twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, null, views, durationText),
+            twitchProfileMediaCardUrl(watchUrl, "clip", displayTitle, age, gameName, views, durationText),
             "cs_clip_video",
             clipVideoUrl,
         )
-        val metaCardUrl = appendTwitchStreamerMeta(mediaCardUrl, channelDisplayName, channelLogin, channelAvatar)
-        val cardUrl = appendDirectPlayMarker(metaCardUrl)
+        val streamerMetaUrl = appendTwitchStreamerMeta(mediaCardUrl, channelDisplayName, channelLogin, channelAvatar)
+        val metadataUrl = appendTwitchHomeCardMeta(
+            streamerMetaUrl,
+            title = displayTitle,
+            category = gameName,
+            viewers = views,
+        )
+        val cardUrl = appendDirectPlayMarker(metadataUrl)
 
         return newLiveSearchResponse(displayTitle, cardUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(thumbnail_url.ifBlank { null }, nowMs())
-            lang = listOfNotNull(channelDisplayName.ifBlank { null }, age, views)
+            lang = listOfNotNull(channelDisplayName.ifBlank { null }, gameName, age, views)
                 .joinToString(" - ")
                 .ifBlank { null }
         }
     }
+
     private suspend fun fetchLiveFollowedStreams(userId: String): List<FavoriteChannel>? {
         val cleanUserId = userId.trim()
         if (cleanUserId.isBlank()) return null
@@ -1770,19 +1828,31 @@ private fun formatViewerCount(count: Int?): String? {
             cleanTwitchText(description),
         ).joinToString("\n\n").ifBlank { null }
     }
-    private fun FavoriteChannel.toChannelCard(
+        private fun FavoriteChannel.toChannelCard(
         showOfflineLabel: Boolean,
         directPlay: Boolean = false,
     ): LiveSearchResponse {
-        val displayTitle = if (showOfflineLabel && !isLive) "$displayName (offline)" else displayName
+        val streamTitle = cleanTwitchText(description)
+        val displayTitle = when {
+            isLive && streamTitle != null -> streamTitle
+            showOfflineLabel && !isLive -> "$displayName (offline)"
+            else -> displayName
+        }
         val baseResultUrl = if (directPlay && isLive) directPlayUrl(channel) else channel
-        val resultUrl = appendTwitchStreamerMeta(baseResultUrl, displayName, channel, image)
+        val streamerMetaUrl = appendTwitchStreamerMeta(baseResultUrl, displayName, channel, image)
+        val resultUrl = appendTwitchHomeCardMeta(
+            streamerMetaUrl,
+            title = displayTitle,
+            category = gameName,
+            viewers = formatViewerCount(viewerCount),
+        )
 
         return newLiveSearchResponse(displayTitle, resultUrl, TvType.Live, fix = false) {
             posterUrl = cacheBustImage(poster ?: image)
             lang = subtitle() ?: language
         }
     }
+
 
 
     // BEGIN TWITCH_PROFILE_MEDIA_PROVIDER_ROWS
@@ -1813,6 +1883,22 @@ private fun formatViewerCount(count: Int?): String? {
     out = appendTwitchProfileQueryParam(out, "cs_api_name", name)
     return out
 }
+    
+    private fun appendTwitchHomeCardMeta(
+        url: String,
+        title: String?,
+        category: String?,
+        viewers: String?,
+    ): String {
+        var out = url
+        val cleanTitle = cleanTwitchText(title)
+        val cleanCategory = cleanTwitchText(category)
+        val cleanViewers = cleanTwitchText(viewers)
+        if (cleanTitle != null) out = appendTwitchProfileQueryParam(out, "cs_stream_title", cleanTitle)
+        if (cleanCategory != null) out = appendTwitchProfileQueryParam(out, "cs_category", cleanCategory)
+        if (cleanViewers != null) out = appendTwitchProfileQueryParam(out, "cs_viewers", cleanViewers)
+        return out
+    }
     // END TwitchStreamerMetadataUrlPatch
     private fun twitchProfileMediaParam(url: String, key: String): String? {
         val query = url.substringAfter("?", "")
