@@ -26,6 +26,7 @@ import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setPadd
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setToolBarScrollFlags
 import com.lagradost.cloudstream3.ui.settings.SettingsFragment.Companion.setUpToolbar
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showBottomDialog
+import com.lagradost.cloudstream3.utils.TvPerformanceProfileManager
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showDialog
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showMultiDialog
 import com.lagradost.cloudstream3.utils.UIHelper.hideKeyboard
@@ -43,6 +44,70 @@ class SettingsUI : BasePreferenceFragmentCompat() {
         hideKeyboard()
         setPreferencesFromResource(R.xml.settings_ui, rootKey)
         val settingsManager = PreferenceManager.getDefaultSharedPreferences(requireContext())
+        fun tvPerformanceProfileDisplayName(profile: TvPerformanceProfileManager.PerformanceProfile): String {
+            return when (profile) {
+                TvPerformanceProfileManager.PerformanceProfile.PERFORMANCE -> "Performance"
+                TvPerformanceProfileManager.PerformanceProfile.BALANCED -> "Balanced"
+                TvPerformanceProfileManager.PerformanceProfile.QUALITY -> "Quality"
+            }
+        }
+
+        fun updateTvPerformanceProfileSummary() {
+            val pref = getPref(R.string.tv_performance_profile_key) ?: return
+            val userProfile = TvPerformanceProfileManager.getUserSelectedProfile(requireContext())
+            val autoProfile = TvPerformanceProfileManager.getAutoDetectedProfile(requireContext())
+            val effectiveProfile = TvPerformanceProfileManager.getEffectiveProfile(requireContext())
+            val effectiveName = tvPerformanceProfileDisplayName(effectiveProfile)
+            val autoName = tvPerformanceProfileDisplayName(autoProfile)
+
+            pref.summary = when (userProfile) {
+                TvPerformanceProfileManager.UserSelectedProfile.AUTO ->
+                    "Auto recommended: $autoName"
+                TvPerformanceProfileManager.UserSelectedProfile.PERFORMANCE,
+                TvPerformanceProfileManager.UserSelectedProfile.BALANCED,
+                TvPerformanceProfileManager.UserSelectedProfile.QUALITY ->
+                    "Forced: $effectiveName  â€¢  Auto would choose: $autoName"
+            }
+        }
+
+        updateTvPerformanceProfileSummary()
+
+        getPref(R.string.tv_performance_profile_key)?.setOnPreferenceClickListener {
+            val context = requireContext()
+            val profiles = TvPerformanceProfileManager.UserSelectedProfile.values()
+            val autoName = tvPerformanceProfileDisplayName(
+                TvPerformanceProfileManager.getAutoDetectedProfile(context)
+            )
+            val names = listOf(
+                "Auto recommended ($autoName)",
+                "Performance",
+                "Balanced",
+                "Quality",
+            )
+            val selectedIndex = profiles
+                .indexOf(TvPerformanceProfileManager.getUserSelectedProfile(context))
+                .coerceAtLeast(0)
+
+            activity?.showBottomDialog(
+                names,
+                selectedIndex,
+                getString(R.string.tv_performance_profile_settings),
+                true,
+                {},
+            ) { selected ->
+                TvPerformanceProfileManager.setUserSelectedProfile(context, profiles[selected])
+                updateTvPerformanceProfileSummary()
+
+                // Recreate pooled card views the next time rows bind so the
+                // profile-specific pool/cache/prefetch/image settings can apply.
+                HomeChildItemAdapter.sharedPool.clear()
+                ParentItemAdapter.sharedPool.clear()
+                SearchAdapter.sharedPool.clear()
+            }
+
+            return@setOnPreferenceClickListener true
+        }
+
 
         (getPref(R.string.overscan_key)?.hideOn(PHONE or EMULATOR) as? SeekBarPreference)?.setOnPreferenceChangeListener { pref, newValue ->
             val padding = (newValue as? Int)?.toPx ?: return@setOnPreferenceChangeListener true
