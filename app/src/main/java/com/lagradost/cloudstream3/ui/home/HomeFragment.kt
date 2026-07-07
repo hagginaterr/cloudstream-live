@@ -614,11 +614,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
         if (!isLayout(TV or EMULATOR)) return
 
         homeMasterRecycler.onFlingListener = null
-        homeMasterRecycler.layoutManager = LinearLayoutManager(
-            root.context,
-            LinearLayoutManager.VERTICAL,
-            false,
-        )
+        homeMasterRecycler.layoutManager = TvHomeRowsLayoutManager(root.context)
         homeMasterRecycler.itemAnimator = null
         homeMasterRecycler.clipToPadding = true
         homeMasterRecycler.clipChildren = true
@@ -630,8 +626,8 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             val rootHeight = root.height
             if (rootHeight > 0) {
                 val bottomInset = 28.toPx
-                val desiredTopPadding = (rootHeight * 0.52f).toInt()
-                val minimumShelfHeight = 260.toPx.coerceAtMost(rootHeight / 2)
+                val desiredTopPadding = (rootHeight * 0.42f).toInt()
+                val minimumShelfHeight = 340.toPx.coerceAtMost(rootHeight / 2)
                 val maxTopPadding = (rootHeight - minimumShelfHeight - bottomInset).coerceAtLeast(0)
                 val topPadding = desiredTopPadding.coerceAtMost(maxTopPadding).coerceAtLeast(0)
 
@@ -654,6 +650,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                         if (params.height != shelfHeight) {
                             params.height = shelfHeight
                             child.layoutParams = params
+                            child.requestLayout()
                         }
                         child.minimumHeight = shelfHeight
                     }
@@ -673,7 +670,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                 override fun onChildViewDetachedFromWindow(view: View) = Unit
             },
         )
-        homeMasterRecycler.post { applyShelfViewport() }
+        homeMasterRecycler.post { applyShelfViewport(); (homeMasterRecycler.layoutManager as? TvHomeRowsLayoutManager)?.alignFocusedRowNow(homeMasterRecycler) }
     }
     @SuppressLint("SetTextI18n")
     override fun onBindingCreated(binding: FragmentHomeBinding) {

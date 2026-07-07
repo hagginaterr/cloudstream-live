@@ -8,26 +8,37 @@ import androidx.recyclerview.widget.RecyclerView
 import kotlin.math.abs
 
 /**
- * Keeps the focused TV home row aligned to the lower shelf viewport.
+ * TV home rows are paged by focus, not by fling snap helpers.
  *
- * The master RecyclerView stays full-screen so D-pad focus search can still find
- * the next row, while clipToPadding and a large top padding keep rows from being
- * drawn above the lower content shelf.
+ * The master RecyclerView stays full-screen so D-pad Up/Down can find the next
+ * row, but the visible content shelf is the padded lower portion of the view.
+ * Whenever a row or one of its cards gets focus, this manager pins that row's
+ * top to parent.paddingTop, which fully replaces the previous row.
  */
-class TvHomeRowsLayoutManager(context: Context) : LinearLayoutManager(context, RecyclerView.VERTICAL, false) {
-    private fun directChild(parent: RecyclerView, child: View): View {
-        return if (child.parent == parent) child else parent.findContainingItemView(child) ?: child
+class TvHomeRowsLayoutManager(
+    context: Context,
+) : LinearLayoutManager(context, RecyclerView.VERTICAL, false) {
+
+    private fun directRow(parent: RecyclerView, child: View): View {
+        return if (child.parent == parent) {
+            child
+        } else {
+            parent.findContainingItemView(child) ?: child
+        }
     }
 
-    private fun alignChildToShelf(
+    private fun rowTopOffset(parent: RecyclerView, row: View): Int {
+        return row.top - parent.paddingTop
+    }
+
+    private fun alignRowToShelf(
         parent: RecyclerView,
-        child: View,
+        row: View,
         immediate: Boolean,
     ): Boolean {
-        if (parent.height <= 0) return false
+        if (parent.height <= 0 || !row.isAttachedToWindow) return false
 
-        val targetTop = parent.paddingTop
-        val dy = child.top - targetTop
+        val dy = rowTopOffset(parent, row)
         if (abs(dy) <= 2) return false
 
         if (immediate) {
@@ -35,19 +46,33 @@ class TvHomeRowsLayoutManager(context: Context) : LinearLayoutManager(context, R
         } else {
             parent.post {
                 if (!parent.isAttachedToWindow) return@post
-                val currentChild = if (child.parent == parent) {
-                    child
+                val currentRow = if (row.parent == parent) {
+                    row
                 } else {
-                    parent.findContainingItemView(child)
+                    parent.findContainingItemView(row)
                 } ?: return@post
-
-                val currentDy = currentChild.top - parent.paddingTop
+                val currentDy = rowTopOffset(parent, currentRow)
                 if (abs(currentDy) > 2) {
-                    parent.smoothScrollBy(0, currentDy)
+                    parent.scrollBy(0, currentDy)
                 }
             }
         }
         return true
+    }
+
+    fun alignRowAtPosition(
+        parent: RecyclerView,
+        adapterPosition: Int,
+        immediate: Boolean = true,
+    ): Boolean {
+        val row = parent.findViewHolderForAdapterPosition(adapterPosition)?.itemView ?: return false
+        return alignRowToShelf(parent, row, immediate)
+    }
+
+    fun alignFocusedRowNow(parent: RecyclerView): Boolean {
+        val focused = parent.findFocus() ?: return false
+        val row = parent.findContainingItemView(focused) ?: return false
+        return alignRowToShelf(parent, row, immediate = true)
     }
 
     override fun requestChildRectangleOnScreen(
@@ -57,8 +82,8 @@ class TvHomeRowsLayoutManager(context: Context) : LinearLayoutManager(context, R
         immediate: Boolean,
         focusedChildVisible: Boolean,
     ): Boolean {
-        val row = directChild(parent, child)
-        return alignChildToShelf(parent, row, immediate) || super.requestChildRectangleOnScreen(
+        val row = directRow(parent, child)
+        return alignRowToShelf(parent, row, immediate) || super.requestChildRectangleOnScreen(
             parent,
             child,
             rect,
@@ -69,12 +94,26 @@ class TvHomeRowsLayoutManager(context: Context) : LinearLayoutManager(context, R
 
     override fun onRequestChildFocus(
         parent: RecyclerView,
+        child: View,
+        focused: View?,
+    ): Boolean {
+        val row = directRow(parent, child)
+        return alignRowToShelf(parent, row, immediate = false) || super.onRequestChildFocus(
+            parent,
+            child,
+            focused,
+        )
+    }
+
+    override fun onRequestChildFocus(
+        parent: RecyclerView,
         state: RecyclerView.State,
         child: View,
         focused: View?,
     ): Boolean {
-        if (!state.isPreLayout && alignChildToShelf(parent, child, immediate = false)) {
-            return true
+        if (!state.isPreLayout) {
+            val row = directRow(parent, child)
+            if (alignRowToShelf(parent, row, immediate = false)) return true
         }
         return super.onRequestChildFocus(parent, state, child, focused)
     }

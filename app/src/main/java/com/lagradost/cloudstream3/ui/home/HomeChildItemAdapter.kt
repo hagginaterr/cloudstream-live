@@ -1,5 +1,7 @@
 package com.lagradost.cloudstream3.ui.home
 
+import androidx.recyclerview.widget.LinearLayoutManager
+import android.view.KeyEvent
 import java.net.URLDecoder
 import androidx.recyclerview.widget.RecyclerView
 import android.content.Context
@@ -519,6 +521,64 @@ open class HomeChildItemAdapter(
         return trim().replace(Regex("\\s+"), " ")
     }
     // End Twitch-style TV home cards
+    // Explicit TV horizontal card focus navigation
+    private fun configureTwitchTvHorizontalFocus(itemView: View) {
+        if (!isLayout(TV)) return
+
+        itemView.setOnKeyListener { view, keyCode, event ->
+            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            val rowRecycler = view.parent as? RecyclerView ?: return@setOnKeyListener false
+            val currentPosition = rowRecycler.getChildAdapterPosition(view)
+            if (currentPosition == RecyclerView.NO_POSITION) return@setOnKeyListener false
+
+            val itemCount = rowRecycler.adapter?.itemCount ?: return@setOnKeyListener false
+            val targetPosition = when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> {
+                    if (currentPosition <= 0) return@setOnKeyListener false
+                    currentPosition - 1
+                }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (currentPosition >= itemCount - 1) return@setOnKeyListener false
+                    currentPosition + 1
+                }
+                else -> return@setOnKeyListener false
+            }
+
+            focusTwitchTvCard(rowRecycler, targetPosition, attempt = 0)
+            true
+        }
+    }
+
+    private fun focusTwitchTvCard(
+        rowRecycler: RecyclerView,
+        targetPosition: Int,
+        attempt: Int,
+    ) {
+        rowRecycler.stopScroll()
+
+        val visibleTarget = rowRecycler
+            .findViewHolderForAdapterPosition(targetPosition)
+            ?.itemView
+        if (visibleTarget?.requestFocus() == true) return
+
+        (rowRecycler.layoutManager as? LinearLayoutManager)
+            ?.scrollToPositionWithOffset(targetPosition, rowRecycler.paddingLeft)
+            ?: rowRecycler.scrollToPosition(targetPosition)
+
+        rowRecycler.post {
+            val target = rowRecycler
+                .findViewHolderForAdapterPosition(targetPosition)
+                ?.itemView
+            if (target?.requestFocus() == true) return@post
+
+            if (attempt < 4) {
+                rowRecycler.postDelayed({
+                    focusTwitchTvCard(rowRecycler, targetPosition, attempt + 1)
+                }, 45L)
+            }
+        }
+    }
+    // End explicit TV horizontal card focus navigation
     protected fun applyBinding(holder: ViewHolderState<Boolean>, isFirstItem: Boolean) {
         when (val binding = holder.view) {
             is HomeResultGridBinding -> {
@@ -579,6 +639,7 @@ open class HomeChildItemAdapter(
             }
         }
         bindTwitchTvMetadata(holder.itemView, item)
+            configureTwitchTvHorizontalFocus(holder.itemView)
 
         holder.itemView.tag = position
     }

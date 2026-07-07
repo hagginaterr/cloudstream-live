@@ -5,11 +5,12 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:baselineAligned="false"
+    android:clipChildren="false"
     android:clipToPadding="false"
     android:descendantFocusability="afterDescendants"
     android:gravity="bottom"
     android:orientation="vertical"
-    android:paddingBottom="8dp">
+    android:paddingBottom="18dp">
 
     <TextView
         android:id="@+id/home_child_more_info"
@@ -17,24 +18,27 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginStart="@dimen/navbar_width"
-        android:layout_marginEnd="0dp"
+        android:layout_marginEnd="48dp"
+        android:ellipsize="end"
+        android:maxLines="1"
         android:paddingStart="12dp"
         android:paddingTop="6dp"
         android:paddingEnd="12dp"
-        android:paddingBottom="12dp"
+        android:paddingBottom="10dp"
         tools:text="Live Now" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/home_child_recyclerview"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:clipChildren="false"
         android:clipToPadding="false"
         android:descendantFocusability="afterDescendants"
         android:nestedScrollingEnabled="false"
         android:orientation="horizontal"
         android:overScrollMode="never"
-        android:paddingStart="8dp"
-        android:paddingEnd="5dp"
+        android:paddingStart="@dimen/navbar_width"
+        android:paddingEnd="48dp"
         app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
         tools:listitem="@layout/home_result_grid_tv" />
 

@@ -91,7 +91,20 @@ override fun onUpdateContent(
         private fun configureTwitchTvRow(binding: HomepageParentBinding) {
         if (!isLayout(TV or EMULATOR)) return
 
-        binding.root.translationY = 0f
+        
+        binding.root.post {
+            val parentRecycler = binding.root.parent as? RecyclerView ?: return@post
+            val rowHeight = parentRecycler.height - parentRecycler.paddingTop - parentRecycler.paddingBottom
+            if (rowHeight > 0) {
+                val params = binding.root.layoutParams
+                if (params.height != rowHeight) {
+                    params.height = rowHeight
+                    binding.root.layoutParams = params
+                }
+                binding.root.minimumHeight = rowHeight
+            }
+        }
+binding.root.translationY = 0f
         binding.root.layoutParams?.let { params ->
             if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
                 params.width = ViewGroup.LayoutParams.MATCH_PARENT
@@ -137,6 +150,7 @@ override fun onUpdateContent(
             ?: parentRecycler.scrollToPosition(targetPosition)
 
         parentRecycler.post {
+            (parentRecycler.layoutManager as? TvHomeRowsLayoutManager)?.alignRowAtPosition(parentRecycler, targetPosition, immediate = true)
             requestFocusOnTvRow(parentRecycler, targetPosition, attempt = 0)
         }
         return true
@@ -159,7 +173,10 @@ override fun onUpdateContent(
                 ?.findViewHolderForAdapterPosition(0)
                 ?.itemView
 
-        if (targetItem?.requestFocus() == true) return
+        if (targetItem?.requestFocus() == true) {
+            (parentRecycler.layoutManager as? TvHomeRowsLayoutManager)?.alignRowAtPosition(parentRecycler, targetPosition, immediate = true)
+            return
+        }
 
         if (attempt < 4) {
             parentRecycler.postDelayed({
