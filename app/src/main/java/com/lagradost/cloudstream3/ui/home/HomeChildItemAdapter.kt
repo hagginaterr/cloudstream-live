@@ -104,9 +104,16 @@ object TwitchHomeFocusedBackground {
     }
 
     private fun showAmbientGradientOnly(background: ImageView) {
-        background.setImageDrawable(null)
-        background.alpha = 0f
-        background.visibility = View.GONE
+        /*
+         * PERFORMANCE and BALANCED:
+         * Keep a lightweight drawable gradient visible instead of a decoded,
+         * blurred thumbnail. This gives the TV home screen depth without keeping
+         * a large bitmap background alive.
+         */
+        background.setImageResource(R.drawable.twitch_home_ambient_gradient)
+        background.alpha = 1f
+        background.visibility = View.VISIBLE
+        background.scaleType = ImageView.ScaleType.CENTER_CROP
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             background.setRenderEffect(null)
