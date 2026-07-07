@@ -56,24 +56,43 @@ object TwitchHomeFocusedBackground {
     fun update(focusedView: View) {
         if (!isLayout(TV or EMULATOR)) return
 
-        val source = findPosterImage(focusedView) ?: return
-        val sourceDrawable = source.drawable ?: return
         val background = focusedView.rootView
             ?.findViewById<ImageView>(R.id.home_twitch_focus_background)
             ?: return
 
+        val settings = TvPerformanceProfileManager.getSettings(focusedView.context)
+
+        if (!settings.enableRichHomeBackground) {
+            showAmbientGradientOnly(background)
+            return
+        }
+
+        val sourceDrawable = findPosterImage(focusedView)?.drawable
+        if (sourceDrawable == null) {
+            showAmbientGradientOnly(background)
+            return
+        }
+
+        /*
+         * QUALITY only:
+         * Reuse the already-bound card thumbnail as the source. This avoids a
+         * second full-screen hero image request/decode and keeps the background
+         * intentionally low-resolution before it is scaled/softened.
+         */
         background.visibility = View.VISIBLE
-        background.alpha = 0.55f
+        background.alpha = settings.homeBackgroundAlpha
         background.scaleType = ImageView.ScaleType.CENTER_CROP
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && settings.homeBackgroundBlurRadius > 0f) {
             background.setRenderEffect(
                 RenderEffect.createBlurEffect(
-                    18f,
-                    18f,
+                    settings.homeBackgroundBlurRadius,
+                    settings.homeBackgroundBlurRadius,
                     Shader.TileMode.CLAMP,
                 ),
             )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            background.setRenderEffect(null)
         }
 
         background.setImageDrawable(
@@ -83,7 +102,18 @@ object TwitchHomeFocusedBackground {
                 ?: sourceDrawable,
         )
     }
+
+    private fun showAmbientGradientOnly(background: ImageView) {
+        background.setImageDrawable(null)
+        background.alpha = 0f
+        background.visibility = View.GONE
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            background.setRenderEffect(null)
+        }
+    }
 }
+
 object TwitchTvRowPager {
     @Suppress("UNUSED_PARAMETER")
     fun alignFocusedRow(view: View) = Unit

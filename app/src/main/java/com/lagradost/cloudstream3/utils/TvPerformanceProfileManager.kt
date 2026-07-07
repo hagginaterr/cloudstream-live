@@ -89,6 +89,8 @@ object TvPerformanceProfileManager {
 
     data class TvPerformanceSettings(
         val enableRichHomeBackground: Boolean,
+        val homeBackgroundBlurRadius: Float,
+        val homeBackgroundAlpha: Float,
         val homePosterScaleMultiplier: Float,
         val homeRecyclerPoolSize: Int,
         val homeRowItemViewCacheSize: Int,
@@ -176,6 +178,8 @@ object TvPerformanceProfileManager {
         return when (profile) {
             PerformanceProfile.PERFORMANCE -> TvPerformanceSettings(
                 enableRichHomeBackground = false,
+                homeBackgroundBlurRadius = 0f,
+                homeBackgroundAlpha = 0f,
                 homePosterScaleMultiplier = 0.90f,
                 homeRecyclerPoolSize = 8,
                 homeRowItemViewCacheSize = 0,
@@ -186,6 +190,8 @@ object TvPerformanceProfileManager {
 
             PerformanceProfile.BALANCED -> TvPerformanceSettings(
                 enableRichHomeBackground = false,
+                homeBackgroundBlurRadius = 0f,
+                homeBackgroundAlpha = 0f,
                 homePosterScaleMultiplier = 1.00f,
                 homeRecyclerPoolSize = 12,
                 homeRowItemViewCacheSize = 1,
@@ -196,6 +202,8 @@ object TvPerformanceProfileManager {
 
             PerformanceProfile.QUALITY -> TvPerformanceSettings(
                 enableRichHomeBackground = true,
+                homeBackgroundBlurRadius = 10f,
+                homeBackgroundAlpha = 0.42f,
                 homePosterScaleMultiplier = 1.00f,
                 homeRecyclerPoolSize = 20,
                 homeRowItemViewCacheSize = 2,
