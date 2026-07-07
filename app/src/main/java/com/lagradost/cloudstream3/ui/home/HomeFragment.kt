@@ -24,7 +24,6 @@ import androidx.core.view.isVisible
 import androidx.fragment.app.activityViewModels
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.chip.Chip
@@ -611,68 +610,8 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
         homeMasterRecycler: RecyclerView,
         root: View,
     ) {
-        if (!isLayout(TV or EMULATOR)) return
-
-        homeMasterRecycler.onFlingListener = null
-        homeMasterRecycler.layoutManager = TvHomeRowsLayoutManager(root.context)
-        homeMasterRecycler.itemAnimator = null
-        homeMasterRecycler.clipToPadding = true
-        homeMasterRecycler.clipChildren = true
-        homeMasterRecycler.overScrollMode = View.OVER_SCROLL_NEVER
-        homeMasterRecycler.isNestedScrollingEnabled = false
-        homeMasterRecycler.setHasFixedSize(false)
-
-        val applyShelfViewport = {
-            val rootHeight = root.height
-            if (rootHeight > 0) {
-                val bottomInset = 28.toPx
-                val desiredTopPadding = (rootHeight * 0.42f).toInt()
-                val minimumShelfHeight = 340.toPx.coerceAtMost(rootHeight / 2)
-                val maxTopPadding = (rootHeight - minimumShelfHeight - bottomInset).coerceAtLeast(0)
-                val topPadding = desiredTopPadding.coerceAtMost(maxTopPadding).coerceAtLeast(0)
-
-                if (homeMasterRecycler.paddingTop != topPadding ||
-                    homeMasterRecycler.paddingBottom != bottomInset
-                ) {
-                    homeMasterRecycler.setPadding(
-                        homeMasterRecycler.paddingLeft,
-                        topPadding,
-                        homeMasterRecycler.paddingRight,
-                        bottomInset,
-                    )
-                }
-
-                val shelfHeight = homeMasterRecycler.height - topPadding - bottomInset
-                if (shelfHeight > 0) {
-                    for (index in 0 until homeMasterRecycler.childCount) {
-                        val child = homeMasterRecycler.getChildAt(index)
-                        val params = child.layoutParams
-                        if (params.height != shelfHeight) {
-                            params.height = shelfHeight
-                            child.layoutParams = params
-                            child.requestLayout()
-                        }
-                        child.minimumHeight = shelfHeight
-                    }
-                }
-            }
-        }
-
-        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            applyShelfViewport()
-        }
-        homeMasterRecycler.addOnChildAttachStateChangeListener(
-            object : RecyclerView.OnChildAttachStateChangeListener {
-                override fun onChildViewAttachedToWindow(view: View) {
-                    applyShelfViewport()
-                }
-
-                override fun onChildViewDetachedFromWindow(view: View) = Unit
-            },
-        )
-        homeMasterRecycler.post { applyShelfViewport(); (homeMasterRecycler.layoutManager as? TvHomeRowsLayoutManager)?.alignFocusedRowNow(homeMasterRecycler) }
-    }
-    @SuppressLint("SetTextI18n")
+        TvHomeFocusController.configureMaster(homeMasterRecycler, root)
+    }    @SuppressLint("SetTextI18n")
     override fun onBindingCreated(binding: FragmentHomeBinding) {
         context?.let { HomeChildItemAdapter.updatePosterSize(it) }
         (activity as? ComponentActivity)?.attachBackPressedCallback("HomeFragment_BackPress") {

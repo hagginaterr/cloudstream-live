@@ -1,7 +1,5 @@
-﻿package com.lagradost.cloudstream3.ui.home
+package com.lagradost.cloudstream3.ui.home
 
-import androidx.recyclerview.widget.LinearLayoutManager
-import android.view.KeyEvent
 import android.os.Build
 import android.os.Bundle
 import android.os.Parcelable
@@ -88,133 +86,10 @@ override fun onUpdateContent(
         (binding.homeChildRecyclerview.adapter as? HomeChildItemAdapter)?.submitList(item.list.list)
     }
 
-        private fun configureTwitchTvRow(binding: HomepageParentBinding) {
-        if (!isLayout(TV or EMULATOR)) return
-
-        
-        binding.root.post {
-            val parentRecycler = binding.root.parent as? RecyclerView ?: return@post
-            val rowHeight = parentRecycler.height - parentRecycler.paddingTop - parentRecycler.paddingBottom
-            if (rowHeight > 0) {
-                val params = binding.root.layoutParams
-                if (params.height != rowHeight) {
-                    params.height = rowHeight
-                    binding.root.layoutParams = params
-                }
-                binding.root.minimumHeight = rowHeight
-            }
-        }
-binding.root.translationY = 0f
-        binding.root.layoutParams?.let { params ->
-            if (params.width != ViewGroup.LayoutParams.MATCH_PARENT) {
-                params.width = ViewGroup.LayoutParams.MATCH_PARENT
-                binding.root.layoutParams = params
-            }
-        }
-
-        binding.homeChildRecyclerview.apply {
-            itemAnimator = null
-            isNestedScrollingEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            clipToPadding = false
-            setHasFixedSize(true)
-            setOnKeyListener { _, keyCode, event ->
-                if (!isLayout(TV) || event.action != KeyEvent.ACTION_DOWN) {
-                    false
-                } else {
-                    when (keyCode) {
-                        KeyEvent.KEYCODE_DPAD_DOWN -> moveTvHomeFocusToSiblingRow(binding, 1)
-                        KeyEvent.KEYCODE_DPAD_UP -> moveTvHomeFocusToSiblingRow(binding, -1)
-                        else -> false
-                    }
-                }
-            }
-        }
-    }
-
-        // TwitchTvVerticalFocusPatch: Up/Down should move only between content rows.
+    private fun configureTwitchTvRow(binding: HomepageParentBinding) {
+        TvHomeFocusController.configureRow(binding.root, binding.homeChildRecyclerview)
+    }        // TwitchTvVerticalFocusPatch: Up/Down should move only between content rows.
     // It should never leak to the side rail. Only Left from the first card may do that.
-    private fun moveTvHomeFocusToSiblingRow(
-        binding: HomepageParentBinding,
-        direction: Int,
-    ): Boolean {
-        val parentRecycler = binding.root.parent as? RecyclerView ?: return true
-        val adapterCount = parentRecycler.adapter?.itemCount ?: return true
-        val currentPosition = parentRecycler.getChildAdapterPosition(binding.root)
-        if (currentPosition == RecyclerView.NO_POSITION) return true
-
-        // HomeParentItemAdapterPreview has a TV header at adapter position 0.
-        // Treat pressing Up from the first real content row as a consumed no-op.
-        if (direction < 0 && currentPosition <= 1) return true
-        if (direction > 0 && currentPosition >= adapterCount - 1) return true
-
-        var targetPosition = currentPosition + direction
-        while (targetPosition in 0 until adapterCount) {
-            val targetRoot = parentRecycler
-                .findViewHolderForAdapterPosition(targetPosition)
-                ?.itemView
-
-            // If the target is attached and it is not a real content row, keep walking.
-            if (targetRoot != null && targetRoot.findViewById<RecyclerView>(R.id.home_child_recyclerview) == null) {
-                targetPosition += direction
-                continue
-            }
-            break
-        }
-
-        if (targetPosition !in 0 until adapterCount) return true
-
-        val attachedTarget = parentRecycler
-            .findViewHolderForAdapterPosition(targetPosition)
-            ?.itemView
-        if (attachedTarget != null && attachedTarget.findViewById<RecyclerView>(R.id.home_child_recyclerview) == null) {
-            return true
-        }
-
-        parentRecycler.stopScroll()
-        (parentRecycler.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager)
-            ?.scrollToPositionWithOffset(targetPosition, parentRecycler.paddingTop)
-            ?: parentRecycler.scrollToPosition(targetPosition)
-
-        parentRecycler.post {
-            requestFocusOnTvRow(parentRecycler, targetPosition, attempt = 0)
-        }
-        return true
-    }
-
-        private fun requestFocusOnTvRow(
-        parentRecycler: RecyclerView,
-        targetPosition: Int,
-        attempt: Int,
-    ) {
-        val targetRoot = parentRecycler
-            .findViewHolderForAdapterPosition(targetPosition)
-            ?.itemView
-        val childRecycler = targetRoot?.findViewById<RecyclerView>(R.id.home_child_recyclerview)
-
-        if (childRecycler != null) {
-            childRecycler.stopScroll()
-            (childRecycler.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager)
-                ?.scrollToPositionWithOffset(0, childRecycler.paddingLeft)
-                ?: childRecycler.scrollToPosition(0)
-
-            val firstItem = childRecycler
-                .findViewHolderForAdapterPosition(0)
-                ?.itemView
-            if (firstItem?.requestFocus() == true) {
-                (parentRecycler.layoutManager as? TvHomeRowsLayoutManager)
-                    ?.alignRowAtPosition(parentRecycler, targetPosition, immediate = true)
-                return
-            }
-        }
-
-        if (attempt < 6) {
-            parentRecycler.postDelayed({
-                requestFocusOnTvRow(parentRecycler, targetPosition, attempt + 1)
-            }, 50L)
-        }
-    }
-
     override fun onBindContent(
         holder: ViewHolderState<Bundle>,
         item: HomeViewModel.ExpandableHomepageList,
@@ -257,6 +132,8 @@ binding.root.translationY = 0f
                 nextLeft = startFocus,
                 nextRight = endFocus,
             )
+            // TwitchTvFocusReapplyAfterLinearLayout
+            configureTwitchTvRow(binding)
 
             homeChildMoreInfo.text = info.name
 
