@@ -76,13 +76,16 @@ object TwitchHomeFocusedBackground {
 
         /*
          * QUALITY only:
-         * Reuse the already-bound card thumbnail as the source. This avoids a
-         * second full-screen hero image request/decode and keeps the background
-         * intentionally low-resolution before it is scaled/softened.
+         * Reuse the already-bound card thumbnail as a low-resolution source.
+         * The gradient is also applied behind it so the home surface never falls
+         * back to pure black while focus is moving.
          */
+        applyAmbientGradientLayer(background)
+
         background.visibility = View.VISIBLE
         background.alpha = settings.homeBackgroundAlpha
         background.scaleType = ImageView.ScaleType.CENTER_CROP
+        background.clearColorFilter()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && settings.homeBackgroundBlurRadius > 0f) {
             background.setRenderEffect(
@@ -104,17 +107,27 @@ object TwitchHomeFocusedBackground {
         )
     }
 
-    private fun showAmbientGradientOnly(background: ImageView) {
+    private fun applyAmbientGradientLayer(background: ImageView) {
         /*
-         * PERFORMANCE and BALANCED:
-         * Keep a lightweight drawable gradient visible instead of a decoded,
-         * blurred thumbnail. This gives the TV home screen depth without keeping
-         * a large bitmap background alive.
+         * Apply the gradient to the ImageView, its immediate container, and the
+         * root decor view. Some TV home layouts have an opaque black container
+         * above the decor background, so setting only the decor background is
+         * not enough. This keeps Performance/Balanced bitmap-free while making
+         * the ambient layer actually visible.
          */
-        background.setImageResource(R.drawable.twitch_home_ambient_gradient)
-        background.alpha = 1f
+        background.rootView?.setBackgroundResource(R.drawable.twitch_home_ambient_gradient)
+        (background.parent as? View)?.setBackgroundResource(R.drawable.twitch_home_ambient_gradient)
+        background.setBackgroundResource(R.drawable.twitch_home_ambient_gradient)
+    }
+
+    private fun showAmbientGradientOnly(background: ImageView) {
+        applyAmbientGradientLayer(background)
+
+        background.setImageDrawable(null)
         background.visibility = View.VISIBLE
+        background.alpha = 1f
         background.scaleType = ImageView.ScaleType.CENTER_CROP
+        background.clearColorFilter()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             background.setRenderEffect(null)
