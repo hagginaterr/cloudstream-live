@@ -22,12 +22,12 @@ import java.util.Locale
  *   render app UI at 1080p while still supporting 2160p video playback.
  * - Keep grid images and fullscreen background artwork under control.
  * - Reuse RecyclerView views without keeping overly large pools on low-memory TVs.
- * - Size playback buffers by profile in a later player phase.
+ * - Keep playback buffer targets profile-backed for the later player phase.
  */
 object TvPerformanceProfileManager {
     private const val TAG = "TvPerformanceProfile"
 
-    private const val CURRENT_AUTO_DETECTION_VERSION = 2
+    private const val CURRENT_AUTO_DETECTION_VERSION = 3
 
     private const val USER_SELECTED_PROFILE_KEY = "tv_performance_profile_user"
     private const val AUTO_DETECTED_PROFILE_KEY = "tv_performance_profile_auto"
@@ -220,29 +220,43 @@ object TvPerformanceProfileManager {
     }
 
     fun chooseProfile(info: DevicePerformanceInfo): PerformanceProfile {
-        // Android TV guidance says to use isLowRamDevice as the primary signal
-        // because OEMs can mark constrained devices even when raw RAM/resolution
-        // signals are misleading.
+        // Android TV guidance says to use isLowRamDevice as the primary
+        // constrained-device signal. Do not demote a capable TV just because the
+        // app UI reports 1080p or the CPU reports four cores.
         if (info.isLowRam) {
             return PerformanceProfile.PERFORMANCE
         }
 
-        // 1 GB and 1.5 GB TV devices are the main low-RAM target range.
+        // 1 GB and 1.5 GB TV devices are the main low-memory target range.
         if (info.totalRamMb in 1L..1600L) {
             return PerformanceProfile.PERFORMANCE
         }
 
-        // CPU count alone is not enough to demote a regular TV. A 4-core TV with
-        // about 2.7 GB RAM and hardware codecs should stay BALANCED, not PERFORMANCE.
-        if (info.totalRamMb in 1L..2399L && info.cpuCores <= 4) {
+        val hasHardwareModernVideoDecoder = info.hasHardwareHevc || info.hasHardwareAv1
+
+        // Only demote four-core devices when they also have constrained memory
+        // and no modern hardware video decoder. A 4-core TV with about 2.7 GB
+        // RAM plus HEVC/AV1 hardware decode should be BALANCED.
+        if (
+            info.cpuCores <= 4 &&
+            info.totalRamMb in 1L..2399L &&
+            !hasHardwareModernVideoDecoder
+        ) {
+            return PerformanceProfile.PERFORMANCE
+        }
+
+        // Very small CPU counts are still treated as constrained unless the
+        // device has substantial memory headroom.
+        if (info.cpuCores <= 2 && info.totalRamMb < 3000L) {
             return PerformanceProfile.PERFORMANCE
         }
 
         // Quality is intentionally conservative. Display.Mode often reports the
-        // app UI mode, not video capability, so require memory and CPU headroom too.
+        // app UI mode, not video capability, so require memory, CPU, and codec
+        // headroom rather than relying on a reported 4K mode alone.
         val hasLargeMemoryHeadroom = info.totalRamMb >= 3600L && info.memoryClassMb >= 256
         val hasEnoughCpu = info.cpuCores >= 6
-        val likely4kVideoCapable = info.hasHardwareHevc && info.totalRamMb >= 3000L
+        val likely4kVideoCapable = hasHardwareModernVideoDecoder && info.totalRamMb >= 3000L
         if (hasLargeMemoryHeadroom && hasEnoughCpu && likely4kVideoCapable) {
             return PerformanceProfile.QUALITY
         }
