@@ -226,8 +226,37 @@ open class HomeChildItemAdapter(
     companion object {
         // The vast majority of the lag comes from creating the view
         // This simply shares the views between all HomeChildItemAdapter
-        val sharedPool =
+        private val performanceSharedPool =
+
+            newSharedPool { setMaxRecycledViews(CONTENT, 8) }
+
+
+        private val balancedSharedPool =
+
+            newSharedPool { setMaxRecycledViews(CONTENT, 12) }
+
+
+        private val qualitySharedPool =
+
             newSharedPool { setMaxRecycledViews(CONTENT, 20) }
+
+
+        // Keep the existing field for non-profiled call sites.
+
+        val sharedPool = balancedSharedPool
+
+
+        fun sharedPoolFor(context: Context) =
+
+            when (TvPerformanceProfileManager.getEffectiveProfile(context)) {
+
+                TvPerformanceProfileManager.PerformanceProfile.PERFORMANCE -> performanceSharedPool
+
+                TvPerformanceProfileManager.PerformanceProfile.BALANCED -> balancedSharedPool
+
+                TvPerformanceProfileManager.PerformanceProfile.QUALITY -> qualitySharedPool
+
+            }
 
         var minPosterSize: Int = 0
         var maxPosterSize: Int = 0
@@ -240,9 +269,7 @@ open class HomeChildItemAdapter(
             // Scale by +10% per user step, then apply the TV memory profile.
 
             val mul = (1.0f + scale * 0.1f) * tvPerformanceSettings.homePosterScaleMultiplier
-
-            sharedPool.setMaxRecycledViews(CONTENT, tvPerformanceSettings.homeRecyclerPoolSize)
-            minPosterSize = (114.toPx.toFloat() * mul).toInt()
+minPosterSize = (114.toPx.toFloat() * mul).toInt()
             maxPosterSize = (180.toPx.toFloat() * mul).toInt()
         }
 

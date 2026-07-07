@@ -105,7 +105,7 @@ override fun onUpdateContent(
         binding.apply {
             val currentAdapter = homeChildRecyclerview.adapter as? HomeChildItemAdapter
             if (currentAdapter == null) {
-                homeChildRecyclerview.setRecycledViewPool(HomeChildItemAdapter.sharedPool)
+                homeChildRecyclerview.setRecycledViewPool(HomeChildItemAdapter.sharedPoolFor(homeChildRecyclerview.context))
                 homeChildRecyclerview.adapter = HomeChildItemAdapter(
                     id = id + position + 100,
                     clickCallback = clickCallback,
