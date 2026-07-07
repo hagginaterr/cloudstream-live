@@ -1,4 +1,4 @@
-package com.lagradost.cloudstream3.ui.home
+﻿package com.lagradost.cloudstream3.ui.home
 
 import androidx.recyclerview.widget.LinearLayoutManager
 import android.view.KeyEvent
@@ -132,31 +132,57 @@ binding.root.translationY = 0f
         }
     }
 
+        // TwitchTvVerticalFocusPatch: Up/Down should move only between content rows.
+    // It should never leak to the side rail. Only Left from the first card may do that.
     private fun moveTvHomeFocusToSiblingRow(
         binding: HomepageParentBinding,
         direction: Int,
     ): Boolean {
-        val parentRecycler = binding.root.parent as? RecyclerView ?: return false
-        val adapterCount = parentRecycler.adapter?.itemCount ?: return false
+        val parentRecycler = binding.root.parent as? RecyclerView ?: return true
+        val adapterCount = parentRecycler.adapter?.itemCount ?: return true
         val currentPosition = parentRecycler.getChildAdapterPosition(binding.root)
-        if (currentPosition == RecyclerView.NO_POSITION) return false
+        if (currentPosition == RecyclerView.NO_POSITION) return true
 
-        val targetPosition = (currentPosition + direction).coerceIn(0, adapterCount - 1)
-        if (targetPosition == currentPosition) return false
+        // HomeParentItemAdapterPreview has a TV header at adapter position 0.
+        // Treat pressing Up from the first real content row as a consumed no-op.
+        if (direction < 0 && currentPosition <= 1) return true
+        if (direction > 0 && currentPosition >= adapterCount - 1) return true
+
+        var targetPosition = currentPosition + direction
+        while (targetPosition in 0 until adapterCount) {
+            val targetRoot = parentRecycler
+                .findViewHolderForAdapterPosition(targetPosition)
+                ?.itemView
+
+            // If the target is attached and it is not a real content row, keep walking.
+            if (targetRoot != null && targetRoot.findViewById<RecyclerView>(R.id.home_child_recyclerview) == null) {
+                targetPosition += direction
+                continue
+            }
+            break
+        }
+
+        if (targetPosition !in 0 until adapterCount) return true
+
+        val attachedTarget = parentRecycler
+            .findViewHolderForAdapterPosition(targetPosition)
+            ?.itemView
+        if (attachedTarget != null && attachedTarget.findViewById<RecyclerView>(R.id.home_child_recyclerview) == null) {
+            return true
+        }
 
         parentRecycler.stopScroll()
-        (parentRecycler.layoutManager as? LinearLayoutManager)
+        (parentRecycler.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager)
             ?.scrollToPositionWithOffset(targetPosition, parentRecycler.paddingTop)
             ?: parentRecycler.scrollToPosition(targetPosition)
 
         parentRecycler.post {
-            (parentRecycler.layoutManager as? TvHomeRowsLayoutManager)?.alignRowAtPosition(parentRecycler, targetPosition, immediate = true)
             requestFocusOnTvRow(parentRecycler, targetPosition, attempt = 0)
         }
         return true
     }
 
-    private fun requestFocusOnTvRow(
+        private fun requestFocusOnTvRow(
         parentRecycler: RecyclerView,
         targetPosition: Int,
         attempt: Int,
@@ -165,23 +191,27 @@ binding.root.translationY = 0f
             .findViewHolderForAdapterPosition(targetPosition)
             ?.itemView
         val childRecycler = targetRoot?.findViewById<RecyclerView>(R.id.home_child_recyclerview)
-        val currentColumn = (parentRecycler.rootView.findFocus()?.tag as? Int)?.coerceAtLeast(0) ?: 0
-        val targetItem = childRecycler
-            ?.findViewHolderForAdapterPosition(currentColumn)
-            ?.itemView
-            ?: childRecycler
-                ?.findViewHolderForAdapterPosition(0)
-                ?.itemView
 
-        if (targetItem?.requestFocus() == true) {
-            (parentRecycler.layoutManager as? TvHomeRowsLayoutManager)?.alignRowAtPosition(parentRecycler, targetPosition, immediate = true)
-            return
+        if (childRecycler != null) {
+            childRecycler.stopScroll()
+            (childRecycler.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager)
+                ?.scrollToPositionWithOffset(0, childRecycler.paddingLeft)
+                ?: childRecycler.scrollToPosition(0)
+
+            val firstItem = childRecycler
+                .findViewHolderForAdapterPosition(0)
+                ?.itemView
+            if (firstItem?.requestFocus() == true) {
+                (parentRecycler.layoutManager as? TvHomeRowsLayoutManager)
+                    ?.alignRowAtPosition(parentRecycler, targetPosition, immediate = true)
+                return
+            }
         }
 
-        if (attempt < 4) {
+        if (attempt < 6) {
             parentRecycler.postDelayed({
                 requestFocusOnTvRow(parentRecycler, targetPosition, attempt + 1)
-            }, 70L)
+            }, 50L)
         }
     }
 

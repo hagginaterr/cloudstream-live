@@ -1,4 +1,4 @@
-package com.lagradost.cloudstream3.ui.home
+﻿package com.lagradost.cloudstream3.ui.home
 
 import androidx.recyclerview.widget.LinearLayoutManager
 import android.view.KeyEvent
@@ -520,6 +520,156 @@ open class HomeChildItemAdapter(
     private fun String.cleanTvText(): String {
         return trim().replace(Regex("\\s+"), " ")
     }
+    // TwitchTvDirectionalFocusPatch: keeps D-pad navigation inside Twitch shelves.
+    private fun installTwitchTvDirectionalFocus(itemView: View, boundPosition: Int) {
+        if (!isLayout(TV or EMULATOR)) return
+        itemView.setOnKeyListener { view, keyCode, event ->
+            if (event.action != android.view.KeyEvent.ACTION_DOWN) {
+                return@setOnKeyListener false
+            }
+            when (keyCode) {
+                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> moveTvCardFocusHorizontally(view, boundPosition, -1)
+                android.view.KeyEvent.KEYCODE_DPAD_UP -> moveTvCardFocusVertically(view, -1)
+                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> moveTvCardFocusVertically(view, 1)
+                else -> false
+            }
+        }
+    }
+
+    private fun moveTvCardFocusHorizontally(
+        view: View,
+        boundPosition: Int,
+        direction: Int,
+    ): Boolean {
+        val rowRecycler = view.findNearestParentRecyclerView() ?: return false
+        val itemCount = rowRecycler.adapter?.itemCount ?: return false
+        val currentPosition = rowRecycler
+            .getChildAdapterPosition(view)
+            .takeIf { it != RecyclerView.NO_POSITION }
+            ?: boundPosition
+        val targetPosition = currentPosition + direction
+
+        // Only the true first item in the row is allowed to fall through to the side rail.
+        if (targetPosition < 0) return false
+        if (targetPosition >= itemCount) return true
+
+        rowRecycler.stopScroll()
+        (rowRecycler.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager)
+            ?.scrollToPositionWithOffset(targetPosition, rowRecycler.paddingLeft)
+            ?: rowRecycler.scrollToPosition(targetPosition)
+        rowRecycler.post {
+            requestFocusOnHorizontalCard(rowRecycler, targetPosition, attempt = 0)
+        }
+        return true
+    }
+
+    private fun requestFocusOnHorizontalCard(
+        rowRecycler: RecyclerView,
+        targetPosition: Int,
+        attempt: Int,
+    ) {
+        val target = rowRecycler
+            .findViewHolderForAdapterPosition(targetPosition)
+            ?.itemView
+        if (target?.requestFocus() == true) return
+        if (attempt < 6) {
+            rowRecycler.postDelayed({
+                requestFocusOnHorizontalCard(rowRecycler, targetPosition, attempt + 1)
+            }, 40L)
+        }
+    }
+
+    private fun moveTvCardFocusVertically(view: View, direction: Int): Boolean {
+        val rowRecycler = view.findNearestParentRecyclerView() ?: return true
+        val masterRecycler = rowRecycler.findAncestorMasterRecyclerView() ?: return true
+        val currentRow = masterRecycler.findContainingItemView(rowRecycler) ?: return true
+        val currentRowPosition = masterRecycler.getChildAdapterPosition(currentRow)
+        if (currentRowPosition == RecyclerView.NO_POSITION) return true
+        val adapterCount = masterRecycler.adapter?.itemCount ?: return true
+
+        // Adapter position 0 is the TV header. Do not let Up from Live Now escape to it or the side rail.
+        if (direction < 0 && currentRowPosition <= 1) return true
+        if (direction > 0 && currentRowPosition >= adapterCount - 1) return true
+
+        var targetRowPosition = currentRowPosition + direction
+        while (targetRowPosition in 0 until adapterCount) {
+            val targetRoot = masterRecycler
+                .findViewHolderForAdapterPosition(targetRowPosition)
+                ?.itemView
+            if (targetRoot != null && targetRoot.findViewById<RecyclerView>(R.id.home_child_recyclerview) == null) {
+                targetRowPosition += direction
+                continue
+            }
+            break
+        }
+        if (targetRowPosition !in 0 until adapterCount) return true
+
+        val attachedTarget = masterRecycler
+            .findViewHolderForAdapterPosition(targetRowPosition)
+            ?.itemView
+        if (attachedTarget != null && attachedTarget.findViewById<RecyclerView>(R.id.home_child_recyclerview) == null) {
+            return true
+        }
+
+        masterRecycler.stopScroll()
+        (masterRecycler.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager)
+            ?.scrollToPositionWithOffset(targetRowPosition, masterRecycler.paddingTop)
+            ?: masterRecycler.scrollToPosition(targetRowPosition)
+
+        masterRecycler.post {
+            requestFocusOnFirstCardInTvRow(masterRecycler, targetRowPosition, attempt = 0)
+        }
+        return true
+    }
+
+    private fun requestFocusOnFirstCardInTvRow(
+        masterRecycler: RecyclerView,
+        targetRowPosition: Int,
+        attempt: Int,
+    ) {
+        val targetRoot = masterRecycler
+            .findViewHolderForAdapterPosition(targetRowPosition)
+            ?.itemView
+        val childRecycler = targetRoot?.findViewById<RecyclerView>(R.id.home_child_recyclerview)
+        if (childRecycler != null) {
+            childRecycler.stopScroll()
+            (childRecycler.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager)
+                ?.scrollToPositionWithOffset(0, childRecycler.paddingLeft)
+                ?: childRecycler.scrollToPosition(0)
+            val firstItem = childRecycler
+                .findViewHolderForAdapterPosition(0)
+                ?.itemView
+            if (firstItem?.requestFocus() == true) {
+                (masterRecycler.layoutManager as? TvHomeRowsLayoutManager)
+                    ?.alignRowAtPosition(masterRecycler, targetRowPosition, immediate = true)
+                return
+            }
+        }
+
+        if (attempt < 6) {
+            masterRecycler.postDelayed({
+                requestFocusOnFirstCardInTvRow(masterRecycler, targetRowPosition, attempt + 1)
+            }, 50L)
+        }
+    }
+
+    private fun View.findNearestParentRecyclerView(): RecyclerView? {
+        var current: android.view.ViewParent? = parent
+        while (current is View) {
+            if (current is RecyclerView) return current
+            current = current.parent
+        }
+        return null
+    }
+
+    private fun RecyclerView.findAncestorMasterRecyclerView(): RecyclerView? {
+        var current: android.view.ViewParent? = parent
+        while (current is View) {
+            if (current is RecyclerView && current.id == R.id.home_master_recycler) return current
+            current = current.parent
+        }
+        return null
+    }
     // End Twitch-style TV home cards
     // Explicit TV horizontal card focus navigation
     private fun configureTwitchTvHorizontalFocus(itemView: View) {
@@ -642,5 +792,6 @@ open class HomeChildItemAdapter(
             configureTwitchTvHorizontalFocus(holder.itemView)
 
         holder.itemView.tag = position
+        installTwitchTvDirectionalFocus(holder.itemView, position)
     }
 }
