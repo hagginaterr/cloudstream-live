@@ -1192,7 +1192,8 @@ private val pluginsLock = Mutex()
 
         val settingsManager = PreferenceManager.getDefaultSharedPreferences(this)
 
-        setLastError(this)
+                com.lagradost.cloudstream3.utils.TvPerformanceProfileManager.ensureInitialized(this)
+setLastError(this)
 
         val settingsForProvider = SettingsJson()
         settingsForProvider.enableAdult =
@@ -1325,7 +1326,7 @@ private val pluginsLock = Mutex()
                     biometricPrompt?.authenticate(prompt)
                 }
 
-                // hide background while authenticating, Sorry moms & dads ðŸ™
+                // hide background while authenticating, Sorry moms & dads Ã°Å¸â„¢Â
                 binding?.navHostFragment?.isInvisible = true
             }
         }
