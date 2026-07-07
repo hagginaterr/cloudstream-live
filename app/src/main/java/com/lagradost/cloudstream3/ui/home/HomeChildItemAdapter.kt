@@ -38,6 +38,7 @@ import com.lagradost.cloudstream3.utils.UIHelper.toPx
 import android.widget.TextView
 import com.lagradost.cloudstream3.databinding.HomeResultGridTvBinding
 import java.util.Locale
+import com.lagradost.cloudstream3.utils.TvPerformanceProfileManager
 
 object TwitchHomeFocusedBackground {
     private fun findPosterImage(view: View): ImageView? {
@@ -234,8 +235,13 @@ open class HomeChildItemAdapter(
         fun updatePosterSize(context: Context, value: Int? = null) {
             val scale = value ?: PreferenceManager.getDefaultSharedPreferences(context)
                 ?.getInt(context.getString(R.string.poster_size_key), 0) ?: 0
-            // Scale by +10% per step
-            val mul = 1.0f + scale * 0.1f
+            val tvPerformanceSettings = TvPerformanceProfileManager.getSettings(context)
+
+            // Scale by +10% per user step, then apply the TV memory profile.
+
+            val mul = (1.0f + scale * 0.1f) * tvPerformanceSettings.homePosterScaleMultiplier
+
+            sharedPool.setMaxRecycledViews(CONTENT, tvPerformanceSettings.homeRecyclerPoolSize)
             minPosterSize = (114.toPx.toFloat() * mul).toInt()
             maxPosterSize = (180.toPx.toFloat() * mul).toInt()
         }

@@ -13,6 +13,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import com.lagradost.cloudstream3.utils.TvPerformanceProfileManager
 
 /**
  * Single owner for Android TV home D-pad navigation.
@@ -118,6 +119,8 @@ object TvHomeFocusController {
         rowRoot: View,
         rowRecycler: RecyclerView,
     ) {
+        val tvPerformanceSettings = TvPerformanceProfileManager.getSettings(rowRecycler.context)
+        rowRecycler.setItemViewCacheSize(tvPerformanceSettings.homeRowItemViewCacheSize)
         if (!isLayout(TV or EMULATOR)) return
 
         rowRoot.translationY = 0f
@@ -142,10 +145,10 @@ object TvHomeFocusController {
                 RecyclerView.HORIZONTAL,
                 false,
             ).apply {
-                initialPrefetchItemCount = 4
+                initialPrefetchItemCount = tvPerformanceSettings.homeRowInitialPrefetchItemCount
             }
         } else {
-            manager.initialPrefetchItemCount = 4
+            manager.initialPrefetchItemCount = tvPerformanceSettings.homeRowInitialPrefetchItemCount
         }
 
         rowRecycler.setOnKeyListener { _, keyCode, event ->

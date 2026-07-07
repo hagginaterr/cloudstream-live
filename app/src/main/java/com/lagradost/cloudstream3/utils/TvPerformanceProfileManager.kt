@@ -14,20 +14,25 @@ import androidx.preference.PreferenceManager
 import java.util.Locale
 
 /**
- * Phase 1 of Android TV performance tuning:
- * detect and persist a safe default profile without changing rendering/playback yet.
+ * Android TV performance profile manager.
  *
- * Stored values:
- * - user-selected profile: AUTO by default, later settings can override it.
- * - auto-detected profile: PERFORMANCE, BALANCED, or QUALITY.
- * - compact device info summary for debugging.
+ * This follows the Android TV memory guidance:
+ * - Use ActivityManager.isLowRamDevice as the primary low-memory signal.
+ * - Treat UI resolution and video resolution as different concepts; many 4K TVs
+ *   render app UI at 1080p while still supporting 2160p video playback.
+ * - Keep grid images and fullscreen background artwork under control.
+ * - Reuse RecyclerView views without keeping overly large pools on low-memory TVs.
+ * - Size playback buffers by profile in a later player phase.
  */
 object TvPerformanceProfileManager {
     private const val TAG = "TvPerformanceProfile"
 
+    private const val CURRENT_AUTO_DETECTION_VERSION = 2
+
     private const val USER_SELECTED_PROFILE_KEY = "tv_performance_profile_user"
     private const val AUTO_DETECTED_PROFILE_KEY = "tv_performance_profile_auto"
     private const val AUTO_DETECTION_DONE_KEY = "tv_performance_profile_auto_done"
+    private const val AUTO_DETECTION_VERSION_KEY = "tv_performance_profile_auto_version"
     private const val DEVICE_INFO_SUMMARY_KEY = "tv_performance_profile_device_info"
 
     private const val MIME_HEVC = "video/hevc"
@@ -41,7 +46,7 @@ object TvPerformanceProfileManager {
 
         companion object {
             fun fromStoredValue(value: String?): UserSelectedProfile {
-                return entries.firstOrNull { it.storedValue == value } ?: AUTO
+                return values().firstOrNull { it.storedValue == value } ?: AUTO
             }
         }
     }
@@ -53,7 +58,7 @@ object TvPerformanceProfileManager {
 
         companion object {
             fun fromStoredValue(value: String?): PerformanceProfile {
-                return entries.firstOrNull { it.storedValue == value } ?: BALANCED
+                return values().firstOrNull { it.storedValue == value } ?: BALANCED
             }
         }
     }
@@ -82,6 +87,16 @@ object TvPerformanceProfileManager {
         }
     }
 
+    data class TvPerformanceSettings(
+        val enableRichHomeBackground: Boolean,
+        val homePosterScaleMultiplier: Float,
+        val homeRecyclerPoolSize: Int,
+        val homeRowItemViewCacheSize: Int,
+        val homeRowInitialPrefetchItemCount: Int,
+        val preferHardwareBitmaps: Boolean,
+        val playbackBufferTargetMb: Int,
+    )
+
     fun ensureInitialized(context: Context) {
         val prefs = prefs(context)
 
@@ -91,13 +106,16 @@ object TvPerformanceProfileManager {
             }
         }
 
-        if (!prefs.getBoolean(AUTO_DETECTION_DONE_KEY, false)) {
+        val storedVersion = prefs.getInt(AUTO_DETECTION_VERSION_KEY, 0)
+        if (!prefs.getBoolean(AUTO_DETECTION_DONE_KEY, false) || storedVersion < CURRENT_AUTO_DETECTION_VERSION) {
             refreshAutoDetectedProfile(context)
         } else {
             Log.i(
                 TAG,
                 "Using stored effective profile=${getEffectiveProfile(context)} " +
-                        "auto=${getAutoDetectedProfile(context)} user=${getUserSelectedProfile(context)}"
+                        "auto=${getAutoDetectedProfile(context)} " +
+                        "user=${getUserSelectedProfile(context)} " +
+                        "settings=${getSettings(context)}"
             )
         }
     }
@@ -109,10 +127,11 @@ object TvPerformanceProfileManager {
         prefs(context).edit {
             putString(AUTO_DETECTED_PROFILE_KEY, autoProfile.storedValue)
             putBoolean(AUTO_DETECTION_DONE_KEY, true)
+            putInt(AUTO_DETECTION_VERSION_KEY, CURRENT_AUTO_DETECTION_VERSION)
             putString(DEVICE_INFO_SUMMARY_KEY, info.toDebugSummary())
         }
 
-        Log.i(TAG, "Auto-detected profile=$autoProfile from ${info.toDebugSummary()}")
+        Log.i(TAG, "Auto-detected profile=$autoProfile from ${info.toDebugSummary()} settings=${getSettings(autoProfile)}")
 
         return autoProfile
     }
@@ -131,7 +150,7 @@ object TvPerformanceProfileManager {
             putString(USER_SELECTED_PROFILE_KEY, profile.storedValue)
         }
 
-        Log.i(TAG, "User-selected profile=$profile effective=${getEffectiveProfile(context)}")
+        Log.i(TAG, "User-selected profile=$profile effective=${getEffectiveProfile(context)} settings=${getSettings(context)}")
     }
 
     fun getAutoDetectedProfile(context: Context): PerformanceProfile {
@@ -149,18 +168,74 @@ object TvPerformanceProfileManager {
         }
     }
 
+    fun getSettings(context: Context): TvPerformanceSettings {
+        return getSettings(getEffectiveProfile(context))
+    }
+
+    fun getSettings(profile: PerformanceProfile): TvPerformanceSettings {
+        return when (profile) {
+            PerformanceProfile.PERFORMANCE -> TvPerformanceSettings(
+                enableRichHomeBackground = false,
+                homePosterScaleMultiplier = 0.90f,
+                homeRecyclerPoolSize = 8,
+                homeRowItemViewCacheSize = 0,
+                homeRowInitialPrefetchItemCount = 2,
+                preferHardwareBitmaps = true,
+                playbackBufferTargetMb = 60,
+            )
+
+            PerformanceProfile.BALANCED -> TvPerformanceSettings(
+                enableRichHomeBackground = false,
+                homePosterScaleMultiplier = 1.00f,
+                homeRecyclerPoolSize = 12,
+                homeRowItemViewCacheSize = 1,
+                homeRowInitialPrefetchItemCount = 3,
+                preferHardwareBitmaps = true,
+                playbackBufferTargetMb = 80,
+            )
+
+            PerformanceProfile.QUALITY -> TvPerformanceSettings(
+                enableRichHomeBackground = true,
+                homePosterScaleMultiplier = 1.00f,
+                homeRecyclerPoolSize = 20,
+                homeRowItemViewCacheSize = 2,
+                homeRowInitialPrefetchItemCount = 4,
+                preferHardwareBitmaps = true,
+                playbackBufferTargetMb = 100,
+            )
+        }
+    }
+
     fun getDeviceInfoSummary(context: Context): String {
         return prefs(context).getString(DEVICE_INFO_SUMMARY_KEY, null)
             ?: detectDevicePerformanceInfo(context).toDebugSummary()
     }
 
     fun chooseProfile(info: DevicePerformanceInfo): PerformanceProfile {
-        if (info.isLowRam || info.totalRamMb in 1..1600 || info.cpuCores <= 4) {
+        // Android TV guidance says to use isLowRamDevice as the primary signal
+        // because OEMs can mark constrained devices even when raw RAM/resolution
+        // signals are misleading.
+        if (info.isLowRam) {
             return PerformanceProfile.PERFORMANCE
         }
 
-        val is4kDisplay = info.displayWidth >= 3840 || info.displayHeight >= 2160
-        if (is4kDisplay && info.totalRamMb >= 3000 && info.cpuCores >= 6) {
+        // 1 GB and 1.5 GB TV devices are the main low-RAM target range.
+        if (info.totalRamMb in 1L..1600L) {
+            return PerformanceProfile.PERFORMANCE
+        }
+
+        // CPU count alone is not enough to demote a regular TV. A 4-core TV with
+        // about 2.7 GB RAM and hardware codecs should stay BALANCED, not PERFORMANCE.
+        if (info.totalRamMb in 1L..2399L && info.cpuCores <= 4) {
+            return PerformanceProfile.PERFORMANCE
+        }
+
+        // Quality is intentionally conservative. Display.Mode often reports the
+        // app UI mode, not video capability, so require memory and CPU headroom too.
+        val hasLargeMemoryHeadroom = info.totalRamMb >= 3600L && info.memoryClassMb >= 256
+        val hasEnoughCpu = info.cpuCores >= 6
+        val likely4kVideoCapable = info.hasHardwareHevc && info.totalRamMb >= 3000L
+        if (hasLargeMemoryHeadroom && hasEnoughCpu && likely4kVideoCapable) {
             return PerformanceProfile.QUALITY
         }
 
