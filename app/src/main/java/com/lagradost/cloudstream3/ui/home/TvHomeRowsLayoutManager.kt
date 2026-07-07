@@ -8,12 +8,12 @@ import androidx.recyclerview.widget.RecyclerView
 import kotlin.math.abs
 
 /**
- * Stable focus-aligned layout manager for the Android TV home rows.
+ * Stable TV shelf layout manager for the home rows.
  *
- * The master RecyclerView stays full height so RecyclerView can still recycle rows normally.
- * The visual shelf is created with top/bottom padding. When focus moves to another row,
- * the row is placed at parent.paddingTop immediately. Horizontal card movement inside the
- * same row does not trigger smooth vertical scrolling, which prevents the half-row jump.
+ * Important detail: LinearLayoutManager.scrollToPositionWithOffset() measures the
+ * offset from the start after RecyclerView padding. Because the home shelf is
+ * created with top padding, the correct offset is 0, not parent.paddingTop.
+ * Passing parent.paddingTop double-offsets the target row and hides it below the shelf.
  */
 class TvHomeRowsLayoutManager(
     context: Context,
@@ -27,7 +27,22 @@ class TvHomeRowsLayoutManager(
     }
 
     private fun isAligned(parent: RecyclerView, row: View): Boolean {
-        return abs(row.top - parent.paddingTop) <= 6
+        return abs(row.top - parent.paddingTop) <= 4
+    }
+
+    private fun alignAttachedRow(parent: RecyclerView, row: View): Boolean {
+        if (parent.height <= 0) return false
+        val dy = row.top - parent.paddingTop
+        if (abs(dy) <= 4) return false
+        parent.stopScroll()
+        parent.scrollBy(0, dy)
+        return true
+    }
+
+    private fun scrollRowToShelf(parent: RecyclerView, adapterPosition: Int) {
+        if (adapterPosition == RecyclerView.NO_POSITION) return
+        parent.stopScroll()
+        scrollToPositionWithOffset(adapterPosition, 0)
     }
 
     fun alignRowAtPosition(
@@ -36,17 +51,21 @@ class TvHomeRowsLayoutManager(
         immediate: Boolean = true,
     ): Boolean {
         if (adapterPosition == RecyclerView.NO_POSITION) return false
-        val align = {
-            if (parent.isAttachedToWindow) {
-                parent.stopScroll()
-                scrollToPositionWithOffset(adapterPosition, parent.paddingTop)
-            }
+
+        val attached = parent.findViewHolderForAdapterPosition(adapterPosition)?.itemView
+        if (attached != null) {
+            alignAttachedRow(parent, attached)
+            return true
         }
 
         if (immediate && !parent.isComputingLayout) {
-            align()
+            scrollRowToShelf(parent, adapterPosition)
         } else {
-            parent.post { align() }
+            parent.post {
+                if (parent.isAttachedToWindow) {
+                    scrollRowToShelf(parent, adapterPosition)
+                }
+            }
         }
         return true
     }
@@ -69,7 +88,7 @@ class TvHomeRowsLayoutManager(
             val position = parent.getChildAdapterPosition(row)
             if (position != RecyclerView.NO_POSITION) {
                 if (!isAligned(parent, row)) {
-                    alignRowAtPosition(parent, position, immediate = false)
+                    alignAttachedRow(parent, row)
                 }
                 return true
             }
@@ -88,7 +107,7 @@ class TvHomeRowsLayoutManager(
         val position = parent.getChildAdapterPosition(row)
         if (position != RecyclerView.NO_POSITION) {
             if (!isAligned(parent, row)) {
-                alignRowAtPosition(parent, position, immediate = immediate)
+                alignAttachedRow(parent, row)
             }
             return true
         }

@@ -1,5 +1,7 @@
 package com.lagradost.cloudstream3.ui.home
 
+import com.lagradost.cloudstream3.ui.result.FOCUS_SELF
+
 import androidx.recyclerview.widget.LinearLayoutManager
 import android.view.KeyEvent
 import java.net.URLDecoder
@@ -587,24 +589,21 @@ open class HomeChildItemAdapter(
 
             is HomeResultGridExpandedBinding -> {
                 updateLayoutParms(binding.backgroundCard, setWidth, setHeight)
-
-                if (isFirstItem) { // to fix tv
-                    binding.backgroundCard.nextFocusLeftId = R.id.nav_rail_view
+                binding.backgroundCard.nextFocusLeftId = if (isFirstItem && isLayout(TV or EMULATOR)) {
+                    R.id.nav_rail_view
+                } else {
+                    FOCUS_SELF
                 }
             }
 
             is HomeResultGridTvBinding -> {
                 configureTwitchTvCardSize(binding.root, binding.backgroundCard)
-
-                if (isFirstItem) {
-                    binding.root.nextFocusLeftId = R.id.nav_rail_view
-                    binding.backgroundCard.nextFocusLeftId = R.id.nav_rail_view
-                }
+                val leftTarget = if (isFirstItem) R.id.nav_rail_view else FOCUS_SELF
+                binding.root.nextFocusLeftId = leftTarget
+                binding.backgroundCard.nextFocusLeftId = leftTarget
             }
         }
-    }
-
-    override fun onBindContent(
+    }    override fun onBindContent(
         holder: ViewHolderState<Boolean>,
         item: SearchResponse,
         position: Int
