@@ -92,6 +92,8 @@ import com.lagradost.cloudstream3.ui.player.live.LIVE_MARGIN
 import com.lagradost.cloudstream3.ui.player.live.PREFERRED_LIVE_OFFSET
 import com.lagradost.cloudstream3.ui.settings.Globals.EMULATOR
 import com.lagradost.cloudstream3.ui.settings.Globals.PHONE
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.ui.subtitles.SaveCaptionStyle
 import com.lagradost.cloudstream3.ui.subtitles.SubtitlesFragment.Companion.applyStyle
@@ -101,6 +103,8 @@ import com.lagradost.cloudstream3.utils.CLEARKEY_DRM_UUID
 import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
 import com.lagradost.cloudstream3.utils.Coroutines.runOnMainThread
 import com.lagradost.cloudstream3.utils.DataStoreHelper.currentAccount
+import com.lagradost.cloudstream3.utils.TvPerformanceProfileManager
+
 import com.lagradost.cloudstream3.utils.DrmExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkPlayList
@@ -628,7 +632,7 @@ class CS3IPlayer : IPlayer {
             stop()
             release()
         }
-        //simpleCache?.release()
+        maybeReleaseSimpleCacheForTvMemory()
 
         exoPlayer = null
         event(PlayerAttachedEvent(null))
@@ -637,12 +641,13 @@ class CS3IPlayer : IPlayer {
 
     override fun onStop() {
         Log.i(TAG, "onStop")
-
         saveData()
         if (!isAudioOnlyBackground) {
             handleEvent(CSPlayerEvent.Pause, PlayerEventSource.Player)
+            if (usesTvPlaybackProfile()) {
+                releasePlayer(saveTime = false)
+            }
         }
-        //releasePlayer()
     }
 
     override fun onPause() {
@@ -745,6 +750,18 @@ class CS3IPlayer : IPlayer {
 
 companion object {
         private const val CRONET_TIMEOUT_MS = 15_000
+        private const val DEFAULT_CRONET_RELEASE_DELAY_MS = 60_000L
+        private const val MIN_TV_CACHE_BYTES = 1024L * 1024L
+        @Volatile
+        private var cronetReleaseDelayMs = DEFAULT_CRONET_RELEASE_DELAY_MS
+        @Volatile
+        private var releaseSimpleCacheOnPlayerRelease = false
+        private val cronetExecutor by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+            Executors.newCachedThreadPool { runnable ->
+                Thread(runnable, "CS3-CronetDataSource").apply { isDaemon = true }
+            }
+        }
+
 
         /**
          * Single shared engine, to minimize the overhead of maintaining many as:
@@ -776,7 +793,7 @@ companion object {
                 // This might get dropped, but that should be very rare
                 // and should not affect it.
                 releaseCronetEngineInstantly(id)
-            }, 60_000) // 1min timeout before release
+            }, cronetReleaseDelayMs)
 
             // If not posted, then run instantly
             if (!posted) {
@@ -819,6 +836,115 @@ companion object {
 
         private var simpleCache: SimpleCache? = null
 
+        private fun usesTvPlaybackProfile(): Boolean = isLayout(TV or EMULATOR)
+
+        private fun configureTvPlaybackMemory(context: Context) {
+            if (!usesTvPlaybackProfile()) {
+                cronetReleaseDelayMs = DEFAULT_CRONET_RELEASE_DELAY_MS
+                releaseSimpleCacheOnPlayerRelease = false
+                return
+            }
+            TvPerformanceProfileManager.ensureInitialized(context)
+            val settings = TvPerformanceProfileManager.getSettings(context)
+            cronetReleaseDelayMs = settings.cronetReleaseDelayMs
+            releaseSimpleCacheOnPlayerRelease = settings.releasePlaybackCacheOnStop
+        }
+
+        private fun loadControlTargetBufferBytes(bytes: Long): Int {
+            return when {
+                bytes <= 0L -> DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES
+                bytes > Int.MAX_VALUE -> Int.MAX_VALUE
+                else -> bytes.toInt()
+            }
+        }
+
+        private fun tunedTargetBufferBytes(context: Context, requestedBytes: Long): Long {
+            if (requestedBytes > 0L || !usesTvPlaybackProfile()) return requestedBytes
+            return TvPerformanceProfileManager.getSettings(context).playbackBufferTargetMb * 1024L * 1024L
+        }
+
+        private fun tunedDiskCacheSize(context: Context, requestedBytes: Long): Long {
+            if (requestedBytes <= 0L || !usesTvPlaybackProfile()) return requestedBytes
+            val percent = TvPerformanceProfileManager.getSettings(context)
+                .playbackCacheScalePercent
+                .coerceIn(1, 100)
+            return (requestedBytes * percent / 100L).coerceAtLeast(MIN_TV_CACHE_BYTES)
+        }
+
+        private fun tunedSimpleCacheSize(context: Context, requestedBytes: Long): Long {
+            if (requestedBytes <= 0L || !usesTvPlaybackProfile()) return requestedBytes
+            val percent = TvPerformanceProfileManager.getSettings(context)
+                .playbackCacheScalePercent
+                .coerceIn(1, 100)
+            return (requestedBytes * percent / 100L).coerceAtLeast(MIN_TV_CACHE_BYTES)
+        }
+
+        private fun tunedMaxVideoHeight(context: Context, requestedHeight: Int?): Int {
+            val requested = requestedHeight?.takeIf { it > 0 } ?: Int.MAX_VALUE
+            if (!usesTvPlaybackProfile()) return requested
+            val profileCap = TvPerformanceProfileManager.getSettings(context).playbackMaxVideoHeight
+            val tvCap = if (isLayout(EMULATOR)) minOf(profileCap, 720) else profileCap
+            return minOf(requested, tvCap).coerceAtLeast(1)
+        }
+
+        private fun maybeReleaseSimpleCacheForTvMemory() {
+            if (!releaseSimpleCacheOnPlayerRelease) return
+            try {
+                simpleCache?.release()
+            } catch (t: Throwable) {
+                logError(t)
+            } finally {
+                simpleCache = null
+            }
+        }
+
+        private fun createPlaybackLoadControl(
+            context: Context,
+            isTwitchLowLatency: Boolean,
+            requestedTargetBufferBytes: Long,
+            requestedVideoBufferMs: Long,
+        ): DefaultLoadControl {
+            if (usesTvPlaybackProfile()) {
+                configureTvPlaybackMemory(context)
+            }
+            val settings = if (usesTvPlaybackProfile()) {
+                TvPerformanceProfileManager.getSettings(context)
+            } else {
+                null
+            }
+            val targetBytes = tunedTargetBufferBytes(context, requestedTargetBufferBytes)
+            return DefaultLoadControl.Builder()
+                .setTargetBufferBytes(loadControlTargetBufferBytes(targetBytes))
+                .setBackBuffer(30_000, true)
+                .setBufferDurationsMs(
+                    if (isTwitchLowLatency) {
+                        settings?.twitchMinBufferMs ?: TWITCH_MIN_BUFFER_MS
+                    } else {
+                        DefaultLoadControl.DEFAULT_MIN_BUFFER_MS
+                    },
+                    if (isTwitchLowLatency) {
+                        settings?.twitchMaxBufferMs ?: TWITCH_MAX_BUFFER_MS
+                    } else if (requestedVideoBufferMs <= 0L) {
+                        DefaultLoadControl.DEFAULT_MAX_BUFFER_MS
+                    } else {
+                        requestedVideoBufferMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                    },
+                    if (isTwitchLowLatency) {
+                        settings?.twitchBufferForPlaybackMs ?: TWITCH_BUFFER_FOR_PLAYBACK_MS
+                    } else {
+                        DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS
+                    },
+                    if (isTwitchLowLatency) {
+                        settings?.twitchBufferForPlaybackAfterRebufferMs
+                            ?: TWITCH_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
+                    } else {
+                        DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
+                    },
+                )
+                .build()
+        }
+
+
         /// Create a small factory for small things, no cache, no cronet
         private fun createOnlineSource(
             headers: Map<String, String>?,
@@ -840,6 +966,8 @@ companion object {
         }
 
         fun tryCreateEngine(context: Context, diskCacheSize: Long): CronetEngine? {
+            configureTvPlaybackMemory(context)
+            val tunedDiskCacheSize = tunedDiskCacheSize(context, diskCacheSize)
             // Fast case, no need to recreate it
             cronetEngine?.let {
                 return it
@@ -858,7 +986,7 @@ companion object {
                     .enableQuic(true)
                     .setStoragePath(cacheDirectory.absolutePath)
                     .setLibraryLoader(null)
-                    .enableHttpCache(CronetEngine.Builder.HTTP_CACHE_DISK, diskCacheSize)
+                    .enableHttpCache(CronetEngine.Builder.HTTP_CACHE_DISK, tunedDiskCacheSize)
                     .build().also { buildEngine ->
                         Log.d(
                             TAG,
@@ -888,7 +1016,7 @@ companion object {
                     OkHttpDataSource.Factory(app.baseClient).setUserAgent(userAgent)
                 } else {
                     Log.d(TAG, "Using CronetDataSource for $link")
-                    CronetDataSource.Factory(engine, Executors.newSingleThreadExecutor())
+                    CronetDataSource.Factory(engine, cronetExecutor)
                         .setUserAgent(userAgent)
                         .setConnectionTimeoutMs(CRONET_TIMEOUT_MS)
                         .setReadTimeoutMs(CRONET_TIMEOUT_MS)
@@ -925,12 +1053,13 @@ companion object {
 
         private fun getCache(context: Context, cacheSize: Long): SimpleCache? {
             return try {
+                val tunedCacheSize = tunedSimpleCacheSize(context, cacheSize)
                 val databaseProvider = StandaloneDatabaseProvider(context)
                 SimpleCache(
                     File(
                         context.cacheDir, "exoplayer"
                     ).also { deleteFileOnExit(it) }, // Ensures always fresh file
-                    LeastRecentlyUsedCacheEvictor(cacheSize),
+                    LeastRecentlyUsedCacheEvictor(tunedCacheSize),
                     databaseProvider
                 )
             } catch (e: Exception) {
@@ -974,7 +1103,7 @@ companion object {
             trackSelector.parameters = trackSelector.buildUponParameters()
                 // This will not force higher quality videos to fail
                 // but will make the m3u8 pick the correct preferred
-                .setMaxVideoSize(Int.MAX_VALUE, maxVideoHeight ?: Int.MAX_VALUE)
+                .setMaxVideoSize(Int.MAX_VALUE, tunedMaxVideoHeight(context, maxVideoHeight))
                 .setPreferredAudioLanguage(null)
                 .build()
             return trackSelector

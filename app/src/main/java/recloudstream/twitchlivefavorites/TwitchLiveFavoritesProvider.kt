@@ -25,6 +25,12 @@ import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.nicehttp.RequestBodyTypes
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+
+
+
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLDecoder
@@ -63,6 +69,10 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     private val twitchWebUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
     private val twitchGqlUrl = "https://gql.twitch.tv/gql"
     private val liveCacheTtlMs = 5 * 60 * 1000L
+private val recentTopClipsCacheTtlMs = 20 * 60 * 1000L
+private val twitchGameLookupCacheTtlMs = 30 * 60 * 1000L
+private val followedClipRequestConcurrency = 4
+
     private val failedApiRetryDelayMs = 60 * 1000L
 
     private var cachedAccessToken: String? = null
@@ -74,6 +84,8 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
 private var cachedRecentTopClipsKey: String = ""
 private var cachedRecentTopClipsExpiresAtMs: Long = 0L
 private var cachedRecentTopClips: List<SearchResponse> = emptyList()
+private val cachedGameNames: MutableMap<String, Pair<Long, String>> = mutableMapOf()
+
     private var rateLimitedUntilMs: Long = 0L
     private var lastTwitchApiError: String? = null
 
@@ -577,6 +589,7 @@ private fun getSavedFavoriteChannels(): List<String> {
      */
     private fun maybeScheduleAutoRefresh(cacheKey: String) {
         if (cacheKey.isBlank()) return
+        // Provider refresh is data only. HomeFragment/ViewModel owns lifecycle-aware row refresh.
     }
 
     private fun updatedAtText(): String? {
@@ -840,18 +853,34 @@ private fun buildHelixUrl(
             .distinct()
         if (cleanIds.isEmpty()) return emptyMap()
 
+        val now = nowMs()
         val names = mutableMapOf<String, String>()
-        cleanIds.chunked(100).forEach { chunk ->
+        val missingIds = cleanIds.filter { id ->
+            val cached = cachedGameNames[id]
+            if (cached != null && now < cached.first) {
+                names[id] = cached.second
+                false
+            } else {
+                true
+            }
+        }
+
+        missingIds.chunked(100).forEach { chunk ->
             val response = twitchGet<TwitchGamesResponse>(
                 buildHelixUrl("games", repeatedKey = "id", repeatedValues = chunk),
             ) ?: return@forEach
-
             response.data.forEach { game ->
                 if (game.id.isNotBlank() && game.name.isNotBlank()) {
                     names[game.id] = game.name
+                    cachedGameNames[game.id] = (now + twitchGameLookupCacheTtlMs) to game.name
                 }
             }
         }
+
+        if (cachedGameNames.size > 500) {
+            cachedGameNames.entries.removeAll { it.value.first <= now }
+        }
+
         return names
     }
     private suspend fun fetchTwitchProfileAvatar(channel: String?): String? {
@@ -981,84 +1010,91 @@ val response = twitchGet<TwitchVideosResponse>(
     return format.format(java.util.Date(timestampMs))
 }
 private suspend fun fetchFollowedClipsHome(
-    followed: List<TwitchFollowedChannel>,
-    perChannel: Int,
-): List<SearchResponse> {
-    val cleanFollowed = followed
-        .filter { it.broadcaster_id.isNotBlank() || it.broadcaster_login.isNotBlank() }
-        .distinctBy { it.broadcaster_id.ifBlank { normalizeChannel(it.broadcaster_login) } }
-        .take(followedHomeChannelRequestLimit)
+        followed: List<TwitchFollowedChannel>,
+        perChannel: Int,
+    ): List<SearchResponse> {
+        val cleanFollowed = followed
+            .filter { it.broadcaster_id.isNotBlank() || it.broadcaster_login.isNotBlank() }
+            .distinctBy { it.broadcaster_id.ifBlank { normalizeChannel(it.broadcaster_login) } }
+            .take(minOf(followedHomeChannelRequestLimit, followedClipRequestConcurrency * 4))
+        if (cleanFollowed.isEmpty()) return emptyList()
 
-    if (cleanFollowed.isEmpty()) return emptyList()
-
-    val cacheKey = cleanFollowed
-        .joinToString("|") { it.broadcaster_id.ifBlank { normalizeChannel(it.broadcaster_login) } } +
-        ":days=$recentTopClipsLookbackDays:min=$recentTopClipsMinViews:max=$recentTopClipsMaxItems"
-    val now = nowMs()
-    if (cacheKey == cachedRecentTopClipsKey && now < cachedRecentTopClipsExpiresAtMs) {
-        return cachedRecentTopClips
-    }
-
-    val startedAt = twitchIsoUtc(now - recentTopClipsLookbackDays * 24L * 60L * 60L * 1000L)
-    val endedAt = twitchIsoUtc(now)
-    val perChannelLimit = perChannel.coerceIn(1, 100)
-    val candidates = mutableListOf<TwitchFollowedClipHomeItem>()
-
-    cleanFollowed.forEach { followedChannel ->
-        val broadcasterId = followedChannel.broadcaster_id.ifBlank { return@forEach }
-        val channelLogin = normalizeChannel(followedChannel.broadcaster_login)
-        val displayName = followedChannel.broadcaster_name
-            .ifBlank { followedChannel.broadcaster_login }
-            .ifBlank { "Twitch" }
-        val channelAvatar = fetchTwitchProfileAvatar(channelLogin.ifBlank { displayName })
-        val response = twitchGet<TwitchClipsResponse>(
-            buildHelixUrl(
-                "clips",
-                extra = mapOf(
-                    "broadcaster_id" to broadcasterId,
-                    "started_at" to startedAt,
-                    "ended_at" to endedAt,
-                    "first" to perChannelLimit.toString(),
-                ),
-            ),
-        ) ?: return@forEach
-
-        response.data
-            .asSequence()
-            .filter { it.view_count >= recentTopClipsMinViews }
-            .map { clip ->
-                TwitchFollowedClipHomeItem(
-                    clip = clip,
-                    channelDisplayName = displayName,
-                    channelLogin = channelLogin,
-                    channelAvatar = channelAvatar,
-                )
-            }
-            .forEach { candidates.add(it) }
-    }
-
-    val gameNames = fetchGameNames(candidates.map { it.clip.game_id })
-    val result = candidates
-        .sortedWith(
-            compareByDescending<TwitchFollowedClipHomeItem> { it.clip.view_count }
-                .thenByDescending { it.clip.created_at }
-        )
-        .mapNotNull { item ->
-            item.clip.toFollowedClipHomeCard(
-                item.channelDisplayName,
-                item.channelLogin,
-                item.channelAvatar,
-                gameNames[item.clip.game_id],
-            ) as? SearchResponse
+        val cacheKey = cleanFollowed
+            .joinToString("|") { it.broadcaster_id.ifBlank { normalizeChannel(it.broadcaster_login) } } +
+            ":days=${recentTopClipsLookbackDays}:min=${recentTopClipsMinViews}:max=${recentTopClipsMaxItems}"
+        val now = nowMs()
+        if (cacheKey == cachedRecentTopClipsKey && now < cachedRecentTopClipsExpiresAtMs) {
+            return cachedRecentTopClips
         }
-        .distinctBy { it.url }
-        .take(recentTopClipsMaxItems)
 
-    cachedRecentTopClipsKey = cacheKey
-    cachedRecentTopClipsExpiresAtMs = now + liveCacheTtlMs
-    cachedRecentTopClips = result
-    return result
-}
+        val startedAt = twitchIsoUtc(now - recentTopClipsLookbackDays * 24L * 60L * 60L * 1000L)
+        val endedAt = twitchIsoUtc(now)
+        val perChannelLimit = perChannel.coerceIn(1, 100)
+        val candidates = mutableListOf<TwitchFollowedClipHomeItem>()
+
+        coroutineScope {
+            cleanFollowed.chunked(followedClipRequestConcurrency).forEach { batch ->
+                val batchItems = batch.map { followedChannel ->
+                    async {
+                        val broadcasterId = followedChannel.broadcaster_id.ifBlank {
+                            return@async emptyList<TwitchFollowedClipHomeItem>()
+                        }
+                        val channelLogin = normalizeChannel(followedChannel.broadcaster_login)
+                        val displayName = followedChannel.broadcaster_name
+                            .ifBlank { followedChannel.broadcaster_login }
+                            .ifBlank { "Twitch" }
+                        val channelAvatar = fetchTwitchProfileAvatar(channelLogin.ifBlank { displayName })
+                        val response = twitchGet<TwitchClipsResponse>(
+                            buildHelixUrl(
+                                "clips",
+                                extra = mapOf(
+                                    "broadcaster_id" to broadcasterId,
+                                    "started_at" to startedAt,
+                                    "ended_at" to endedAt,
+                                    "first" to perChannelLimit.toString(),
+                                ),
+                            ),
+                        ) ?: return@async emptyList<TwitchFollowedClipHomeItem>()
+
+                        response.data
+                            .asSequence()
+                            .filter { it.view_count >= recentTopClipsMinViews }
+                            .map { clip ->
+                                TwitchFollowedClipHomeItem(
+                                    clip = clip,
+                                    channelDisplayName = displayName,
+                                    channelLogin = channelLogin,
+                                    channelAvatar = channelAvatar,
+                                )
+                            }
+                            .toList()
+                    }
+                }.awaitAll().flatten()
+                candidates.addAll(batchItems)
+            }
+        }
+
+        val gameNames = fetchGameNames(candidates.map { it.clip.game_id })
+        val result = candidates
+            .sortedWith(
+                compareByDescending<TwitchFollowedClipHomeItem> { it.clip.view_count }
+                    .thenByDescending { it.clip.created_at }
+            )
+            .mapNotNull { item ->
+                item.clip.toFollowedClipHomeCard(
+                    item.channelDisplayName,
+                    item.channelLogin,
+                    item.channelAvatar,
+                    gameNames[item.clip.game_id],
+                ) as? SearchResponse
+            }
+            .distinctBy { it.url }
+            .take(recentTopClipsMaxItems)
+        cachedRecentTopClipsKey = cacheKey
+        cachedRecentTopClipsExpiresAtMs = now + recentTopClipsCacheTtlMs
+        cachedRecentTopClips = result
+        return result
+    }
 
     private fun TwitchClip.toFollowedClipHomeCard(
         channelDisplayName: String,

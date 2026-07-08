@@ -27,7 +27,7 @@ import java.util.Locale
 object TvPerformanceProfileManager {
     private const val TAG = "TvPerformanceProfile"
 
-    private const val CURRENT_AUTO_DETECTION_VERSION = 3
+    private const val CURRENT_AUTO_DETECTION_VERSION = 4
 
     private const val USER_SELECTED_PROFILE_KEY = "tv_performance_profile_user"
     private const val AUTO_DETECTED_PROFILE_KEY = "tv_performance_profile_auto"
@@ -97,6 +97,14 @@ object TvPerformanceProfileManager {
         val homeRowInitialPrefetchItemCount: Int,
         val preferHardwareBitmaps: Boolean,
         val playbackBufferTargetMb: Int,
+        val playbackMaxVideoHeight: Int,
+        val playbackCacheScalePercent: Int,
+        val cronetReleaseDelayMs: Long,
+        val releasePlaybackCacheOnStop: Boolean,
+        val twitchMinBufferMs: Int,
+        val twitchMaxBufferMs: Int,
+        val twitchBufferForPlaybackMs: Int,
+        val twitchBufferForPlaybackAfterRebufferMs: Int,
     )
 
     fun ensureInitialized(context: Context) {
@@ -186,6 +194,14 @@ object TvPerformanceProfileManager {
                 homeRowInitialPrefetchItemCount = 2,
                 preferHardwareBitmaps = true,
                 playbackBufferTargetMb = 60,
+                playbackMaxVideoHeight = 720,
+                playbackCacheScalePercent = 25,
+                cronetReleaseDelayMs = 5_000L,
+                releasePlaybackCacheOnStop = true,
+                twitchMinBufferMs = 4_000,
+                twitchMaxBufferMs = 12_000,
+                twitchBufferForPlaybackMs = 750,
+                twitchBufferForPlaybackAfterRebufferMs = 1_500,
             )
 
             PerformanceProfile.BALANCED -> TvPerformanceSettings(
@@ -198,6 +214,14 @@ object TvPerformanceProfileManager {
                 homeRowInitialPrefetchItemCount = 3,
                 preferHardwareBitmaps = true,
                 playbackBufferTargetMb = 80,
+                playbackMaxVideoHeight = 1080,
+                playbackCacheScalePercent = 50,
+                cronetReleaseDelayMs = 30_000L,
+                releasePlaybackCacheOnStop = false,
+                twitchMinBufferMs = 6_000,
+                twitchMaxBufferMs = 20_000,
+                twitchBufferForPlaybackMs = 1_000,
+                twitchBufferForPlaybackAfterRebufferMs = 2_000,
             )
 
             PerformanceProfile.QUALITY -> TvPerformanceSettings(
@@ -210,6 +234,14 @@ object TvPerformanceProfileManager {
                 homeRowInitialPrefetchItemCount = 4,
                 preferHardwareBitmaps = true,
                 playbackBufferTargetMb = 100,
+                playbackMaxVideoHeight = 2160,
+                playbackCacheScalePercent = 100,
+                cronetReleaseDelayMs = 60_000L,
+                releasePlaybackCacheOnStop = false,
+                twitchMinBufferMs = 8_000,
+                twitchMaxBufferMs = 30_000,
+                twitchBufferForPlaybackMs = 1_500,
+                twitchBufferForPlaybackAfterRebufferMs = 3_000,
             )
         }
     }
