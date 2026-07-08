@@ -97,35 +97,35 @@ object TwitchAccountAuth {
 
         // BEGIN TwitchRestorableAccountBackupPatch
     private fun restoreAccountFromDeviceBackupIfNeeded(): Boolean {
-        if (!getKey<String>(ACCESS_TOKEN_KEY).isNullOrBlank()) return false
-
         val restored = TwitchAccountRestoreStore.restore() ?: return false
-        setKey(ACCESS_TOKEN_KEY, restored.accessToken)
+        var changed = false
 
-        restored.refreshToken?.takeIf { it.isNotBlank() }?.let {
-            setKey(REFRESH_TOKEN_KEY, it)
+        fun restoreStringIfMissing(key: String, value: String?) {
+            val current: String? = getKey(key)
+            val clean = value?.trim()?.takeIf { it.isNotBlank() } ?: return
+            if (current.isNullOrBlank()) {
+                setKey(key, clean)
+                changed = true
+            }
         }
 
-        if (restored.expiresAt > 0L) {
-            setKey(EXPIRES_AT_KEY, restored.expiresAt)
+        fun restoreLongIfMissing(key: String, value: Long) {
+            val current: Long = getKey(key) ?: 0L
+            if (current <= 0L && value > 0L) {
+                setKey(key, value)
+                changed = true
+            }
         }
 
-        restored.userId?.takeIf { it.isNotBlank() }?.let {
-            setKey(USER_ID_KEY, it)
-        }
+        restoreStringIfMissing(ACCESS_TOKEN_KEY, restored.accessToken)
+        restoreStringIfMissing(REFRESH_TOKEN_KEY, restored.refreshToken)
+        restoreLongIfMissing(EXPIRES_AT_KEY, restored.expiresAt)
+        restoreStringIfMissing(USER_ID_KEY, restored.userId)
+        restoreStringIfMissing(USER_LOGIN_KEY, restored.userLogin)
+        restoreStringIfMissing(USER_DISPLAY_KEY, restored.userDisplayName)
 
-        restored.userLogin?.takeIf { it.isNotBlank() }?.let {
-            setKey(USER_LOGIN_KEY, it)
-        }
-
-        restored.userDisplayName?.takeIf { it.isNotBlank() }?.let {
-            setKey(USER_DISPLAY_KEY, it)
-        }
-
-        return true
-    }
-
-    private fun persistAccountToDeviceBackup() {
+        return changed
+    }private fun persistAccountToDeviceBackup() {
         TwitchAccountRestoreStore.save(
             accessToken = getKey<String>(ACCESS_TOKEN_KEY),
             refreshToken = getKey<String>(REFRESH_TOKEN_KEY),
@@ -154,7 +154,43 @@ fun isSignedIn(): Boolean {
             ?.takeIf { it.isNotBlank() }
     }
 
-    fun lastImportSummary(): String? {
+    suspend fun signedInUserId(): String? {
+        restoreAccountFromDeviceBackupIfNeeded()
+
+        userId()?.let { return it }
+
+        val accessToken = getValidAccessToken()
+            ?.trim()
+            .orEmpty()
+
+        if (accessToken.isBlank()) return null
+
+        return runCatching {
+            val user = fetchAuthenticatedUser(accessToken)
+            saveUser(user)
+            user.id.trim().takeIf { it.isNotBlank() }
+        }.onFailure { error ->
+            logError(error)
+        }.getOrNull() ?: userId()
+    }
+
+    suspend fun forceRefreshAccessToken(): String? {
+        restoreAccountFromDeviceBackupIfNeeded()
+
+        val refreshToken = getKey<String>(REFRESH_TOKEN_KEY)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return getKey<String>(ACCESS_TOKEN_KEY)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+
+        return refreshAccessToken(refreshToken)
+            ?: getKey<String>(ACCESS_TOKEN_KEY)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+    }
+
+fun lastImportSummary()(): String? {
         val count = getKey<Int>(LAST_IMPORT_COUNT_KEY) ?: return null
         val removed = getKey<Int>(LAST_SYNC_REMOVED_COUNT_KEY) ?: 0
         return if (removed > 0) {

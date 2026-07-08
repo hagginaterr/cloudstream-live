@@ -90,8 +90,8 @@ private var cachedRecentTopClips: List<SearchResponse> = emptyList()
         // from Twitch's streams/followed endpoint instead of the local favorites list.
         // NewFromFollowedChannelsHomePatch: also add fast-capped media rows from followed channels.
         ensureStartupFavoritesSaved()
-        val signedInUserId = TwitchAccountAuth.userId()
-        val useSignedInFollows = TwitchAccountAuth.isSignedIn() && !signedInUserId.isNullOrBlank()
+        val signedInUserId = TwitchAccountAuth.signedInUserId()
+        val useSignedInFollows = !signedInUserId.isNullOrBlank()
         val savedFavorites = getSavedFavoriteChannels()
         val usingStarterFavorites = savedFavorites.isEmpty()
         val favorites = if (usingStarterFavorites) starterFavoriteChannels else savedFavorites
