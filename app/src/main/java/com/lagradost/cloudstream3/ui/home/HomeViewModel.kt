@@ -208,7 +208,11 @@ class HomeViewModel : ViewModel() {
     }
 
     private var onGoingLoad: Job? = null
+    private var liveNowRefreshJob: Job? = null
     private var isCurrentlyLoadingName: String? = null
+
+    @Volatile
+    private var liveNowOnlyRefreshPending: Boolean = false
     private fun loadAndCancel(api: MainAPI) {
         //println("loaded ${api.name}")
         onGoingLoad?.cancel()
@@ -226,6 +230,12 @@ class HomeViewModel : ViewModel() {
     private val _page =
         MutableLiveData<Resource<Map<String, ExpandableHomepageList>>>(Resource.Loading())
     val page: LiveData<Resource<Map<String, ExpandableHomepageList>>> = _page
+
+    fun consumeLiveNowOnlyRefreshFlag(): Boolean {
+        val value = liveNowOnlyRefreshPending
+        liveNowOnlyRefreshPending = false
+        return value
+    }
 
     val lock: MutableSet<String> = mutableSetOf()
 
@@ -314,6 +324,57 @@ class HomeViewModel : ViewModel() {
         }
     }
 
+    fun refreshLiveNowOnly() {
+        liveNowRefreshJob?.cancel()
+        liveNowRefreshJob = ioSafe {
+            val twitchName = "Twitch"
+            val api = getApiFromNameNull(twitchName) ?: return@ioSafe
+            val currentRepo = repo?.takeIf { it.name.equals(twitchName, ignoreCase = true) }
+                ?: APIRepository(api).also { newRepo ->
+                    repo = newRepo
+                    _apiName.postValue(newRepo.name)
+                }
+
+            if (currentRepo.hasMainPage != true) return@ioSafe
+
+            when (val data = currentRepo.getMainPage(1, null)) {
+                is Resource.Success -> {
+                    var touchedLiveNow = false
+
+                    data.value.forEach { home ->
+                        home?.items?.forEach { list ->
+                            if (!TwitchLiveNowRowController.isLiveNowRowName(list.name)) return@forEach
+
+                            val filteredList =
+                                context?.filterHomePageListByFilmQuality(list) ?: list
+                            val value = ExpandableHomepageList(
+                                filteredList.copy(
+                                    list = CopyOnWriteArrayList(filteredList.list),
+                                ),
+                                1,
+                                home.hasNext,
+                            )
+                            val targetKey = expandable.keys.firstOrNull { key ->
+                                TwitchLiveNowRowController.isLiveNowRowName(key) &&
+                                    TwitchLiveNowRowController.rowKey(key) == TwitchLiveNowRowController.rowKey(list.name)
+                            } ?: list.name
+
+                            expandable[targetKey] = value
+                            touchedLiveNow = true
+                        }
+                    }
+
+                    if (touchedLiveNow) {
+                        liveNowOnlyRefreshPending = true
+                        _page.postValue(Resource.Success(expandable))
+                    }
+                }
+
+                else -> Unit
+            }
+        }
+    }
+
     private fun load(api: MainAPI): Job = ioSafe {
         repo = //if (api != null) {
             APIRepository(api)
@@ -331,6 +392,7 @@ class HomeViewModel : ViewModel() {
         }
 
 
+        liveNowOnlyRefreshPending = false
         _page.postValue(Resource.Loading())
         _preview.postValue(Resource.Failure(false, "Home preview disabled"))
         // cancel the current preview expand as that is no longer relevant
@@ -362,6 +424,7 @@ class HomeViewModel : ViewModel() {
                     currentShuffledList = emptyList()
                     _randomItems.postValue(emptyList())
                     _preview.postValue(Resource.Failure(false, "Home preview disabled"))
+                    liveNowOnlyRefreshPending = false
                     _page.postValue(Resource.Success(expandable))
                 } catch (e: Exception) {
                     _randomItems.postValue(emptyList())
@@ -410,7 +473,12 @@ class HomeViewModel : ViewModel() {
     }
 
     private fun reloadHome(unused: Boolean = false) {
-        loadAndCancel(DataStoreHelper.currentHomePage, true)
+        val currentPage = page.value
+        if (currentPage is Resource.Success && currentPage.value.isNotEmpty()) {
+            refreshLiveNowOnly()
+        } else {
+            loadAndCancel(DataStoreHelper.currentHomePage, true)
+        }
     }
 
     private fun reloadAccount(unused: Boolean = false) {
@@ -433,6 +501,7 @@ class HomeViewModel : ViewModel() {
         MainActivity.mainPluginsLoadedEvent -= ::afterMainPluginsLoaded
         MainActivity.reloadHomeEvent -= ::reloadHome
         MainActivity.reloadAccountEvent -= ::reloadAccount
+        liveNowRefreshJob?.cancel()
         super.onCleared()
     }
 

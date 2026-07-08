@@ -22,6 +22,9 @@ import androidx.core.view.isGone
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetBehavior
@@ -78,6 +81,9 @@ import com.lagradost.cloudstream3.utils.UIHelper.getSpanCount
 import com.lagradost.cloudstream3.utils.UIHelper.navigate
 import com.lagradost.cloudstream3.utils.UIHelper.popupMenuNoIconsAndNoStringRes
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import recloudstream.twitchlivefavorites.TwitchLiveNowImmediateRefresh
 
 private const val TAG = "HomeFragment"
 
@@ -611,7 +617,28 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
         root: View,
     ) {
         TvHomeFocusController.configureMaster(homeMasterRecycler, root)
-    }    @SuppressLint("SetTextI18n")
+    }
+
+    private fun refreshTwitchLiveNowRow() {
+        val apiName = currentApiName ?: homeViewModel.apiName.value ?: "Twitch"
+        if (!apiName.equals("Twitch", ignoreCase = true)) return
+        homeViewModel.refreshLiveNowOnly()
+    }
+
+    private fun startTwitchLiveNowLifecycleRefresh() {
+        if (!isLayout(TV or EMULATOR)) return
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    delay(TwitchLiveNowImmediateRefresh.REFRESH_INTERVAL_MS)
+                    refreshTwitchLiveNowRow()
+                }
+            }
+        }
+    }
+
+    @SuppressLint("SetTextI18n")
     override fun onBindingCreated(binding: FragmentHomeBinding) {
         context?.let { HomeChildItemAdapter.updatePosterSize(it) }
         (activity as? ComponentActivity)?.attachBackPressedCallback("HomeFragment_BackPress") {
@@ -627,7 +654,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             homeApiFab.setOnClickListener(apiChangeClickListener)
             homeApiFab.setOnLongClickListener {
                 if (currentApiName?.equals("Twitch", ignoreCase = true) != true) return@setOnLongClickListener false
-                homeViewModel.loadAndCancel(currentApiName, forceReload = true, fromUI = true)
+                refreshTwitchLiveNowRow()
                 showToast(R.string.action_reload, Toast.LENGTH_SHORT)
                 true
             }
@@ -642,15 +669,12 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
             homeMasterRecycler.setRecycledViewPool(ParentItemAdapter.sharedPool)
             homeMasterRecycler.adapter = homeMasterAdapter
             configureTwitchTvHomeRows(homeMasterRecycler, root)
+            startTwitchLiveNowLifecycleRefresh()
 
             homeApiFab.isVisible = isLayout(PHONE)
 
             homePreviewReloadProvider.setOnClickListener {
-                homeViewModel.loadAndCancel(
-                    homeViewModel.apiName.value ?: "Twitch",
-                    forceReload = true,
-                    fromUI = true
-                )
+                refreshTwitchLiveNowRow()
                 showToast(R.string.action_reload, Toast.LENGTH_SHORT)
                 true
             }
@@ -712,11 +736,16 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                 when (data) {
                     is Resource.Success -> {
                         val d = data.value
-                        (homeMasterRecycler.adapter as? ParentItemAdapter)?.submitList(d.values.map {
+                        val rows = d.values.map {
                             it.copy(
                                 list = it.list.copy(list = it.list.list.toMutableList())
                             )
-                        })
+                        }
+                        val parentAdapter = homeMasterRecycler.adapter as? ParentItemAdapter
+                        val liveNowOnlyRefresh = homeViewModel.consumeLiveNowOnlyRefreshFlag()
+                        if (!liveNowOnlyRefresh || parentAdapter?.updateLiveNowRows(rows) != true) {
+                            parentAdapter?.submitList(rows)
+                        }
 
                         saveHomepageToTV(d)
 
