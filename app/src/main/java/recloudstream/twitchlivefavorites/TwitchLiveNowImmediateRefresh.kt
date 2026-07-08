@@ -8,6 +8,8 @@ package recloudstream.twitchlivefavorites
  * should bypass that stale cache exactly once.
  */
 object TwitchLiveNowImmediateRefresh {
+    const val REFRESH_INTERVAL_MS: Long = 5L * 60L * 1000L
+
     @Volatile
     private var requestedUserId: String = ""
 

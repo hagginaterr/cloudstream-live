@@ -1845,7 +1845,13 @@ private fun formatViewerCount(count: Int?): String? {
             else -> displayName
         }
         val baseResultUrl = if (directPlay && isLive) directPlayUrl(channel) else channel
-        val streamerMetaUrl = appendTwitchStreamerMeta(baseResultUrl, displayName, channel, image)
+        val streamerMetaUrl = appendTwitchStreamerMeta(
+            baseResultUrl,
+            displayName,
+            channel,
+            image,
+            userId = userId,
+        )
         val resultUrl = appendTwitchHomeCardMeta(
             streamerMetaUrl,
             title = displayTitle,
@@ -1878,11 +1884,14 @@ private fun formatViewerCount(count: Int?): String? {
     displayName: String?,
     channel: String?,
     avatarUrl: String?,
+    userId: String? = null,
 ): String {
     var out = url
     val cleanName = displayName?.ifBlank { null }
     val cleanChannel = channel?.let { normalizeChannel(it) }?.ifBlank { null }
     val cleanAvatar = avatarUrl?.ifBlank { null }
+    val cleanUserId = userId?.ifBlank { null }
+    if (cleanUserId != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_user_id", cleanUserId)
     if (cleanName != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_name", cleanName)
     if (cleanChannel != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_login", cleanChannel)
     if (cleanAvatar != null) out = appendTwitchProfileQueryParam(out, "cs_streamer_avatar", cleanAvatar)
