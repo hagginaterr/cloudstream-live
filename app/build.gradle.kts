@@ -83,6 +83,13 @@ android {
     }
 
     signingConfigs {
+        create("cloudstreamLiveDebug") {
+            storeFile = file("keystore/cloudstream-live-debug.keystore")
+            storePassword = "android"
+            keyAlias = "cloudstreamlive"
+            keyPassword = "android"
+        }
+
         // We just use SIGNING_KEY_ALIAS here since it won't change
         // so won't kill the configuration cache.
         if (System.getenv("SIGNING_KEY_ALIAS") != null) {
@@ -151,6 +158,7 @@ android {
             )
         }
         debug {
+            signingConfig = signingConfigs.getByName("cloudstreamLiveDebug")
             isDebuggable = true
             applicationIdSuffix = ".debug"
             proguardFiles(
