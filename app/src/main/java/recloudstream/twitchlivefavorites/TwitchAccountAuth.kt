@@ -380,7 +380,8 @@ fun isSyncOnStartupEnabled(): Boolean {
         setKey(LAST_SYNC_FOLLOWED_COUNT_KEY, followedNames.size)
         setKey(LAST_SYNC_REMOVED_COUNT_KEY, removed)
         setKey(LAST_IMPORT_AT_KEY, System.currentTimeMillis())
-        TwitchLiveNowImmediateRefresh.requestForUser(user.id)runCatching { MainActivity.bookmarksUpdatedEvent(true) }
+        TwitchLiveNowImmediateRefresh.requestForUser(user.id)
+        runCatching { MainActivity.bookmarksUpdatedEvent(true) }
         runCatching { MainActivity.reloadLibraryEvent(true) }
         runCatching { MainActivity.reloadHomeEvent(true) }
 

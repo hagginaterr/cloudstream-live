@@ -63,7 +63,6 @@ class TwitchApiLiveFavoritesProvider : MainAPI() {
     private val twitchWebUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
     private val twitchGqlUrl = "https://gql.twitch.tv/gql"
     private val liveCacheTtlMs = 5 * 60 * 1000L
-    private val autoRefreshIntervalMs = 5 * 60 * 1000L
     private val failedApiRetryDelayMs = 60 * 1000L
 
     private var cachedAccessToken: String? = null
@@ -77,9 +76,6 @@ private var cachedRecentTopClipsExpiresAtMs: Long = 0L
 private var cachedRecentTopClips: List<SearchResponse> = emptyList()
     private var rateLimitedUntilMs: Long = 0L
     private var lastTwitchApiError: String? = null
-    @Volatile private var lastHomeRenderedAtMs: Long = 0L
-    @Volatile private var autoRefreshScheduledAtMs: Long = 0L
-    @Volatile private var autoRefreshScheduledForKey: String = ""
 
     override val mainPage = mainPageOf(
         "$actionBase/live" to liveFavoritesNowName,
@@ -574,45 +570,13 @@ private fun getSavedFavoriteChannels(): List<String> {
      */
 
     /**
-     * Best-effort request for CloudStream to reload the visible home provider.
-     * These are CloudStream internals, so every call is deliberately guarded.
-     */
-    private fun requestUiRefresh() {
-        TwitchHomeRefreshFocus.requestFocusFirstLiveNow()
-
-        runCatching { MainActivity.reloadHomeEvent(true) }
-    }
-
-    /**
-     * API-safe auto-refresh: schedule one delayed UI reload after the row renders.
-     * The timer does not call Twitch directly and does not force-expire cache.
-     * That caps Live Now checks to roughly one Helix stream request per cache TTL
-     * while this provider keeps being re-rendered.
+     * Mark that the Live Now row rendered.
+     *
+     * UI refresh cadence now belongs to HomeFragment's STARTED lifecycle. This provider should only
+     * fetch/cache data; it must not start raw timer threads or force a parent Home reload.
      */
     private fun maybeScheduleAutoRefresh(cacheKey: String) {
         if (cacheKey.isBlank()) return
-        val now = nowMs()
-        lastHomeRenderedAtMs = now
-
-        val existingScheduleStillPending =
-            autoRefreshScheduledForKey == cacheKey && now < autoRefreshScheduledAtMs + autoRefreshIntervalMs
-        if (existingScheduleStillPending) return
-
-        autoRefreshScheduledForKey = cacheKey
-        autoRefreshScheduledAtMs = now
-
-        Thread {
-            runCatching { Thread.sleep(autoRefreshIntervalMs) }
-            val elapsedSinceRender = nowMs() - lastHomeRenderedAtMs
-            val providerWasRecentlyRendered = elapsedSinceRender <= autoRefreshIntervalMs + 60_000L
-            if (autoRefreshScheduledForKey == cacheKey && providerWasRecentlyRendered && !isBackoffActive()) {
-                requestUiRefresh()
-            }
-        }.apply {
-            name = "TwitchLiveFavoritesAutoRefresh"
-            isDaemon = true
-            start()
-        }
     }
 
     private fun updatedAtText(): String? {
