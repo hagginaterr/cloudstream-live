@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewbinding.ViewBinding
 import com.lagradost.cloudstream3.LoadResponse
+import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.databinding.HomepageParentBinding
 import com.lagradost.cloudstream3.mvvm.logError
@@ -25,7 +26,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.PHONE
 import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.AppContextUtils.isRecyclerScrollable
-import recloudstream.twitchlivefavorites.TwitchHomeRefreshFocus
+import java.lang.ref.WeakReference
 
 class LoadClickCallback(
     val action: Int = 0,
@@ -42,14 +43,112 @@ open class ParentItemAdapter(
 ) : BaseAdapter<HomeViewModel.ExpandableHomepageList, Bundle>(
     id,
     diffCallback = BaseDiffCallback(
-        itemSame = { a, b -> a.list.name == b.list.name },
-        contentSame = { a, b -> a.list.list == b.list.list },
+        itemSame = { a, b ->
+            if (TwitchLiveNowRowController.isLiveNowRowName(a.list.name) &&
+                TwitchLiveNowRowController.isLiveNowRowName(b.list.name)
+            ) {
+                TwitchLiveNowRowController.rowKey(a.list.name) == TwitchLiveNowRowController.rowKey(b.list.name)
+            } else {
+                a.list.name == b.list.name
+            }
+        },
+        contentSame = { a, b ->
+            a.list.name == b.list.name && a.list.list == b.list.list
+        },
     ),
 ) {
     companion object {
         val sharedPool = newSharedPool {
             setMaxRecycledViews(CONTENT, 4)
         }
+    }
+
+    private data class LiveNowRowState(
+        val rowName: String,
+        val items: List<SearchResponse>,
+    )
+
+    private val liveNowRows = linkedMapOf<String, LiveNowRowState>()
+    private val liveNowChildAdapters = linkedMapOf<String, WeakReference<HomeChildItemAdapter>>()
+    private val liveNowChildRecyclerViews = linkedMapOf<String, WeakReference<RecyclerView>>()
+    private val liveNowRowBindings = linkedMapOf<String, WeakReference<HomepageParentBinding>>()
+
+    private fun liveNowDisplayItem(
+        item: HomeViewModel.ExpandableHomepageList,
+    ): HomeViewModel.ExpandableHomepageList {
+        if (!TwitchLiveNowRowController.isLiveNowRowName(item.list.name)) return item
+        val state = liveNowRows[TwitchLiveNowRowController.rowKey(item.list.name)] ?: return item
+        return item.copy(
+            list = item.list.copy(
+                name = state.rowName,
+                list = state.items.toMutableList(),
+            ),
+        )
+    }
+
+    private fun rememberLiveNowRow(
+        rowName: String,
+        binding: HomepageParentBinding,
+        adapter: HomeChildItemAdapter?,
+    ) {
+        if (!TwitchLiveNowRowController.isLiveNowRowName(rowName) || adapter == null) return
+
+        val key = TwitchLiveNowRowController.rowKey(rowName)
+        liveNowChildAdapters[key] = WeakReference(adapter)
+        liveNowChildRecyclerViews[key] = WeakReference(binding.homeChildRecyclerview)
+        liveNowRowBindings[key] = WeakReference(binding)
+    }
+
+    fun updateLiveNowRows(rows: Collection<HomeViewModel.ExpandableHomepageList>): Boolean {
+        var updated = false
+        rows.forEach { row ->
+            if (TwitchLiveNowRowController.isLiveNowRowName(row.list.name)) {
+                updated = updateLiveNowItems(row.list.name, row.list.list) || updated
+            }
+        }
+        return updated
+    }
+
+    fun updateLiveNowItems(rowName: String, newItems: List<SearchResponse>): Boolean {
+        if (!TwitchLiveNowRowController.isLiveNowRowName(rowName)) return false
+
+        val key = TwitchLiveNowRowController.rowKey(rowName)
+        val rowRecycler = liveNowChildRecyclerViews[key]?.get()
+        val adapter = liveNowChildAdapters[key]?.get()
+            ?: (rowRecycler?.adapter as? HomeChildItemAdapter)
+        val rowHasFocus = rowRecycler?.hasFocus() == true
+        val previousFocusedPosition = if (rowHasFocus) {
+            TwitchLiveNowRowController.focusedAdapterPosition(rowRecycler)
+        } else {
+            RecyclerView.NO_POSITION
+        }
+        val previousFocusedKey = adapter
+            ?.immutableCurrentList
+            ?.getOrNull(previousFocusedPosition)
+            ?.let { TwitchLiveNowRowController.stableStreamKey(it) }
+
+        val displayItems = if (rowHasFocus && adapter != null) {
+            TwitchLiveNowRowController.orderedForFocusedRow(adapter.immutableCurrentList, newItems)
+        } else {
+            newItems
+        }
+
+        liveNowRows[key] = LiveNowRowState(rowName, displayItems)
+        liveNowRowBindings[key]?.get()?.homeChildMoreInfo?.text = rowName
+
+        if (adapter == null) return true
+
+        adapter.submitList(displayItems) {
+            if (rowHasFocus) {
+                TwitchLiveNowRowController.restoreFocusAfterDiff(
+                    rowRecycler,
+                    adapter,
+                    previousFocusedKey,
+                    previousFocusedPosition,
+                )
+            }
+        }
+        return true
     }
 
     data class ParentItemHolder(val binding: ViewBinding) : ViewHolderState<Bundle>(binding) {
@@ -82,8 +181,16 @@ override fun onUpdateContent(
     ) {
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
+        val displayItem = liveNowDisplayItem(item)
+        val info = displayItem.list
         configureTwitchTvRow(binding)
-        (binding.homeChildRecyclerview.adapter as? HomeChildItemAdapter)?.submitList(item.list.list)
+        binding.homeChildMoreInfo.text = info.name
+        (binding.homeChildRecyclerview.adapter as? HomeChildItemAdapter)?.apply {
+            isHorizontal = info.isHorizontalImages
+            hasNext = displayItem.hasNext
+            submitList(info.list)
+            rememberLiveNowRow(info.name, binding, this)
+        }
     }
 
     private fun configureTwitchTvRow(binding: HomepageParentBinding) {
@@ -101,7 +208,8 @@ override fun onUpdateContent(
         if (binding !is HomepageParentBinding) return
         configureTwitchTvRow(binding)
 
-        val info = item.list
+        val displayItem = liveNowDisplayItem(item)
+        val info = displayItem.list
         binding.apply {
             val currentAdapter = homeChildRecyclerview.adapter as? HomeChildItemAdapter
             if (currentAdapter == null) {
@@ -113,19 +221,29 @@ override fun onUpdateContent(
                     nextFocusDown = homeChildRecyclerview.nextFocusDownId,
                 ).apply {
                     isHorizontal = info.isHorizontalImages
-                    hasNext = item.hasNext
-                    submitList(item.list.list)
+                    hasNext = displayItem.hasNext
+                    submitList(info.list)
                 }
             } else {
                 currentAdapter.apply {
                     isHorizontal = info.isHorizontalImages
-                    hasNext = item.hasNext
+                    hasNext = displayItem.hasNext
                     this.clickCallback = this@ParentItemAdapter.clickCallback
                     nextFocusUp = homeChildRecyclerview.nextFocusUpId
                     nextFocusDown = homeChildRecyclerview.nextFocusDownId
-                    submitIncomparableList(item.list.list)
+                    if (TwitchLiveNowRowController.isLiveNowRowName(info.name)) {
+                        submitList(info.list)
+                    } else {
+                        submitIncomparableList(info.list)
+                    }
                 }
             }
+
+            rememberLiveNowRow(
+                info.name,
+                binding,
+                homeChildRecyclerview.adapter as? HomeChildItemAdapter,
+            )
 
             homeChildRecyclerview.setLinearListLayout(
                 isHorizontal = true,
@@ -137,29 +255,11 @@ override fun onUpdateContent(
 
             homeChildMoreInfo.text = info.name
 
-            if (TwitchHomeRefreshFocus.consumeForRow(info.name)) {
-                homeChildRecyclerview.post {
-                    if (!homeChildRecyclerview.isAttachedToWindow) return@post
-                    if (homeChildRecyclerview.hasFocus()) return@post
-                    if (TwitchHomeRefreshFocus.isFocusReapplySuppressed()) return@post
-
-                    homeChildRecyclerview.scrollToPosition(0)
-                    homeChildRecyclerview.post {
-                        if (!homeChildRecyclerview.isAttachedToWindow) return@post
-                        if (homeChildRecyclerview.hasFocus()) return@post
-                        if (TwitchHomeRefreshFocus.isFocusReapplySuppressed()) return@post
-
-                        homeChildRecyclerview.findViewHolderForAdapterPosition(0)
-                            ?.itemView
-                            ?.requestFocus()
-                    }
-                }
-            }
 
             homeChildRecyclerview.clearOnScrollListeners()
             homeChildRecyclerview.addOnScrollListener(object : RecyclerView.OnScrollListener() {
                 var expandCount = 0
-                val name = item.list.name
+                val name = info.name
 
                 override fun onScrollStateChanged(
                     recyclerView: RecyclerView,
@@ -182,7 +282,7 @@ override fun onUpdateContent(
 
             if (isLayout(PHONE)) {
                 homeChildMoreInfo.setOnClickListener {
-                    moreInfoClickCallback.invoke(item)
+                    moreInfoClickCallback.invoke(displayItem)
                 }
             }
         }
