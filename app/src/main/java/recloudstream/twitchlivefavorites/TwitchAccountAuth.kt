@@ -304,6 +304,7 @@ fun isSyncOnStartupEnabled(): Boolean {
         saveToken(token)
         val user = fetchAuthenticatedUser(token.access_token)
         saveUser(user)
+        TwitchLiveNowImmediateRefresh.requestForUser(user.id)
         return syncFollowedFavoritesWith(
             accessToken = token.access_token,
             user = user,
@@ -379,8 +380,7 @@ fun isSyncOnStartupEnabled(): Boolean {
         setKey(LAST_SYNC_FOLLOWED_COUNT_KEY, followedNames.size)
         setKey(LAST_SYNC_REMOVED_COUNT_KEY, removed)
         setKey(LAST_IMPORT_AT_KEY, System.currentTimeMillis())
-
-        runCatching { MainActivity.bookmarksUpdatedEvent(true) }
+        TwitchLiveNowImmediateRefresh.requestForUser(user.id)runCatching { MainActivity.bookmarksUpdatedEvent(true) }
         runCatching { MainActivity.reloadLibraryEvent(true) }
         runCatching { MainActivity.reloadHomeEvent(true) }
 

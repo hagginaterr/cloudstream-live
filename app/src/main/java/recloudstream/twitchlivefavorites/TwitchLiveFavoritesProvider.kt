@@ -1147,7 +1147,13 @@ private suspend fun fetchFollowedClipsHome(
 
         val now = nowMs()
         val cacheKey = "followed:$cleanUserId"
-        if (cacheKey == cachedLiveKey && now < cachedLiveExpiresAtMs) {
+        val forceImmediateRefresh = TwitchLiveNowImmediateRefresh.consumeForUser(cleanUserId)
+
+        if (forceImmediateRefresh) {
+            cachedLiveExpiresAtMs = 0L
+        }
+
+        if (!forceImmediateRefresh && cacheKey == cachedLiveKey && now < cachedLiveExpiresAtMs) {
             return cachedLiveFavorites
         }
 
