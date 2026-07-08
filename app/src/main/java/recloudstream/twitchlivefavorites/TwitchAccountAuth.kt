@@ -125,7 +125,8 @@ object TwitchAccountAuth {
         restoreStringIfMissing(USER_DISPLAY_KEY, restored.userDisplayName)
 
         return changed
-    }private fun persistAccountToDeviceBackup() {
+    }
+private fun persistAccountToDeviceBackup() {
         TwitchAccountRestoreStore.save(
             accessToken = getKey<String>(ACCESS_TOKEN_KEY),
             refreshToken = getKey<String>(REFRESH_TOKEN_KEY),
@@ -190,9 +191,10 @@ fun isSignedIn(): Boolean {
                 ?.takeIf { it.isNotBlank() }
     }
 
-fun lastImportSummary()(): String? {
+    fun lastImportSummary(): String? {
         val count = getKey<Int>(LAST_IMPORT_COUNT_KEY) ?: return null
         val removed = getKey<Int>(LAST_SYNC_REMOVED_COUNT_KEY) ?: 0
+
         return if (removed > 0) {
             "$count followed channels synced, $removed removed"
         } else {
@@ -200,7 +202,7 @@ fun lastImportSummary()(): String? {
         }
     }
 
-    fun isSyncOnStartupEnabled(): Boolean {
+fun isSyncOnStartupEnabled(): Boolean {
         return getKey<Boolean>(SYNC_ON_STARTUP_KEY) ?: true
     }
 
