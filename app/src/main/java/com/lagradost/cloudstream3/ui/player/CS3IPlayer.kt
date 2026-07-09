@@ -1,6 +1,6 @@
 @file:Suppress("DEPRECATION")
 
-package com.lagradost.cloudstream3.ui.player
+package com.lagradost.cloudstream3.ui.player import recloudstream.twitchlivefavorites.TwitchVodChat
 import recloudstream.twitchlivefavorites.TwitchLiveChat
 
 
@@ -183,9 +183,7 @@ class CS3IPlayer : IPlayer {
 
     private var lastMuteVolume: Float = 1.0f
 
-    private var currentLink: ExtractorLink? = null
-    private var currentIsTwitchStream = false
-private var twitchReconnectAttempt = 0
+    private var currentLink: ExtractorLink? = null private var currentIsTwitchStream = false private var currentIsTwitchVodStream = false private var twitchReconnectAttempt = 0
 private var twitchReconnectInFlight = false
 private var lastTwitchLiveDelayLogMs = 0L
     private var currentDownloadedFile: ExtractorUri? = null
@@ -683,11 +681,7 @@ private var lastTwitchLiveDelayLogMs = 0L
         playBackSpeed = speed
     }
 
-    override fun isTwitchLiveStream(): Boolean = currentIsTwitchStream
-
-        override fun getTwitchChatChannelLogin(): String? {
-        return currentLink?.let { TwitchLiveChat.extractChannelLoginFromLink(it) }
-    }
+    override fun isTwitchLiveStream(): Boolean = currentIsTwitchStream override fun isTwitchVodStream(): Boolean = currentIsTwitchVodStream override fun getTwitchVodId(): String? { return currentLink?.let { TwitchVodChat.extractVodIdFromLink(it) } } override fun getTwitchChatChannelLogin(): String? { return currentLink?.let { TwitchLiveChat.extractChannelLoginFromLink(it) } }
 
     override fun getLiveDelayMs(): Long? {
         val liveOffset = exoPlayer?.currentLiveOffset ?: return null
@@ -2236,9 +2230,7 @@ private var lastTimeStamps: List<VideoSkipStamp> = emptyList()
                 }
             }
 
-            currentLink = link
-currentIsTwitchStream = link.isTwitchLowLatencyCandidate()
-if (!retry) {
+            currentLink = link currentIsTwitchVodStream = TwitchVodChat.extractVodIdFromLink(link) != null && !TwitchPlayerReconnect.isAutoReconnectable(link) currentIsTwitchStream = link.isTwitchLowLatencyCandidate() && !currentIsTwitchVodStream if (!retry) {
     resetTwitchReconnectState()
 }
 if (currentIsTwitchStream) {

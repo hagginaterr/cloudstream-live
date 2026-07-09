@@ -802,9 +802,8 @@ private suspend fun annotateTwitchPlayerLinks(
     data: String,
     links: List<ExtractorLink>,
 ): List<ExtractorLink> {
-    val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links
-    val carrier = if (isTwitchReconnectableLivePlayerData(data)) {
-        appendTwitchProfileQueryParam(carrierBase, "cs_twitch_reconnect", "1")
+    val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links val vodChatId = if (isTwitchVideoUrl(data)) extractVideoId(data).filter { it.isDigit() }.takeIf { it.isNotBlank() } else null val carrierBaseWithVodChat = if (vodChatId != null) appendTwitchProfileQueryParam(carrierBase, "cs_twitch_vod_id", vodChatId) else carrierBase val carrier = if (isTwitchReconnectableLivePlayerData(data)) {
+        appendTwitchProfileQueryParam(carrierBaseWithVodChat, "cs_twitch_reconnect", "1")
     } else {
         carrierBase
     }
