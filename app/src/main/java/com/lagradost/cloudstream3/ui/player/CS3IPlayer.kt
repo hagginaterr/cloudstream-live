@@ -113,6 +113,7 @@ import com.lagradost.cloudstream3.utils.PLAYREADY_DRM_UUID
 import com.lagradost.cloudstream3.utils.SubtitleHelper.fromTagToLanguageName
 import com.lagradost.cloudstream3.utils.WIDEVINE_DRM_UUID
 import com.lagradost.cloudstream3.utils.videoskip.VideoSkipStamp
+import recloudstream.twitchlivefavorites.TwitchPlayerReconnect
 import kotlinx.coroutines.delay
 import okhttp3.Interceptor
 import org.chromium.net.CronetEngine
@@ -136,6 +137,9 @@ private const val TWITCH_MAX_BUFFER_MS = 30_000
 private const val TWITCH_BUFFER_FOR_PLAYBACK_MS = 1_500
 private const val TWITCH_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000
 private const val TWITCH_LIVE_DELAY_LOG_INTERVAL_MS = 5_000L
+private const val TWITCH_RECONNECT_MAX_ATTEMPTS = 5
+private const val TWITCH_RECONNECT_INITIAL_DELAY_MS = 1_500L
+private const val TWITCH_RECONNECT_MAX_DELAY_MS = 12_000L
 
 /** toleranceBeforeUs – The maximum time that the actual position seeked to may precede the
  * requested seek position, in microseconds. Must be non-negative. */
@@ -179,7 +183,9 @@ class CS3IPlayer : IPlayer {
 
     private var currentLink: ExtractorLink? = null
     private var currentIsTwitchStream = false
-    private var lastTwitchLiveDelayLogMs = 0L
+private var twitchReconnectAttempt = 0
+private var twitchReconnectInFlight = false
+private var lastTwitchLiveDelayLogMs = 0L
     private var currentDownloadedFile: ExtractorUri? = null
     private var hasUsedFirstRender = false
 
@@ -1830,11 +1836,12 @@ companion object {
 
 
                         else -> {
-                            event(ErrorEvent(error))
-                        }
-                    }
-
-                    super.onPlayerError(error)
+    if (!maybeReconnectTwitchStream(context, error)) {
+        event(ErrorEvent(error))
+    }
+}
+}
+super.onPlayerError(error)
                 }
 
                 //override fun onCues(cues: MutableList<Cue>) {
@@ -1853,11 +1860,11 @@ companion object {
                     super.onPlaybackStateChanged(playbackState)
                     when (playbackState) {
                         Player.STATE_READY -> {
-
-                        }
-
-                        Player.STATE_ENDED -> {
-                            // Only play next episode if autoplay is on (default)
+    resetTwitchReconnectState()
+}
+Player.STATE_ENDED -> {
+    if (maybeReconnectTwitchStream(context)) return
+    // Only play next episode if autoplay is on (default)
                             if (PreferenceManager.getDefaultSharedPreferences(context)
                                     ?.getBoolean(
                                         context.getString(R.string.autoplay_next_key),
@@ -1901,7 +1908,79 @@ companion object {
         }
     }
 
-    private var lastTimeStamps: List<VideoSkipStamp> = emptyList()
+    private fun resetTwitchReconnectState() {
+    twitchReconnectAttempt = 0
+    twitchReconnectInFlight = false
+}
+
+private fun twitchReconnectDelayMs(attempt: Int): Long {
+    val safeAttempt = attempt.coerceAtLeast(1).coerceAtMost(TWITCH_RECONNECT_MAX_ATTEMPTS)
+    val delay = TWITCH_RECONNECT_INITIAL_DELAY_MS * (1L shl (safeAttempt - 1).coerceAtMost(3))
+    return delay.coerceAtMost(TWITCH_RECONNECT_MAX_DELAY_MS)
+}
+
+private fun maybeReconnectTwitchStream(context: Context, error: Throwable? = null): Boolean {
+    val failedLink = currentLink ?: return false
+    if (!currentIsTwitchStream || !TwitchPlayerReconnect.isAutoReconnectable(failedLink)) return false
+    if (twitchReconnectInFlight) return true
+    if (twitchReconnectAttempt >= TWITCH_RECONNECT_MAX_ATTEMPTS) return false
+
+    twitchReconnectInFlight = true
+    val startAttempt = twitchReconnectAttempt + 1
+    if (error != null) {
+        Log.w(TAG, "Twitch playback interruption; attempting live reconnect from attempt $startAttempt", error)
+    } else {
+        Log.w(TAG, "Twitch playback interruption; attempting live reconnect from attempt $startAttempt")
+    }
+    event(
+        StatusEvent(
+            wasPlaying = CSPlayerLoading.IsPlaying,
+            isPlaying = CSPlayerLoading.IsBuffering,
+        )
+    )
+
+    ioSafe {
+        var freshLink: ExtractorLink? = null
+        var finalAttempt = startAttempt
+        for (attempt in startAttempt..TWITCH_RECONNECT_MAX_ATTEMPTS) {
+            finalAttempt = attempt
+            delay(twitchReconnectDelayMs(attempt))
+            freshLink = runCatching { TwitchPlayerReconnect.fetchFreshLink(failedLink) }
+                .onFailure { reconnectError ->
+                    Log.w(TAG, "Twitch reconnect attempt $attempt failed", reconnectError)
+                }
+                .getOrNull()
+            if (freshLink != null) break
+        }
+
+        runOnMainThread {
+            twitchReconnectAttempt = finalAttempt
+            twitchReconnectInFlight = false
+            if (eventHandler == null) return@runOnMainThread
+            if (currentLink?.url != failedLink.url) return@runOnMainThread
+
+            val link = freshLink
+            if (link == null) {
+                Log.w(TAG, "Twitch reconnect stopped; streamer appears offline or no fresh links were returned.")
+                if (error != null) {
+                    event(ErrorEvent(error))
+                } else {
+                    event(VideoEndedEvent())
+                }
+                return@runOnMainThread
+            }
+
+            Log.i(TAG, "Twitch reconnect loaded fresh link for ${TwitchPlayerReconnect.channelLogin(link).orEmpty()}")
+            currentWindow = 0
+            playbackPosition = TIME_UNSET
+            isPlaying = true
+            releasePlayer(saveTime = false)
+            loadOnlinePlayer(context, link, retry = true)
+        }
+    }
+    return true
+}
+private var lastTimeStamps: List<VideoSkipStamp> = emptyList()
 
     override fun addTimeStamps(timeStamps: List<VideoSkipStamp>) {
         lastTimeStamps = timeStamps
@@ -2149,8 +2228,11 @@ companion object {
             }
 
             currentLink = link
-            currentIsTwitchStream = link.isTwitchLowLatencyCandidate()
-            if (currentIsTwitchStream) {
+currentIsTwitchStream = link.isTwitchLowLatencyCandidate()
+if (!retry) {
+    resetTwitchReconnectState()
+}
+if (currentIsTwitchStream) {
                 Log.i(TAG, "Twitch low-latency mode enabled for source=${link.source}, name=${link.name}, url=${link.url}")
             }
 

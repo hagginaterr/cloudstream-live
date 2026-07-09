@@ -733,86 +733,92 @@ private fun getSavedFavoriteChannels(): List<String> {
 }
 
     // BEGIN TwitchPlayerMetadataOnlyPatch
-    private fun cleanTwitchPlayerMetadataLogin(value: String?): String? {
-        val normalized = normalizeChannel(value.orEmpty())
-        val blocked = setOf(
-            "twitch",
-            "twitchtv",
-            "twitchcom",
-            "wwwtwitchtv",
-            "wwwtwitchcom",
-            "clips",
-            "clip",
-            "videos",
-            "video",
-            "source",
-            "auto",
-            "vod",
-            "m3u8",
-        )
+private fun cleanTwitchPlayerMetadataLogin(value: String?): String? {
+    val normalized = normalizeChannel(value.orEmpty())
+    val blocked = setOf(
+        "twitch",
+        "twitchtv",
+        "twitchcom",
+        "wwwtwitchtv",
+        "wwwtwitchcom",
+        "clips",
+        "clip",
+        "videos",
+        "video",
+        "source",
+        "auto",
+        "vod",
+        "m3u8",
+    )
+    return normalized
+        .takeUnless { it.isBlank() || it in blocked || it.all { char -> char.isDigit() } }
+}
 
-        return normalized
-            .takeUnless { it.isBlank() || it in blocked || it.all { char -> char.isDigit() } }
-    }
-
-    private suspend fun twitchPlayerMetadataCarrierUrl(data: String): String? {
-        val explicitLogin = cleanTwitchPlayerMetadataLogin(twitchProfileMediaParam(data, "cs_streamer_login"))
-        val explicitName = twitchProfileMediaParam(data, "cs_streamer_name")?.ifBlank { null }
-        val explicitAvatar = twitchProfileMediaParam(data, "cs_streamer_avatar")?.ifBlank { null }
-
-        if (explicitLogin != null) {
-            val avatar = explicitAvatar ?: fetchTwitchProfileAvatar(explicitLogin)
-            return appendTwitchPlayerStreamerMeta(
-                twitchUrl(explicitLogin),
-                explicitLogin,
-                explicitName ?: explicitLogin,
-                avatar,
-            )
-        }
-
-        if (isTwitchVideoUrl(data)) {
-            val video = fetchVideo(extractVideoId(data))
-            val videoLogin = cleanTwitchPlayerMetadataLogin(video?.user_login)
-            if (videoLogin != null) {
-                val avatar = explicitAvatar ?: fetchTwitchProfileAvatar(videoLogin)
-                return appendTwitchPlayerStreamerMeta(
-                    twitchUrl(videoLogin),
-                    videoLogin,
-                    explicitName ?: video?.user_name?.ifBlank { null } ?: videoLogin,
-                    avatar,
-                )
-            }
-        }
-
-        val channel = cleanTwitchPlayerMetadataLogin(data) ?: return null
-        val info = fetchChannel(channel)
-        val avatar = explicitAvatar ?: fetchTwitchProfileAvatar(channel) ?: info?.image
+private suspend fun twitchPlayerMetadataCarrierUrl(data: String): String? {
+    val explicitLogin = cleanTwitchPlayerMetadataLogin(twitchProfileMediaParam(data, "cs_streamer_login"))
+    val explicitName = twitchProfileMediaParam(data, "cs_streamer_name")?.ifBlank { null }
+    val explicitAvatar = twitchProfileMediaParam(data, "cs_streamer_avatar")?.ifBlank { null }
+    if (explicitLogin != null) {
+        val avatar = explicitAvatar ?: fetchTwitchProfileAvatar(explicitLogin)
         return appendTwitchPlayerStreamerMeta(
-            twitchUrl(channel),
-            channel,
-            explicitName ?: info?.displayName ?: channel,
+            twitchUrl(explicitLogin),
+            explicitLogin,
+            explicitName ?: explicitLogin,
             avatar,
         )
     }
-
-    private suspend fun annotateTwitchPlayerLinks(
-        data: String,
-        links: List<ExtractorLink>,
-    ): List<ExtractorLink> {
-        val carrier = twitchPlayerMetadataCarrierUrl(data) ?: return links
-
-        return links.onEach { link ->
-            val existing = link.extractorData?.ifBlank { null }
-            if (existing?.contains("cs_streamer_login=", ignoreCase = true) == true) {
-                return@onEach
-            }
-
-            link.extractorData = listOfNotNull(existing, carrier)
-                .joinToString("\n")
-                .ifBlank { null }
+    if (isTwitchVideoUrl(data)) {
+        val video = fetchVideo(extractVideoId(data))
+        val videoLogin = cleanTwitchPlayerMetadataLogin(video?.user_login)
+        if (videoLogin != null) {
+            val avatar = explicitAvatar ?: fetchTwitchProfileAvatar(videoLogin)
+            return appendTwitchPlayerStreamerMeta(
+                twitchUrl(videoLogin),
+                videoLogin,
+                explicitName ?: video?.user_name?.ifBlank { null } ?: videoLogin,
+                avatar,
+            )
         }
     }
-    // END TwitchPlayerMetadataOnlyPatch
+    val channel = cleanTwitchPlayerMetadataLogin(data) ?: return null
+    val info = fetchChannel(channel)
+    val avatar = explicitAvatar ?: fetchTwitchProfileAvatar(channel) ?: info?.image
+    return appendTwitchPlayerStreamerMeta(
+        twitchUrl(channel),
+        channel,
+        explicitName ?: info?.displayName ?: channel,
+        avatar,
+    )
+}
+
+private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
+    return !isTwitchClipPageUrl(data) &&
+        !isTwitchClipDirectVideoUrl(data) &&
+        !isTwitchVideoUrl(data) &&
+        normalizeChannel(data).isNotBlank()
+}
+
+private suspend fun annotateTwitchPlayerLinks(
+    data: String,
+    links: List<ExtractorLink>,
+): List<ExtractorLink> {
+    val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links
+    val carrier = if (isTwitchReconnectableLivePlayerData(data)) {
+        appendTwitchProfileQueryParam(carrierBase, "cs_twitch_reconnect", "1")
+    } else {
+        carrierBase
+    }
+    return links.onEach { link ->
+        val existing = link.extractorData?.ifBlank { null }
+        if (existing?.contains("cs_twitch_reconnect=1", ignoreCase = true) == true) {
+            return@onEach
+        }
+        link.extractorData = listOfNotNull(existing, carrier)
+            .joinToString("\n")
+            .ifBlank { null }
+    }
+}
+// END TwitchPlayerMetadataOnlyPatch
 private fun buildHelixUrl(
         endpoint: String,
         repeatedKey: String? = null,
@@ -1238,7 +1244,12 @@ private suspend fun fetchFollowedClipsHome(
         return streams
     }
 
-    private suspend fun fetchLiveFavoriteChannels(favorites: List<String>): List<FavoriteChannel>? {
+    suspend fun isChannelLiveForPlayerReconnect(channelOrUrl: String): Boolean {
+    val channel = normalizeChannel(channelOrUrl)
+    if (channel.isBlank()) return false
+    return fetchStreams(listOf(channel))?.containsKey(channel) == true
+}
+private suspend fun fetchLiveFavoriteChannels(favorites: List<String>): List<FavoriteChannel>? {
         val normalized = favorites
             .map { normalizeChannel(it) }
             .filter { it.isNotBlank() }
