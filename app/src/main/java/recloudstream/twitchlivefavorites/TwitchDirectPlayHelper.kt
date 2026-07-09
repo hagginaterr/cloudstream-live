@@ -1,6 +1,9 @@
 package recloudstream.twitchlivefavorites
 
 import android.widget.Toast
+import androidx.navigation.NavOptions
+import android.view.ViewGroup
+import android.view.View
 import com.lagradost.cloudstream3.CommonActivity.activity
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.LiveSearchResponse
@@ -20,6 +23,65 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 object TwitchDirectPlayHelper {
     private const val DIRECT_PLAY_MARKER = "cloudstream_direct_play=1"
     private const val STREAM_API = "https://pwn.sh/tools/streamapi.py?url="
+    private const val HOME_RESTORE_DELAY_MS = 3_000L
+
+    private fun noAnimationNavOptions(): NavOptions {
+        return NavOptions.Builder()
+            .setEnterAnim(0)
+            .setExitAnim(0)
+            .setPopEnterAnim(0)
+            .setPopExitAnim(0)
+            .build()
+    }
+
+    private fun setHomeLaunchSuppressed(suppressed: Boolean) {
+        val act = activity ?: return
+        act.runOnUiThread {
+            val root = act.findViewById<ViewGroup>(R.id.home_root) ?: return@runOnUiThread
+            val master = root.findViewById<View>(R.id.home_master_recycler)
+            val toolbar = root.findViewById<View>(R.id.home_api_holder)
+            val targetAlpha = if (suppressed) 0f else 1f
+
+            root.descendantFocusability = if (suppressed) {
+                ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            } else {
+                ViewGroup.FOCUS_AFTER_DESCENDANTS
+            }
+
+            master?.animate()?.cancel()
+            master?.alpha = targetAlpha
+            master?.isFocusable = !suppressed
+            master?.isFocusableInTouchMode = !suppressed
+            (master as? ViewGroup)?.descendantFocusability = if (suppressed) {
+                ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            } else {
+                ViewGroup.FOCUS_AFTER_DESCENDANTS
+            }
+
+            toolbar?.animate()?.cancel()
+            toolbar?.alpha = targetAlpha
+
+            if (suppressed) {
+                master?.clearFocus()
+                root.clearFocus()
+            }
+        }
+    }
+
+    private fun suppressHomeDuringDirectPlayLaunch() {
+        setHomeLaunchSuppressed(true)
+    }
+
+    private fun restoreHomeAfterDirectPlayLaunch(delayMs: Long = 0L) {
+        val act = activity ?: return
+        if (delayMs <= 0L) {
+            setHomeLaunchSuppressed(false)
+        } else {
+            act.window?.decorView?.postDelayed({
+                setHomeLaunchSuppressed(false)
+            }, delayMs)
+        }
+    }
 
     private data class ApiResponse(
         val success: Boolean = false,
@@ -34,6 +96,7 @@ object TwitchDirectPlayHelper {
         val title = card.name.ifBlank { "Twitch" }
 
         TwitchHomeRefreshFocus.suppressForMediaLaunch()
+        suppressHomeDuringDirectPlayLaunch()
 
         ioSafe {
             val links = fetchLinks(twitchUrl, title)
@@ -41,11 +104,13 @@ object TwitchDirectPlayHelper {
             activity?.runOnUiThread {
                 if (links.isEmpty()) {
                     TwitchHomeRefreshFocus.clearFocusReapplySuppression()
+                    restoreHomeAfterDirectPlayLaunch()
                     showToast("Could not open Twitch media", Toast.LENGTH_SHORT)
                     return@runOnUiThread
                 }
 
                 TwitchHomeRefreshFocus.suppressForMediaLaunch(6_000L)
+                restoreHomeAfterDirectPlayLaunch(HOME_RESTORE_DELAY_MS)
 
                 activity?.navigate(
                     R.id.global_to_navigation_player,
@@ -53,6 +118,7 @@ object TwitchDirectPlayHelper {
                         ExtractorLinkGenerator(links, emptyList()),
                         0,
                     ),
+                    navOptions = noAnimationNavOptions(),
                 )
             }
         }
