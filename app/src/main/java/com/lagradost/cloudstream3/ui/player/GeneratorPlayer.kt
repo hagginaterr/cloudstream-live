@@ -146,6 +146,9 @@ import android.graphics.Paint
 import android.graphics.Shader
 import android.widget.ImageButton
 import android.view.ViewOutlineProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import recloudstream.twitchlivefavorites.TwitchHistoricalChat
 
 @OptIn(UnstableApi::class)
 class GeneratorPlayer : FullScreenPlayer() {
@@ -1058,6 +1061,14 @@ class GeneratorPlayer : FullScreenPlayer() {
     private var twitchPlayerChatVisible = false
     private var twitchPlayerChatCorner = TwitchPlayerChatCorner.TOP_END
     private val twitchPlayerChatOverlayHostTag = "twitch_player_chat_overlay_host"
+    private val twitchPlayerChatMessageContainerTag = "twitch_player_chat_message_container"
+    private var twitchPlayerChatLoadJob: Job? = null
+    private var twitchPlayerChatLoadingLogin: String? = null
+    private var twitchPlayerChatLoadedLogin: String? = null
+    private var twitchPlayerChatLastLoadAtMs: Long = 0L
+    private var twitchPlayerChatRenderedMessages: List<TwitchHistoricalChat.Message> = emptyList()
+    private var twitchPlayerChatLastError: String? = null
+
 
     private fun cleanTwitchPlayerChatLabel(value: String?): String {
         return value
@@ -1193,10 +1204,10 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     private fun twitchPlayerChatOverlayWidth(host: View): Int {
-        val maxWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
-        val minWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 180 else 160)
+        val maxWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 360 else 300)
+        val minWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
         val scaledWidth = if (host.width > 0) {
-            (host.width * 0.30f).toInt().coerceAtLeast(minWidth)
+            (host.width * 0.34f).toInt().coerceAtLeast(minWidth)
         } else {
             maxWidth
         }
@@ -1205,17 +1216,16 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     private fun twitchPlayerChatOverlayHeight(host: View): Int {
-        val maxHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 180 else 156)
-        val minHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 126 else 114)
+        val maxHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 270 else 230)
+        val minHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 180 else 160)
         val scaledHeight = if (host.height > 0) {
-            (host.height * 0.22f).toInt().coerceAtLeast(minHeight)
+            (host.height * 0.32f).toInt().coerceAtLeast(minHeight)
         } else {
             maxHeight
         }
 
         return minOf(maxHeight, scaledHeight)
     }
-
     private fun twitchPlayerChatOverlayGravity(): Int {
         val horizontal = if (twitchPlayerChatCorner.isStart) {
             android.view.Gravity.START
@@ -1324,15 +1334,294 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
     }
 
-    private fun updateTwitchPlayerChatText(target: TwitchPlayerChatTarget) {
-        val root = playerBinding?.root ?: return
+    private fun twitchPlayerChatMaxMessages(): Int {
+        return if (isLayout(TV)) 8 else 10
+    }
 
-        root.findViewById<android.widget.TextView>(R.id.twitch_player_chat_title)?.text =
-            "Twitch chat"
-        root.findViewById<android.widget.TextView>(R.id.twitch_player_chat_status)?.text =
-            formatTwitchPlayerChatTarget(target)
-        root.findViewById<android.widget.TextView>(R.id.twitch_player_chat_hint)?.text =
-            "Messages and emotes are next.\n${twitchPlayerChatCorner.label}\nLong-press to move."
+    private fun twitchPlayerChatStatusText(target: TwitchPlayerChatTarget): String {
+        return "${formatTwitchPlayerChatTarget(target)} - ${twitchPlayerChatCorner.label}"
+    }
+
+    private fun ensureTwitchPlayerChatMessageContainer(overlay: View): LinearLayout? {
+        val containerParent = overlay as? android.view.ViewGroup ?: return null
+        val existing = containerParent.findViewWithTag<LinearLayout>(twitchPlayerChatMessageContainerTag)
+        if (existing != null) return existing
+
+        if (containerParent is LinearLayout) {
+            containerParent.orientation = LinearLayout.VERTICAL
+            val paddingHorizontal = containerParent.twitchPlayerChatDp(if (isLayout(TV)) 12 else 10)
+            val paddingVertical = containerParent.twitchPlayerChatDp(if (isLayout(TV)) 10 else 8)
+            containerParent.setPadding(paddingHorizontal, paddingVertical, paddingHorizontal, paddingVertical)
+        }
+
+        val container = LinearLayout(containerParent.context).apply {
+            tag = twitchPlayerChatMessageContainerTag
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.BOTTOM
+            clipToPadding = false
+            clipChildren = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+        val params = if (containerParent is LinearLayout) {
+            LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            ).apply {
+                topMargin = containerParent.twitchPlayerChatDp(6)
+            }
+        } else {
+            android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+        }
+
+        containerParent.addView(container, params)
+        return container
+    }
+
+    private fun configureTwitchPlayerChatHeader(target: TwitchPlayerChatTarget) {
+        val root = playerBinding?.root ?: return
+        root.findViewById<TextView>(R.id.twitch_player_chat_title)?.apply {
+            text = "Twitch chat"
+            textSize = if (isLayout(TV)) 12f else 11f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            includeFontPadding = false
+        }
+        root.findViewById<TextView>(R.id.twitch_player_chat_status)?.apply {
+            text = twitchPlayerChatStatusText(target)
+            textSize = if (isLayout(TV)) 10f else 9.5f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            includeFontPadding = false
+        }
+        root.findViewById<TextView>(R.id.twitch_player_chat_hint)?.isGone = true
+    }
+
+    private fun buildTwitchPlayerChatLine(message: TwitchHistoricalChat.Message): CharSequence {
+        val timeText = message.timestampLabel.ifBlank { "now" }
+        val badgeText = if (message.badges.isEmpty()) {
+            ""
+        } else {
+            message.badges.joinToString(" ") { "[$it]" } + " "
+        }
+        val displayName = cleanTwitchPlayerChatLabel(message.displayName)
+            .ifBlank { message.login }
+        val messageText = cleanTwitchPlayerChatLabel(message.text)
+        val builder = android.text.SpannableStringBuilder()
+
+        val timeStart = builder.length
+        builder.append(timeText)
+        builder.setSpan(
+            android.text.style.ForegroundColorSpan(0xFFB8B8B8.toInt()),
+            timeStart,
+            builder.length,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        builder.append(' ')
+
+        if (badgeText.isNotBlank()) {
+            val badgeStart = builder.length
+            builder.append(badgeText)
+            builder.setSpan(
+                android.text.style.ForegroundColorSpan(0xFFFFC777.toInt()),
+                badgeStart,
+                builder.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            builder.setSpan(
+                android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                badgeStart,
+                builder.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+
+        val nameStart = builder.length
+        builder.append(displayName)
+        builder.setSpan(
+            android.text.style.ForegroundColorSpan(message.color),
+            nameStart,
+            builder.length,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        builder.setSpan(
+            android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+            nameStart,
+            builder.length,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+
+        builder.append(": ")
+        val bodyStart = builder.length
+        builder.append(messageText)
+        builder.setSpan(
+            android.text.style.ForegroundColorSpan(0xFFF5F5F5.toInt()),
+            bodyStart,
+            builder.length,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+
+        return builder
+    }
+
+    private fun addTwitchPlayerChatPlaceholder(
+        container: LinearLayout,
+        text: String,
+    ) {
+        container.addView(
+            TextView(container.context).apply {
+                this.text = text
+                textSize = if (isLayout(TV)) 10f else 9.5f
+                setTextColor(0xFFDADADA.toInt())
+                alpha = 0.86f
+                maxLines = 3
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                includeFontPadding = false
+                setLineSpacing(0f, 1.02f)
+                layoutParams = LinearLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            },
+        )
+    }
+
+    private fun renderTwitchPlayerChatMessages(
+        target: TwitchPlayerChatTarget,
+        messages: List<TwitchHistoricalChat.Message>,
+        loading: Boolean,
+        error: String?,
+    ) {
+        val root = playerBinding?.root ?: return
+        val overlay = root.findViewById<View>(R.id.twitch_player_chat_overlay) ?: return
+        val container = ensureTwitchPlayerChatMessageContainer(overlay) ?: return
+
+        configureTwitchPlayerChatHeader(target)
+        container.removeAllViews()
+
+        when {
+            loading && messages.isEmpty() -> {
+                addTwitchPlayerChatPlaceholder(container, "Loading recent chat...")
+            }
+            error != null && messages.isEmpty() -> {
+                addTwitchPlayerChatPlaceholder(container, error)
+            }
+            messages.isEmpty() -> {
+                addTwitchPlayerChatPlaceholder(
+                    container,
+                    "No recent chat yet. Long-press the chat button to move this overlay.",
+                )
+            }
+            else -> {
+                val shownMessages = messages.takeLast(twitchPlayerChatMaxMessages())
+                shownMessages.forEach { message ->
+                    container.addView(
+                        TextView(container.context).apply {
+                            text = buildTwitchPlayerChatLine(message)
+                            textSize = if (isLayout(TV)) 9.5f else 9f
+                            setTextColor(0xFFFFFFFF.toInt())
+                            alpha = 0.96f
+                            maxLines = 2
+                            ellipsize = android.text.TextUtils.TruncateAt.END
+                            includeFontPadding = false
+                            setLineSpacing(0f, 1.0f)
+                            layoutParams = LinearLayout.LayoutParams(
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ).apply {
+                                bottomMargin = container.twitchPlayerChatDp(3)
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    private fun maybeLoadTwitchPlayerHistoricalChat(target: TwitchPlayerChatTarget) {
+        if (!twitchPlayerChatVisible) return
+
+        val now = android.os.SystemClock.elapsedRealtime()
+        val hasFreshCache = twitchPlayerChatLoadedLogin.equals(target.login, ignoreCase = true) &&
+            now - twitchPlayerChatLastLoadAtMs < 60_000L
+        val alreadyLoading = twitchPlayerChatLoadingLogin.equals(target.login, ignoreCase = true)
+
+        if (hasFreshCache || alreadyLoading) return
+
+        twitchPlayerChatLoadJob?.cancel()
+        twitchPlayerChatLoadingLogin = target.login
+        twitchPlayerChatLastError = null
+        renderTwitchPlayerChatMessages(
+            target,
+            if (twitchPlayerChatLoadedLogin.equals(target.login, ignoreCase = true)) {
+                twitchPlayerChatRenderedMessages
+            } else {
+                emptyList()
+            },
+            loading = true,
+            error = null,
+        )
+
+        twitchPlayerChatLoadJob = viewModel.viewModelScope.launch {
+            val login = target.login
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    TwitchHistoricalChat.fetchRecent(login, twitchPlayerChatMaxMessages() * 2)
+                }
+            }
+
+            if (currentTwitchPlayerChatTarget()?.login?.equals(login, ignoreCase = true) != true) {
+                return@launch
+            }
+
+            twitchPlayerChatLoadingLogin = null
+            twitchPlayerChatLastLoadAtMs = android.os.SystemClock.elapsedRealtime()
+
+            result.onSuccess { messages ->
+                twitchPlayerChatLoadedLogin = login
+                twitchPlayerChatRenderedMessages = messages.takeLast(twitchPlayerChatMaxMessages())
+                twitchPlayerChatLastError = null
+                renderTwitchPlayerChatMessages(
+                    target,
+                    twitchPlayerChatRenderedMessages,
+                    loading = false,
+                    error = null,
+                )
+            }.onFailure {
+                twitchPlayerChatLastError = "Could not load recent chat."
+                renderTwitchPlayerChatMessages(
+                    target,
+                    if (twitchPlayerChatLoadedLogin.equals(login, ignoreCase = true)) {
+                        twitchPlayerChatRenderedMessages
+                    } else {
+                        emptyList()
+                    },
+                    loading = false,
+                    error = twitchPlayerChatLastError,
+                )
+            }
+        }
+    }
+
+    private fun updateTwitchPlayerChatText(target: TwitchPlayerChatTarget) {
+        val messages = if (twitchPlayerChatLoadedLogin.equals(target.login, ignoreCase = true)) {
+            twitchPlayerChatRenderedMessages
+        } else {
+            emptyList()
+        }
+
+        renderTwitchPlayerChatMessages(
+            target,
+            messages,
+            loading = twitchPlayerChatLoadingLogin.equals(target.login, ignoreCase = true),
+            error = twitchPlayerChatLastError,
+        )
+        maybeLoadTwitchPlayerHistoricalChat(target)
     }
 
     private fun focusTwitchPlayerChatButton() {
@@ -1439,6 +1728,10 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         if (!hasChatTarget) {
             twitchPlayerChatVisible = false
+            twitchPlayerChatLoadJob?.cancel()
+            twitchPlayerChatLoadJob = null
+            twitchPlayerChatLoadingLogin = null
+            twitchPlayerChatLastError = null
             overlayView.isVisible = false
             button.setOnClickListener(null)
             button.setOnLongClickListener(null)
