@@ -1,6 +1,12 @@
 package recloudstream.twitchlivefavorites
 
 import android.widget.Toast
+import android.graphics.Color
+import android.view.Gravity
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
 import androidx.navigation.NavOptions
 import android.view.ViewGroup
 import android.view.View
@@ -24,6 +30,7 @@ object TwitchDirectPlayHelper {
     private const val DIRECT_PLAY_MARKER = "cloudstream_direct_play=1"
     private const val STREAM_API = "https://pwn.sh/tools/streamapi.py?url="
     private const val HOME_RESTORE_DELAY_MS = 3_000L
+    private const val DIRECT_PLAY_LOADING_OVERLAY_TAG = "cloudstream_twitch_direct_play_loading_overlay"
 
     private fun noAnimationNavOptions(): NavOptions {
         return NavOptions.Builder()
@@ -34,13 +41,105 @@ object TwitchDirectPlayHelper {
             .build()
     }
 
-    private fun setHomeLaunchSuppressed(suppressed: Boolean) {
+        private fun showDirectPlayLoadingOverlay(title: String) {
+        val act = activity ?: return
+        act.runOnUiThread {
+            val decor = act.window?.decorView as? ViewGroup ?: return@runOnUiThread
+            val existing = decor.findViewWithTag<View>(DIRECT_PLAY_LOADING_OVERLAY_TAG)
+            if (existing != null) {
+                existing.bringToFront()
+                existing.requestFocus()
+                return@runOnUiThread
+            }
+
+            val overlay = FrameLayout(act).apply {
+                tag = DIRECT_PLAY_LOADING_OVERLAY_TAG
+                setBackgroundColor(Color.BLACK)
+                isClickable = true
+                isFocusable = true
+                isFocusableInTouchMode = true
+                alpha = 0f
+            }
+
+            val stack = LinearLayout(act).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+            }
+
+            val progress = ProgressBar(act).apply {
+                isIndeterminate = true
+            }
+
+            val textView = TextView(act).apply {
+                text = title.takeIf { it.isNotBlank() }
+                    ?.let { "Loading $it..." }
+                    ?: "Loading stream..."
+                setTextColor(Color.WHITE)
+                textSize = 18f
+                gravity = Gravity.CENTER
+                maxLines = 2
+                setPadding(48, 24, 48, 0)
+            }
+
+            stack.addView(
+                progress,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            stack.addView(
+                textView,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            overlay.addView(
+                stack,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER,
+                ),
+            )
+            decor.addView(
+                overlay,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            overlay.bringToFront()
+            overlay.requestFocus()
+            overlay.animate().alpha(1f).setDuration(120L).start()
+        }
+    }
+
+    private fun hideDirectPlayLoadingOverlay(animated: Boolean = true) {
+        val act = activity ?: return
+        act.runOnUiThread {
+            val decor = act.window?.decorView as? ViewGroup ?: return@runOnUiThread
+            val overlay = decor.findViewWithTag<View>(DIRECT_PLAY_LOADING_OVERLAY_TAG) ?: return@runOnUiThread
+            overlay.animate().cancel()
+            if (animated) {
+                overlay.animate()
+                    .alpha(0f)
+                    .setDuration(160L)
+                    .withEndAction { (overlay.parent as? ViewGroup)?.removeView(overlay) }
+                    .start()
+            } else {
+                (overlay.parent as? ViewGroup)?.removeView(overlay)
+            }
+        }
+    }
+private fun setHomeLaunchSuppressed(suppressed: Boolean) {
         val act = activity ?: return
         act.runOnUiThread {
             val root = act.findViewById<ViewGroup>(R.id.home_root) ?: return@runOnUiThread
             val master = root.findViewById<View>(R.id.home_master_recycler)
             val toolbar = root.findViewById<View>(R.id.home_api_holder)
-            val targetAlpha = if (suppressed) 0f else 1f
+            val targetAlpha = 1f
 
             root.descendantFocusability = if (suppressed) {
                 ViewGroup.FOCUS_BLOCK_DESCENDANTS
@@ -96,6 +195,7 @@ object TwitchDirectPlayHelper {
         val title = card.name.ifBlank { "Twitch" }
 
         TwitchHomeRefreshFocus.suppressForMediaLaunch()
+        showDirectPlayLoadingOverlay(title)
         suppressHomeDuringDirectPlayLaunch()
 
         ioSafe {
@@ -104,6 +204,7 @@ object TwitchDirectPlayHelper {
             activity?.runOnUiThread {
                 if (links.isEmpty()) {
                     TwitchHomeRefreshFocus.clearFocusReapplySuppression()
+                    hideDirectPlayLoadingOverlay()
                     restoreHomeAfterDirectPlayLaunch()
                     showToast("Could not open Twitch media", Toast.LENGTH_SHORT)
                     return@runOnUiThread
@@ -111,7 +212,7 @@ object TwitchDirectPlayHelper {
 
                 TwitchHomeRefreshFocus.suppressForMediaLaunch(6_000L)
                 restoreHomeAfterDirectPlayLaunch(HOME_RESTORE_DELAY_MS)
-
+                activity?.window?.decorView?.postDelayed({ hideDirectPlayLoadingOverlay() }, 450L)
                 activity?.navigate(
                     R.id.global_to_navigation_player,
                     GeneratorPlayer.newInstance(
