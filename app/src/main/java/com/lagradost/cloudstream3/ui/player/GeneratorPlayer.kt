@@ -1492,28 +1492,27 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     private fun addTwitchPlayerChatPlaceholder(
-        container: LinearLayout,
-        text: String,
-    ) {
-        container.addView(
-            TextView(container.context).apply {
-                this.text = text
+    container: LinearLayout,
+    text: String,
+) {
+    container.addView(
+        TextView(container.context).apply {
+            this.text = text
             textSize = if (isLayout(TV)) 10f else 9.5f
             setTextColor(0xFFDADADA.toInt())
             alpha = 0.86f
             maxLines = 3
             ellipsize = android.text.TextUtils.TruncateAt.END
-        includeFontPadding = false
+            includeFontPadding = false
             setLineSpacing(0f, 1.02f)
             layoutParams = LinearLayout.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                )
-            },
-        )
-    }
-
-    private fun renderTwitchPlayerChatMessages(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+        },
+    )
+}
+private fun renderTwitchPlayerChatMessages(
         target: TwitchPlayerChatTarget,
         messages: List<TwitchHistoricalChat.Message>,
         loading: Boolean,
