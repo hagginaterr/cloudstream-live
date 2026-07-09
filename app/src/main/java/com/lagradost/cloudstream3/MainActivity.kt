@@ -2026,10 +2026,7 @@ setLastError(this)
                 && PluginManager.getPluginsLocal().isEmpty()
 //                && PREBUILT_REPOSITORIES.isNotEmpty()
             ) {
-                navController.navigate(
-                    R.id.navigation_setup_extensions,
-                    SetupFragmentExtensions.newInstance(false)
-                )
+                Log.i(TAG, "TwitchOnlyExtensionsSetupGuard: skipping extension setup screen")
             }
         } catch (e: Exception) {
             logError(e)

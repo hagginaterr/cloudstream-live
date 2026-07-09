@@ -69,6 +69,9 @@ class SetupFragmentExtensions : BaseFragment<FragmentSetupExtensionsBinding>(
     }
 
     override fun onBindingCreated(binding: FragmentSetupExtensionsBinding) {
+        // TwitchOnlyExtensionsSetupGuard: immediately returning Home.
+        findNavController().navigate(R.id.navigation_home)
+        return
         val isSetup = arguments?.getBoolean(SETUP_EXTENSION_BUNDLE_IS_SETUP) ?: false
 
         safe {
