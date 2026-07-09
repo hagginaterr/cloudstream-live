@@ -1511,6 +1511,7 @@ class GeneratorPlayer : FullScreenPlayer() {
     container.addView(label)
 }
 
+
 private fun renderTwitchPlayerChatMessages(
         target: TwitchPlayerChatTarget,
         messages: List<TwitchHistoricalChat.Message>,

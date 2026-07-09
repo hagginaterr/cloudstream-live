@@ -38,8 +38,11 @@ internal object TwitchChatMessageRows {
         badges: List<String>,
         isTv: Boolean,
         emotes: List<TwitchChatEmote> = emptyList(),
+        settings: TwitchChatSettingsState = TwitchChatSettings.load(container.context),
     ): View {
         val ctx = container.context
+        val visibleBadges = if (settings.badgesEnabled) badges else emptyList()
+        val visibleEmotes = emotes.filter { settings.emotesEnabledFor(it.provider) }
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.TOP
@@ -48,7 +51,9 @@ internal object TwitchChatMessageRows {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { bottomMargin = dp(container, if (isTv) 4 else 3) }
+            ).apply {
+                bottomMargin = dp(container, if (isTv) 4 else 3)
+            }
         }
 
         val badgeStrip = LinearLayout(ctx).apply {
@@ -65,7 +70,7 @@ internal object TwitchChatMessageRows {
             }
         }
 
-        val badgeViews = badges
+        val badgeViews = visibleBadges
             .asSequence()
             .filter { it.isNotBlank() }
             .distinct()
@@ -83,24 +88,45 @@ internal object TwitchChatMessageRows {
         }
 
         val textView = TextView(ctx).apply {
-            this.text = formatText(timestampLabel, displayName, fallbackName, color, text, emotes)
+            this.text = formatText(
+                timestampLabel = timestampLabel,
+                displayName = displayName,
+                fallbackName = fallbackName,
+                color = color,
+                text = text,
+                emotes = visibleEmotes,
+                settings = settings,
+            )
             setTextColor(Color.WHITE)
-            textSize = if (isTv) 12.0f else 11.5f
-            maxLines = 2
+            textSize = settings.clampedFontSizeSp.toFloat() + if (isTv) 0.5f else 0f
+            maxLines = if (settings.slowMode) 2 else 3
             ellipsize = TextUtils.TruncateAt.END
             includeFontPadding = false
-            setLineSpacing(0f, 1.04f)
+            setLineSpacing(0f, if (settings.clampedFontSizeSp >= 18) 1.0f else 1.04f)
             setShadowLayer(2f, 1f, 1f, Color.BLACK)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         if (badgeViews.isNotEmpty()) row.addView(badgeStrip)
         row.addView(textView)
-        if (badgeViews.isNotEmpty() && !channelLogin.isNullOrBlank()) {
+
+        if (settings.badgesEnabled && badgeViews.isNotEmpty() && !channelLogin.isNullOrBlank()) {
             loadOfficialBadges(scope, channelLogin, row, badgeViews)
         }
-        if (emotes.isNotEmpty()) {
-            loadInlineEmotes(scope, row, textView, timestampLabel, displayName, fallbackName, color, text, emotes, isTv)
+        if (visibleEmotes.isNotEmpty()) {
+            loadInlineEmotes(
+                scope = scope,
+                row = row,
+                textView = textView,
+                timestampLabel = timestampLabel,
+                displayName = displayName,
+                fallbackName = fallbackName,
+                color = color,
+                text = text,
+                emotes = visibleEmotes,
+                isTv = isTv,
+                settings = settings,
+            )
         }
         return row
     }
@@ -147,10 +173,12 @@ internal object TwitchChatMessageRows {
         emotes: List<TwitchChatEmote> = emptyList(),
         emoteDrawables: Map<String, Drawable> = emptyMap(),
         emoteSizePx: Int = 0,
+        settings: TwitchChatSettingsState,
     ): CharSequence {
         val cleanName = clean(displayName).ifBlank { clean(fallbackName).ifBlank { "Twitch" } }
         val cleanText = cleanMessagePreservingOffsets(text)
         val builder = SpannableStringBuilder()
+
         if (timestampLabel.isNotBlank()) {
             val timeStart = builder.length
             builder.append(timestampLabel).append(' ')
@@ -161,20 +189,30 @@ internal object TwitchChatMessageRows {
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
             )
         }
+
         val nameStart = builder.length
         builder.append(cleanName)
         builder.setSpan(
-            ForegroundColorSpan(color ?: Color.rgb(153, 214, 255)),
+            ForegroundColorSpan(usernameColor(color, settings)),
             nameStart,
             builder.length,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
         )
         builder.setSpan(StyleSpan(Typeface.BOLD), nameStart, builder.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         builder.append(": ")
+
         val messageStart = builder.length
         builder.append(cleanText)
         applyEmoteSpans(builder, messageStart, cleanText, emotes, emoteDrawables, emoteSizePx)
         return builder
+    }
+
+    private fun usernameColor(color: Int?, settings: TwitchChatSettingsState): Int {
+        return if (settings.coloredUsernames) {
+            color ?: Color.rgb(153, 214, 255)
+        } else {
+            Color.rgb(218, 218, 218)
+        }
     }
 
     private fun applyEmoteSpans(
@@ -208,8 +246,9 @@ internal object TwitchChatMessageRows {
         text: String,
         emotes: List<TwitchChatEmote>,
         isTv: Boolean,
+        settings: TwitchChatSettingsState,
     ) {
-        val sizePx = dp(textView, if (isTv) 26 else 22)
+        val sizePx = dp(textView, (settings.clampedFontSizeSp * if (isTv) 2.25f else 2.05f).toInt().coerceIn(18, 44))
         val urls = emotes.map { it.imageUrl }.filter { it.isNotBlank() }.distinct().take(40)
         if (urls.isEmpty()) return
 
@@ -220,7 +259,17 @@ internal object TwitchChatMessageRows {
             if (drawables.isEmpty()) return@launch
             withContext(Dispatchers.Main.immediate) {
                 if (!row.isAttachedToWindow) return@withContext
-                textView.text = formatText(timestampLabel, displayName, fallbackName, color, text, emotes, drawables, sizePx)
+                textView.text = formatText(
+                    timestampLabel = timestampLabel,
+                    displayName = displayName,
+                    fallbackName = fallbackName,
+                    color = color,
+                    text = text,
+                    emotes = emotes,
+                    emoteDrawables = drawables,
+                    emoteSizePx = sizePx,
+                    settings = settings,
+                )
             }
         }
     }
@@ -238,10 +287,8 @@ internal object TwitchChatMessageRows {
     private fun cleanMessagePreservingOffsets(value: String): String {
         if (value.isEmpty()) return value
         return buildString(value.length) {
-            value.forEach { ch ->
-                append(if (ch == '\r' || ch == '\n' || ch == '\t' || ch.isISOControl()) ' ' else ch)
-            }
-        }.trim()
+            value.forEach { ch -> append(if (ch == '\r' || ch == '\n' || ch == '\t' || ch.isISOControl()) ' ' else ch) }
+        }.trimEnd()
     }
 
     private fun clean(value: String): String {
