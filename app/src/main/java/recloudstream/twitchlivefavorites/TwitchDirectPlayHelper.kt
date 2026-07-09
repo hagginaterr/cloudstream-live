@@ -1,4 +1,4 @@
-﻿package recloudstream.twitchlivefavorites
+package recloudstream.twitchlivefavorites
 
 
 
@@ -242,7 +242,7 @@ private fun setHomeLaunchSuppressed(suppressed: Boolean) {
         val title = card.name.ifBlank { "Twitch" }
 
         TwitchHomeRefreshFocus.suppressForMediaLaunch()
-        showDirectPlayLoadingOverlay(card.posterUrl)
+        showDirectPlayLoadingOverlay(directPlayLoadingAvatar(card))
         suppressHomeDuringDirectPlayLaunch()
 
         ioSafe {
@@ -295,7 +295,37 @@ private fun setHomeLaunchSuppressed(suppressed: Boolean) {
             card.url.contains(DIRECT_PLAY_MARKER, ignoreCase = true)
     }
 
-    private fun removeDirectPlayMarker(url: String): String {
+    private fun decodeDirectPlayQueryValue(value: String): String? {
+    return runCatching {
+        java.net.URLDecoder.decode(value, "UTF-8")
+    }.getOrNull()?.trim()?.ifBlank { null }
+}
+
+private fun directPlayQueryParam(url: String, key: String): String? {
+    val query = url.substringAfter("?", "").substringBefore("#")
+    if (query.isBlank()) return null
+    return query
+        .split("&")
+        .asSequence()
+        .mapNotNull { part ->
+            val rawKey = part.substringBefore("=", "")
+            val rawValue = part.substringAfter("=", "")
+            val decodedKey = decodeDirectPlayQueryValue(rawKey) ?: rawKey
+            if (decodedKey == key) decodeDirectPlayQueryValue(rawValue) else null
+        }
+        .firstOrNull { it.isNotBlank() }
+}
+
+private fun directPlayLoadingAvatar(card: SearchResponse): String? {
+    val avatar = directPlayQueryParam(card.url, "cs_streamer_avatar") ?: return null
+    val lower = avatar.lowercase()
+    val looksLikeStreamThumbnail = lower.contains("previews-ttv") ||
+        lower.contains("-preview-") ||
+        lower.contains("%{width}") ||
+        lower.contains("{width}")
+    return avatar.takeUnless { looksLikeStreamThumbnail }
+}
+private fun removeDirectPlayMarker(url: String): String {
         return url
             .replace(Regex("([?&])cloudstream_direct_play=1&?", RegexOption.IGNORE_CASE), "$1")
             .replace("?&", "?")
