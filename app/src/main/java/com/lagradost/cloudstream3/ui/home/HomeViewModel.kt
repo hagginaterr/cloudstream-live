@@ -52,6 +52,7 @@ import com.lagradost.cloudstream3.utils.downloader.DownloadObjects
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
+import recloudstream.twitchlivefavorites.TwitchLiveNowImmediateRefresh
 import java.util.EnumSet
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -336,6 +337,10 @@ class HomeViewModel : ViewModel() {
                 }
 
             if (currentRepo.hasMainPage != true) return@ioSafe
+            // This is an intentional row-level refresh, not a passive render.
+            // Force the provider to hit Twitch instead of reusing cached live cards so
+            // streamers that just went offline are removed by the Live Now row diff.
+            TwitchLiveNowImmediateRefresh.requestForUser("*")
 
             when (val data = currentRepo.getMainPage(1, null)) {
                 is Resource.Success -> {

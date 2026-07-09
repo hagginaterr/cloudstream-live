@@ -1247,10 +1247,14 @@ private suspend fun fetchFollowedClipsHome(
         if (normalized.isEmpty()) return emptyList()
 
         val now = nowMs()
-        val cacheKey = normalized.joinToString("|")
-        if (cacheKey == cachedLiveKey && now < cachedLiveExpiresAtMs) {
-            return cachedLiveFavorites
-        }
+    val cacheKey = normalized.joinToString("|")
+    val forceImmediateRefresh = TwitchLiveNowImmediateRefresh.consumeForUser(cacheKey)
+    if (forceImmediateRefresh) {
+        cachedLiveExpiresAtMs = 0L
+    }
+    if (!forceImmediateRefresh && cacheKey == cachedLiveKey && now < cachedLiveExpiresAtMs) {
+        return cachedLiveFavorites
+    }
 
         val streams = fetchStreams(normalized)
         if (streams == null) {
