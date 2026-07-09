@@ -167,35 +167,22 @@ object TwitchHistoricalChat {
             .filter { !it.isISOControl() }
             .replace(Regex("\\s+"), " ")
             .trim()
-    }
-
-    private fun parseBadges(rawBadges: String?): List<String> {
+    }    private fun parseBadges(rawBadges: String?): List<String> {
         return rawBadges
             .orEmpty()
             .split(',')
             .asSequence()
-            .map { it.substringBefore('/').trim().lowercase(Locale.US) }
+            .map { it.trim().lowercase(Locale.US) }
             .filter { it.isNotBlank() }
-            .map(::badgeLabel)
+            .mapNotNull { badge ->
+                val setId = badge.substringBefore('/').trim()
+                val version = badge.substringAfter('/', "1").trim().ifBlank { "1" }
+                setId.takeIf { it.isNotBlank() }?.let { "$it/$version" }
+            }
             .distinct()
-            .take(3)
+            .take(5)
             .toList()
     }
-
-    private fun badgeLabel(raw: String): String {
-        return when (raw) {
-            "broadcaster" -> "LIVE"
-            "moderator" -> "MOD"
-            "vip" -> "VIP"
-            "subscriber", "founder" -> "SUB"
-            "premium" -> "PRIME"
-            "turbo" -> "TURBO"
-            "bits", "bits-leader", "bits-charity" -> "BITS"
-            "partner" -> "PARTNER"
-            else -> raw.take(5).uppercase(Locale.US)
-        }
-    }
-
     private fun parseUserColor(rawColor: String?, login: String): Int {
         val parsed = rawColor
             ?.trim()

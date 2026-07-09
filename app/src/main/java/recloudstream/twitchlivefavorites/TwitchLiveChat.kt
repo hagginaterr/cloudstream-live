@@ -258,15 +258,7 @@ class TwitchLiveChat(
             .ifBlank { expectedChannel }
 
         val timestampMs = tags["tmi-sent-ts"]?.toLongOrNull() ?: System.currentTimeMillis()
-        val badges = tags["badges"]
-            ?.split(',')
-            ?.mapNotNull { badge ->
-                badge.substringBefore('/')
-                    .trim()
-                    .takeIf { it.isNotBlank() }
-                    ?.uppercase(Locale.US)
-            }
-            .orEmpty()
+        val badges = parseTwitchBadgeTags(tags["badges"])
 
         return LiveMessage(
             id = tags["id"]?.takeIf { it.isNotBlank() }
@@ -300,7 +292,23 @@ class TwitchLiveChat(
             .replace("\\r", "\r")
             .replace("\\n", "\n")
             .replace("\\\\", "\\")
+    }    private fun parseTwitchBadgeTags(rawBadges: String?): List<String> {
+        return rawBadges
+            .orEmpty()
+            .split(',')
+            .asSequence()
+            .map { it.trim().lowercase(Locale.US) }
+            .filter { it.isNotBlank() }
+            .mapNotNull { badge ->
+                val setId = badge.substringBefore('/').trim()
+                val version = badge.substringAfter('/', "1").trim().ifBlank { "1" }
+                setId.takeIf { it.isNotBlank() }?.let { "$it/$version" }
+            }
+            .distinct()
+            .take(5)
+            .toList()
     }
+
 
     private fun parseTwitchColor(value: String?): Int? {
         val clean = value?.trim()?.takeIf { it.startsWith('#') && it.length == 7 } ?: return null
