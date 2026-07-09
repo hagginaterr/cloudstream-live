@@ -26,6 +26,15 @@ object TwitchHomeRefreshFocus {
         focusFirstLiveNowOnNextBind = false
     }
 
+    fun suppressForMediaLaunch(durationMs: Long = 12_000L) {
+        suppressFocusReapplyBriefly(durationMs)
+    }
+
+    fun clearFocusReapplySuppression() {
+        suppressFocusReapplyUntilMs = 0L
+        focusFirstLiveNowOnNextBind = false
+    }
+
     fun isFocusReapplySuppressed(): Boolean {
         return nowMs() < suppressFocusReapplyUntilMs
     }

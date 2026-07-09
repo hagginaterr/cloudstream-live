@@ -83,6 +83,7 @@ import com.lagradost.cloudstream3.utils.UIHelper.popupMenuNoIconsAndNoStringRes
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import recloudstream.twitchlivefavorites.TwitchHomeRefreshFocus
 import recloudstream.twitchlivefavorites.TwitchLiveNowImmediateRefresh
 
 private const val TAG = "HomeFragment"
@@ -622,6 +623,7 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
     private fun refreshTwitchLiveNowRow() {
         val apiName = currentApiName ?: homeViewModel.apiName.value ?: "Twitch"
         if (!apiName.equals("Twitch", ignoreCase = true)) return
+        if (TwitchHomeRefreshFocus.isFocusReapplySuppressed()) return
         homeViewModel.refreshLiveNowOnly()
     }
 

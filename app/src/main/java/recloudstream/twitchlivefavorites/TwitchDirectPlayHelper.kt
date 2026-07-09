@@ -33,14 +33,19 @@ object TwitchDirectPlayHelper {
             .ifBlank { return false }
         val title = card.name.ifBlank { "Twitch" }
 
+        TwitchHomeRefreshFocus.suppressForMediaLaunch()
+
         ioSafe {
             val links = fetchLinks(twitchUrl, title)
 
             activity?.runOnUiThread {
                 if (links.isEmpty()) {
+                    TwitchHomeRefreshFocus.clearFocusReapplySuppression()
                     showToast("Could not open Twitch media", Toast.LENGTH_SHORT)
                     return@runOnUiThread
                 }
+
+                TwitchHomeRefreshFocus.suppressForMediaLaunch(6_000L)
 
                 activity?.navigate(
                     R.id.global_to_navigation_player,

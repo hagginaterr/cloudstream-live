@@ -148,7 +148,7 @@ class HomeScrollViewHolderState(view: ViewBinding) : ViewHolderState<Boolean>(vi
         if (state) {
             wasFocused = false
             // only refocus if tv
-            if (isLayout(TV)) {
+            if (isLayout(TV) && !TwitchHomeRefreshFocus.isFocusReapplySuppressed()) {
                 itemView.requestFocus()
             }
         }
@@ -696,7 +696,10 @@ minPosterSize = (114.toPx.toFloat() * mul).toInt()
                     (holder as? HomeScrollViewHolderState)?.wasFocused = true
 
                     if (isLayout(TV or EMULATOR)) {
-                        TwitchHomeRefreshFocus.suppressFocusReapplyBriefly()
+                        val suppressMs = if (
+                            item.url.contains("cloudstream_direct_play=1", ignoreCase = true)
+                        ) 12_000L else 2_500L
+                        TwitchHomeRefreshFocus.suppressFocusReapplyBriefly(suppressMs)
                     }
                 }
                 }
@@ -712,12 +715,12 @@ minPosterSize = (114.toPx.toFloat() * mul).toInt()
         // TwitchOfficialFocusedBackgroundPatch: update the TV home background from the focused thumbnail.
         if (isLayout(TV or EMULATOR)) {
             holder.itemView.setOnFocusChangeListener { view, hasFocus ->
-                if (hasFocus) {
+                if (hasFocus && !TwitchHomeRefreshFocus.isFocusReapplySuppressed()) {
                     TwitchHomeFocusedBackground.update(view)
                 }
             }
 
-            if (holder.itemView.hasFocus()) {
+            if (holder.itemView.hasFocus() && !TwitchHomeRefreshFocus.isFocusReapplySuppressed()) {
                 TwitchHomeFocusedBackground.update(holder.itemView)
             }
         }
