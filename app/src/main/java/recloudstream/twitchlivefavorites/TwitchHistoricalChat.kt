@@ -1,17 +1,31 @@
 package recloudstream.twitchlivefavorites
 
 import android.graphics.Color
-import com.lagradost.cloudstream3.app
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 object TwitchHistoricalChat {
     private const val ROBOTTY_BASE_URL = "https://recent-messages.robotty.de"
     private const val USER_AGENT = "CloudStream-Live-Android-TV/1.0 (+https://github.com/hagginaterr/cloudstream-live)"
     private val validLoginRegex = Regex("^[a-zA-Z0-9_]{1,25}$")
+
+    private val robottyClient: OkHttpClient by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        OkHttpClient.Builder()
+            .callTimeout(3, TimeUnit.SECONDS)
+            .connectTimeout(2, TimeUnit.SECONDS)
+            .readTimeout(2, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false)
+            .build()
+    }
 
     data class Message(
         val id: String,
@@ -24,30 +38,41 @@ object TwitchHistoricalChat {
         val badges: List<String>,
     )
 
-    data class RobottyResponse(
-        val messages: List<String> = emptyList(),
-        val error: String? = null,
-    )
-
     suspend fun fetchRecent(channelLogin: String, maxMessages: Int): List<Message> {
         val channel = normalizeLogin(channelLogin) ?: return emptyList()
-        val cappedMax = maxMessages.coerceIn(1, 40)
+        val cappedMax = maxMessages.coerceIn(1, 12)
+        val requestLimit = (cappedMax * 3).coerceIn(cappedMax, 36)
         val encodedChannel = URLEncoder.encode(channel, "UTF-8")
         val url = "$ROBOTTY_BASE_URL/api/v2/recent-messages/$encodedChannel" +
-            "?hideModerationMessages=true&hideModeratedMessages=true"
+            "?limit=$requestLimit&hideModerationMessages=true&hideModeratedMessages=true"
 
-        val response = runCatching {
-            app.get(
-                url,
-                headers = mapOf(
-                    "User-Agent" to USER_AGENT,
-                    "Accept" to "application/json",
-                ),
-            ).parsed<RobottyResponse>()
-        }.getOrNull() ?: return emptyList()
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "application/json")
+                    .get()
+                    .build()
 
-        return response.messages
+                robottyClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use emptyList<Message>()
+                    val body = response.body?.string().orEmpty()
+                    parseRobottyResponse(body, cappedMax)
+                }
+            }.getOrElse { emptyList() }
+        }
+    }
+
+    private fun parseRobottyResponse(body: String, cappedMax: Int): List<Message> {
+        val messages = runCatching { JSONObject(body).optJSONArray("messages") }
+            .getOrNull()
+            ?: return emptyList()
+
+        return (0 until messages.length())
             .asSequence()
+            .map { messages.optString(it, "") }
+            .filter { it.isNotBlank() }
             .mapNotNull(::parseRawIrcMessage)
             .filter { it.text.isNotBlank() }
             .sortedBy { it.timestampMs }
@@ -62,7 +87,6 @@ object TwitchHistoricalChat {
             .substringBefore('?')
             .substringBefore('/')
             .lowercase(Locale.US)
-
         return login.takeIf { validLoginRegex.matches(it) }
     }
 
@@ -74,7 +98,6 @@ object TwitchHistoricalChat {
         if (remaining.startsWith("@")) {
             val tagEnd = remaining.indexOf(' ')
             if (tagEnd <= 1) return null
-
             remaining.substring(1, tagEnd)
                 .split(';')
                 .forEach { entry ->
@@ -83,7 +106,6 @@ object TwitchHistoricalChat {
                     val rawValue = entry.substringAfter('=', "")
                     tags[key] = unescapeIrcTag(rawValue)
                 }
-
             remaining = remaining.substring(tagEnd + 1).trimStart()
         }
 
@@ -102,7 +124,7 @@ object TwitchHistoricalChat {
         if (trailingIndex < 0) return null
 
         val messageText = cleanVisibleText(remaining.substring(trailingIndex + 2))
-            .take(220)
+            .take(180)
             .trim()
         if (messageText.isBlank()) return null
 
@@ -179,7 +201,6 @@ object TwitchHistoricalChat {
             ?.trim()
             ?.takeIf { it.startsWith("#") && (it.length == 7 || it.length == 9) }
             ?.let { value -> runCatching { Color.parseColor(value) }.getOrNull() }
-
         return ensureReadableColor(parsed ?: fallbackUserColor(login))
     }
 
@@ -204,9 +225,9 @@ object TwitchHistoricalChat {
         val brightness = (red * 0.299f) + (green * 0.587f) + (blue * 0.114f)
         return if (brightness < 95f) {
             Color.rgb(
-                ((red + 180).coerceAtMost(255)),
-                ((green + 180).coerceAtMost(255)),
-                ((blue + 180).coerceAtMost(255)),
+                (red + 180).coerceAtMost(255),
+                (green + 180).coerceAtMost(255),
+                (blue + 180).coerceAtMost(255),
             )
         } else {
             color

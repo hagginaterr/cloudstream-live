@@ -129,13 +129,13 @@ import kotlin.uuid.toJavaUuid
 const val TAG = "CS3ExoPlayer"
 const val PREFERRED_AUDIO_LANGUAGE_KEY = "preferred_audio_language"
 
-private const val TWITCH_LIVE_TARGET_OFFSET_MS = 8_000L
-private const val TWITCH_LIVE_MIN_OFFSET_MS = 4_000L
-private const val TWITCH_LIVE_MAX_OFFSET_MS = 20_000L
-private const val TWITCH_MIN_BUFFER_MS = 8_000
-private const val TWITCH_MAX_BUFFER_MS = 30_000
-private const val TWITCH_BUFFER_FOR_PLAYBACK_MS = 1_500
-private const val TWITCH_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000
+private const val TWITCH_LIVE_TARGET_OFFSET_MS = 15_000L
+private const val TWITCH_LIVE_MIN_OFFSET_MS = 10_000L
+private const val TWITCH_LIVE_MAX_OFFSET_MS = 45_000L
+private const val TWITCH_MIN_BUFFER_MS = 12_000
+private const val TWITCH_MAX_BUFFER_MS = 45_000
+private const val TWITCH_BUFFER_FOR_PLAYBACK_MS = 2_500
+private const val TWITCH_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 5_000
 private const val TWITCH_LIVE_DELAY_LOG_INTERVAL_MS = 5_000L
 private const val TWITCH_RECONNECT_MAX_ATTEMPTS = 5
 private const val TWITCH_RECONNECT_INITIAL_DELAY_MS = 1_500L
@@ -1527,6 +1527,9 @@ companion object {
         // Create an online connection with cache for all online sources
         val dataSourceFactory = if (onlineSource == null) {
             null
+        } else if (isTwitchLowLatency) {
+            // Twitch live HLS should not use the generic disk cache. Live playlists/segments must stay fresh.
+            onlineSource
         } else {
             if (simpleCache == null)
                 simpleCache = getCache(context, simpleCacheSize)
