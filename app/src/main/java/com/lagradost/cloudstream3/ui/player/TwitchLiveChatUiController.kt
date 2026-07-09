@@ -2,18 +2,29 @@ package com.lagradost.cloudstream3.ui.player
 
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.view.isVisible
 import androidx.preference.PreferenceManager
 import com.lagradost.cloudstream3.R
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import recloudstream.twitchlivefavorites.TwitchLiveChat
+import recloudstream.twitchlivefavorites.TwitchVodChat
+import kotlin.math.abs
 
 internal class TwitchLiveChatUiController(
     private val scope: CoroutineScope,
@@ -22,21 +33,26 @@ internal class TwitchLiveChatUiController(
 ) {
     private companion object {
         const val OVERLAY_TAG = "cloudstream_twitch_live_chat_overlay"
-        const val CORNER_KEY = "twitch_live_chat_overlay_corner"
+        const val CORNER_PREF_KEY = "twitch_chat_overlay_corner_v1"
+        const val VOD_POLL_INTERVAL_MS = 2_500L
+        const val VOD_REFETCH_DISTANCE_MS = 7_000L
     }
 
-    private enum class ChatCorner(val storeValue: String, val label: String) {
-        BottomRight("bottom_right", "Bottom right"),
-        TopRight("top_right", "Top right"),
-        TopLeft("top_left", "Top left"),
-        BottomLeft("bottom_left", "Bottom left"),
-    }
+    private enum class ChatMode { LIVE, VOD }
+
+    private data class ChatTarget(
+        val mode: ChatMode,
+        val channel: String?,
+        val vodId: String?,
+    )
 
     private var controlsVisible = true
-    private var activeChannel: String? = null
+    private var activeTarget: ChatTarget? = null
     private var liveChat: TwitchLiveChat? = null
+    private var vodChatJob: Job? = null
     private var statusText: String = "Live chat"
     private var latestMessages: List<TwitchLiveChat.LiveMessage> = emptyList()
+    private var lastVodFetchPositionMs: Long = Long.MIN_VALUE
 
     fun setControlsVisible(visible: Boolean) {
         controlsVisible = visible
@@ -45,11 +61,17 @@ internal class TwitchLiveChatUiController(
 
     fun sync() {
         updateButtonVisibility()
-        overlayView()?.let { applyOverlayCorner(it) }
-        val channel = currentChannelLogin()
-        if (channel == null && liveChat != null) {
-            releaseConnection()
-            hideOverlay()
+        val target = currentTarget()
+        if (target == null) {
+            if (activeTarget != null) {
+                releaseConnection()
+                hideOverlay()
+            }
+            return
+        }
+
+        if (overlayView()?.isVisible == true && activeTarget != null && activeTarget != target) {
+            showOverlay(target)
         }
     }
 
@@ -60,49 +82,69 @@ internal class TwitchLiveChatUiController(
 
     private fun updateButtonVisibility() {
         val button = chatButton() ?: return
-        val available = currentChannelLogin() != null
+        val target = currentTarget()
+        val available = target != null
         button.isVisible = controlsVisible && available
         button.isEnabled = available
         button.isFocusable = available
         button.setOnClickListener {
-            val channel = currentChannelLogin() ?: return@setOnClickListener
+            val freshTarget = currentTarget() ?: return@setOnClickListener
             if (overlayView()?.isVisible == true) {
                 hideOverlay()
                 releaseConnection()
             } else {
-                showOverlay(channel)
+                showOverlay(freshTarget)
             }
         }
         button.setOnLongClickListener {
-            val channel = currentChannelLogin() ?: return@setOnLongClickListener false
-            cycleOverlayCorner()
-            showOverlay(channel)
-            true
+            if (available) {
+                cycleChatCorner()
+                true
+            } else {
+                false
+            }
         }
     }
 
-    private fun currentChannelLogin(): String? {
-        if (!player.isTwitchLiveStream()) return null
-        return TwitchLiveChat.normalizeChannelLogin(player.getTwitchChatChannelLogin())
+    private fun currentTarget(): ChatTarget? {
+        val channel = TwitchLiveChat.normalizeChannelLogin(player.getTwitchChatChannelLogin())
+        if (player.isTwitchLiveStream() && channel != null) {
+            return ChatTarget(ChatMode.LIVE, channel, null)
+        }
+
+        val vodId = player.getTwitchVodId()?.filter { it.isDigit() }?.ifBlank { null }
+        if (!player.isTwitchLiveStream() && vodId != null) {
+            return ChatTarget(ChatMode.VOD, channel, vodId)
+        }
+
+        return null
     }
 
-    private fun showOverlay(channel: String) {
+    private fun showOverlay(target: ChatTarget) {
         val overlay = ensureOverlay() ?: return
         overlay.isVisible = true
         overlay.bringToFront()
-        statusText = if (latestMessages.isEmpty()) "Connecting live chat..." else "Live chat"
+        latestMessages = emptyList()
+        statusText = when (target.mode) {
+            ChatMode.LIVE -> "Connecting live chat..."
+            ChatMode.VOD -> "Loading VOD chat..."
+        }
         render()
-        ensureConnection(channel)
+        when (target.mode) {
+            ChatMode.LIVE -> ensureLiveConnection(target)
+            ChatMode.VOD -> ensureVodHistory(target)
+        }
     }
 
     private fun hideOverlay() {
         overlayView()?.isVisible = false
     }
 
-    private fun ensureConnection(channel: String) {
-        if (activeChannel == channel && liveChat != null) return
+    private fun ensureLiveConnection(target: ChatTarget) {
+        val channel = target.channel ?: return
+        if (activeTarget == target && liveChat != null) return
         releaseConnection()
-        activeChannel = channel
+        activeTarget = target
         val max = maxVisibleMessages()
         liveChat = TwitchLiveChat(
             scope = scope,
@@ -119,30 +161,63 @@ internal class TwitchLiveChatUiController(
                     render()
                 }
             },
-        ).also { chat ->
-            chat.start(channel)
+        ).also { chat -> chat.start(channel) }
+    }
+
+    private fun ensureVodHistory(target: ChatTarget) {
+        val vodId = target.vodId ?: return
+        if (activeTarget == target && vodChatJob != null) return
+        releaseConnection()
+        activeTarget = target
+        lastVodFetchPositionMs = Long.MIN_VALUE
+        statusText = "Loading VOD chat..."
+        render()
+        val max = maxVisibleMessages()
+        vodChatJob = scope.launch {
+            while (activeTarget == target) {
+                val positionMs = player.getPosition()?.coerceAtLeast(0L) ?: 0L
+                val shouldFetch = lastVodFetchPositionMs == Long.MIN_VALUE ||
+                    abs(positionMs - lastVodFetchPositionMs) >= VOD_REFETCH_DISTANCE_MS
+                if (shouldFetch) {
+                    lastVodFetchPositionMs = positionMs
+                    val messages = TwitchVodChat.fetchAt(vodId, positionMs, max)
+                    if (activeTarget == target) {
+                        latestMessages = messages.takeLast(max)
+                        statusText = if (latestMessages.isEmpty()) {
+                            "No VOD chat near ${formatVodPosition(positionMs)}"
+                        } else {
+                            "VOD chat"
+                        }
+                        render()
+                    }
+                }
+                delay(VOD_POLL_INTERVAL_MS)
+            }
         }
     }
 
     private fun releaseConnection() {
         liveChat?.stop()
         liveChat = null
-        activeChannel = null
+        vodChatJob?.cancel()
+        vodChatJob = null
+        activeTarget = null
         latestMessages = emptyList()
+        lastVodFetchPositionMs = Long.MIN_VALUE
     }
 
     private fun chatButton(): View? = root.findViewById(R.id.twitch_player_chat_button)
 
     private fun overlayView(): LinearLayout? {
-        val tagged = (root as? ViewGroup)?.findViewWithTag<View>(OVERLAY_TAG) as? LinearLayout
+        val tagged = (root as? ViewGroup)?.findViewWithTag<LinearLayout>(OVERLAY_TAG)
         if (tagged != null) return tagged
         return root.findViewById(R.id.twitch_player_chat_overlay) as? LinearLayout
     }
 
     private fun ensureOverlay(): LinearLayout? {
         overlayView()?.let { overlay ->
-            configureOverlayBase(overlay)
-            applyOverlayCorner(overlay)
+            styleOverlay(overlay)
+            applyOverlayPosition(overlay)
             return overlay
         }
 
@@ -151,35 +226,37 @@ internal class TwitchLiveChatUiController(
             tag = OVERLAY_TAG
             visibility = View.GONE
         }
-        configureOverlayBase(overlay)
-
-        val width = if (isTvDevice()) dp(520) else dp(360)
-        val params: ViewGroup.LayoutParams = when (parent) {
-            is FrameLayout -> FrameLayout.LayoutParams(
-                width,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-            is androidx.constraintlayout.widget.ConstraintLayout ->
-                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                    width,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                )
-            else -> ViewGroup.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        parent.addView(overlay, params)
-        applyOverlayCorner(overlay)
+        styleOverlay(overlay)
+        parent.addView(overlay, initialOverlayLayoutParams(parent))
+        applyOverlayPosition(overlay)
         return overlay
     }
 
-    private fun configureOverlayBase(overlay: LinearLayout) {
+    private fun styleOverlay(overlay: LinearLayout) {
         overlay.orientation = LinearLayout.VERTICAL
         overlay.gravity = Gravity.START
-        overlay.setBackgroundColor(Color.argb(220, 0, 0, 0))
+        overlay.setBackgroundColor(Color.argb(210, 0, 0, 0))
         overlay.setPadding(dp(14), dp(10), dp(14), dp(10))
         overlay.isFocusable = false
         overlay.isClickable = false
-        overlay.clipToPadding = false
-        overlay.clipChildren = false
+    }
+
+    private fun initialOverlayLayoutParams(parent: ViewGroup): ViewGroup.LayoutParams {
+        val width = overlayWidth()
+        return when (parent) {
+            is FrameLayout -> FrameLayout.LayoutParams(
+                width,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.END or Gravity.BOTTOM,
+            )
+
+            is ConstraintLayout -> ConstraintLayout.LayoutParams(
+                width,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+
+            else -> ViewGroup.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
     }
 
     private fun removeOverlay() {
@@ -195,24 +272,7 @@ internal class TwitchLiveChatUiController(
             overlay.addView(statusTextView(statusText))
             return
         }
-
-        val channel = activeChannel ?: currentChannelLogin()
-        messages.forEach { message ->
-            overlay.addView(
-                TwitchChatMessageRows.create(
-                    container = overlay,
-                    scope = scope,
-                    channelLogin = channel,
-                    timestampLabel = message.timestampLabel,
-                    displayName = message.displayName,
-                    fallbackName = channel.orEmpty(),
-                    color = message.color,
-                    text = message.text,
-                    badges = message.badges,
-                    isTv = isTvDevice(),
-                ),
-            )
-        }
+        messages.forEach { message -> overlay.addView(messageTextView(message)) }
     }
 
     private fun statusTextView(text: String): TextView {
@@ -221,97 +281,149 @@ internal class TwitchLiveChatUiController(
             setTextColor(Color.WHITE)
             textSize = if (isTvDevice()) 14f else 13f
             maxLines = 2
-            ellipsize = android.text.TextUtils.TruncateAt.END
+            ellipsize = TextUtils.TruncateAt.END
             includeFontPadding = false
         }
     }
 
-    private fun selectedCorner(): ChatCorner {
-        val stored = PreferenceManager.getDefaultSharedPreferences(root.context)
-            .getString(CORNER_KEY, ChatCorner.BottomRight.storeValue)
-        return ChatCorner.values().firstOrNull { it.storeValue == stored } ?: ChatCorner.BottomRight
+    private fun messageTextView(message: TwitchLiveChat.LiveMessage): TextView {
+        return TextView(root.context).apply {
+            text = formatMessage(message)
+            setTextColor(Color.WHITE)
+            textSize = if (isTvDevice()) 12.5f else 12f
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            includeFontPadding = false
+            setLineSpacing(0f, 1.05f)
+            setShadowLayer(2f, 1f, 1f, Color.BLACK)
+        }
     }
 
-    private fun cycleOverlayCorner() {
-        val values = ChatCorner.values()
-        val current = selectedCorner()
-        val next = values[(values.indexOf(current) + 1) % values.size]
-        PreferenceManager.getDefaultSharedPreferences(root.context)
-            .edit()
-            .putString(CORNER_KEY, next.storeValue)
-            .apply()
-        overlayView()?.let { overlay ->
-            applyOverlayCorner(overlay)
-            overlay.bringToFront()
+    private fun formatMessage(message: TwitchLiveChat.LiveMessage): CharSequence {
+        val builder = SpannableStringBuilder()
+        if (message.timestampLabel.isNotBlank()) {
+            builder.append(message.timestampLabel).append(' ')
         }
-        statusText = "Chat moved to ${next.label}"
-        if (latestMessages.isEmpty()) render()
-        Toast.makeText(root.context, statusText, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun applyOverlayCorner(overlay: LinearLayout) {
-        val corner = selectedCorner()
-        val width = if (isTvDevice()) dp(520) else dp(360)
-        val sideMargin = dp(if (isTvDevice()) 28 else 18)
-        val verticalMargin = dp(if (isTvDevice()) 104 else 86)
-        val topMargin = dp(if (isTvDevice()) 44 else 28)
-
-        when (val params = overlay.layoutParams) {
-            is FrameLayout.LayoutParams -> {
-                params.width = width
-                params.height = ViewGroup.LayoutParams.WRAP_CONTENT
-                params.gravity = when (corner) {
-                    ChatCorner.BottomRight -> Gravity.END or Gravity.BOTTOM
-                    ChatCorner.TopRight -> Gravity.END or Gravity.TOP
-                    ChatCorner.TopLeft -> Gravity.START or Gravity.TOP
-                    ChatCorner.BottomLeft -> Gravity.START or Gravity.BOTTOM
-                }
-                params.marginStart = sideMargin
-                params.marginEnd = sideMargin
-                params.topMargin = if (corner == ChatCorner.TopLeft || corner == ChatCorner.TopRight) topMargin else 0
-                params.bottomMargin = if (corner == ChatCorner.BottomLeft || corner == ChatCorner.BottomRight) verticalMargin else 0
-                overlay.layoutParams = params
-            }
-            is androidx.constraintlayout.widget.ConstraintLayout.LayoutParams -> {
-                params.width = width
-                params.height = ViewGroup.LayoutParams.WRAP_CONTENT
-                params.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-                params.startToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-                params.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-                params.endToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-                params.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-                params.topToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-                params.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-                params.bottomToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-                if (corner == ChatCorner.TopLeft || corner == ChatCorner.BottomLeft) {
-                    params.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-                    params.marginStart = sideMargin
-                } else {
-                    params.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-                    params.marginEnd = sideMargin
-                }
-                if (corner == ChatCorner.TopLeft || corner == ChatCorner.TopRight) {
-                    params.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-                    params.topMargin = topMargin
-                    params.bottomMargin = 0
-                } else {
-                    params.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-                    params.bottomMargin = verticalMargin
-                    params.topMargin = 0
-                }
-                overlay.layoutParams = params
-            }
-            else -> {
-                params?.width = width
-                overlay.layoutParams = params
-            }
+        if (message.badges.isNotEmpty()) {
+            builder.append(message.badges.take(2).joinToString(" ") { "[$it]" }).append(' ')
         }
+        val nameStart = builder.length
+        builder.append(message.displayName.ifBlank { "Twitch" })
+        val nameEnd = builder.length
+        builder.setSpan(
+            ForegroundColorSpan(message.color ?: Color.rgb(153, 214, 255)),
+            nameStart,
+            nameEnd,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        builder.setSpan(StyleSpan(Typeface.BOLD), nameStart, nameEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        builder.append(": ")
+        builder.append(message.text)
+        return builder
     }
 
     private fun maxVisibleMessages(): Int = if (isTvDevice()) 8 else 12
 
     private fun isTvDevice(): Boolean {
         return root.context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+    }
+
+    private fun overlayWidth(): Int = if (isTvDevice()) dp(520) else dp(360)
+
+    private fun overlayBottomMargin(): Int = if (isTvDevice()) dp(104) else dp(86)
+
+    private fun cornerIndex(): Int {
+        return PreferenceManager.getDefaultSharedPreferences(root.context)
+            .getInt(CORNER_PREF_KEY, 0)
+            .coerceIn(0, 3)
+    }
+
+    private fun saveCornerIndex(index: Int) {
+        PreferenceManager.getDefaultSharedPreferences(root.context)
+            .edit()
+            .putInt(CORNER_PREF_KEY, index.coerceIn(0, 3))
+            .apply()
+    }
+
+    private fun cycleChatCorner() {
+        saveCornerIndex((cornerIndex() + 1) % 4)
+        overlayView()?.let { overlay ->
+            applyOverlayPosition(overlay)
+            overlay.bringToFront()
+        }
+    }
+
+    private fun applyOverlayPosition(overlay: LinearLayout) {
+        val corner = cornerIndex()
+        val alignTop = corner == 1 || corner == 2
+        val alignStart = corner == 2 || corner == 3
+        val sideMargin = dp(28)
+        val topMargin = dp(48)
+        val bottomMargin = overlayBottomMargin()
+        val width = overlayWidth()
+
+        when (val params = overlay.layoutParams) {
+            is FrameLayout.LayoutParams -> {
+                params.width = width
+                params.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                params.gravity =
+                    (if (alignStart) Gravity.START else Gravity.END) or
+                        (if (alignTop) Gravity.TOP else Gravity.BOTTOM)
+                params.marginStart = if (alignStart) sideMargin else 0
+                params.marginEnd = if (alignStart) 0 else sideMargin
+                params.topMargin = if (alignTop) topMargin else 0
+                params.bottomMargin = if (alignTop) 0 else bottomMargin
+                overlay.layoutParams = params
+            }
+
+            is ConstraintLayout.LayoutParams -> {
+                params.width = width
+                params.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                params.startToStart = ConstraintLayout.LayoutParams.UNSET
+                params.startToEnd = ConstraintLayout.LayoutParams.UNSET
+                params.endToStart = ConstraintLayout.LayoutParams.UNSET
+                params.endToEnd = ConstraintLayout.LayoutParams.UNSET
+                params.topToTop = ConstraintLayout.LayoutParams.UNSET
+                params.topToBottom = ConstraintLayout.LayoutParams.UNSET
+                params.bottomToTop = ConstraintLayout.LayoutParams.UNSET
+                params.bottomToBottom = ConstraintLayout.LayoutParams.UNSET
+                if (alignStart) {
+                    params.startToStart = ConstraintLayout.LayoutParams.PARENT_ID
+                    params.marginStart = sideMargin
+                    params.marginEnd = 0
+                } else {
+                    params.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID
+                    params.marginEnd = sideMargin
+                    params.marginStart = 0
+                }
+                if (alignTop) {
+                    params.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
+                    params.topMargin = topMargin
+                    params.bottomMargin = 0
+                } else {
+                    params.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID
+                    params.bottomMargin = bottomMargin
+                    params.topMargin = 0
+                }
+                overlay.layoutParams = params
+            }
+
+            else -> {
+                overlay.layoutParams = ViewGroup.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+            }
+        }
+    }
+
+    private fun formatVodPosition(positionMs: Long): String {
+        val totalSeconds = (positionMs.coerceAtLeast(0L) / 1000L)
+        val hours = totalSeconds / 3600L
+        val minutes = (totalSeconds % 3600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) {
+            "%d:%02d:%02d".format(hours, minutes, seconds)
+        } else {
+            "%d:%02d".format(minutes, seconds)
+        }
     }
 
     private fun dp(value: Int): Int {
