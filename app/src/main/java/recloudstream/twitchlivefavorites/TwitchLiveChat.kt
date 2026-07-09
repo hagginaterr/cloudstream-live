@@ -45,6 +45,7 @@ class TwitchLiveChat(
         val timestampLabel: String,
         val text: String,
         val badges: List<String>,
+        val emotes: List<TwitchChatEmote> = emptyList(),
     )
 
     companion object {
@@ -121,6 +122,7 @@ class TwitchLiveChat(
     private var connectJob: Job? = null
     @Volatile private var activeChannel: String? = null
     @Volatile private var webSocket: WebSocket? = null
+    @Volatile private var activeChannelId: String? = null
 
     fun start(channelLogin: String) {
         val channel = normalizeChannelLogin(channelLogin) ?: run {
@@ -131,6 +133,7 @@ class TwitchLiveChat(
 
         stop()
         activeChannel = channel
+        activeChannelId = null
         synchronized(messages) { messages.clear() }
         postState("Connecting live chat...")
 
@@ -152,6 +155,9 @@ class TwitchLiveChat(
             if (nick.isNullOrBlank()) {
                 postState("Sign out and sign back in to load live chat")
                 return@launch
+            }
+            scope.launch(Dispatchers.IO) {
+                try { TwitchChatEmotes.loadForChannel(channel, null) } catch (_: Throwable) {}
             }
 
             if (activeChannel != channel) return@launch
@@ -205,6 +211,7 @@ class TwitchLiveChat(
         val socket = webSocket
         webSocket = null
         activeChannel = null
+        activeChannelId = null
         runCatching { socket?.close(1000, "closed") }
         synchronized(messages) { messages.clear() }
     }
@@ -252,6 +259,13 @@ class TwitchLiveChat(
             .substringAfter(" :", "")
             .takeIf { it.isNotBlank() }
             ?: return null
+        val roomId = tags["room-id"]?.filter { it.isDigit() }?.takeIf { it.isNotBlank() }
+        if (roomId != null && activeChannelId != roomId) {
+            activeChannelId = roomId
+            scope.launch(Dispatchers.IO) {
+                try { TwitchChatEmotes.loadForChannel(expectedChannel, roomId) } catch (_: Throwable) {}
+            }
+        }
 
         val displayName = unescapeIrcTag(tags["display-name"].orEmpty())
             .ifBlank { raw.substringAfter(':', "").substringBefore('!').trim() }
@@ -259,6 +273,7 @@ class TwitchLiveChat(
 
         val timestampMs = tags["tmi-sent-ts"]?.toLongOrNull() ?: System.currentTimeMillis()
         val badges = parseTwitchBadgeTags(tags["badges"])
+        val text = unescapeIrcTag(body).trim()
 
         return LiveMessage(
             id = tags["id"]?.takeIf { it.isNotBlank() }
@@ -267,8 +282,14 @@ class TwitchLiveChat(
             color = parseTwitchColor(tags["color"]),
             timestampMs = timestampMs,
             timestampLabel = formatTimestamp(timestampMs),
-            text = unescapeIrcTag(body).trim(),
+            text = text,
             badges = badges,
+            emotes = TwitchChatEmotes.resolveFromCache(
+                text = text,
+                nativeEmotesTag = tags["emotes"],
+                channelLogin = expectedChannel,
+                channelId = roomId ?: activeChannelId,
+            ),
         )
     }
 

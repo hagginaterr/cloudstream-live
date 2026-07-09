@@ -1378,7 +1378,7 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     scrollView.addView(
         container,
-        android.widget.ScrollView.LayoutParams(
+        android.widget.FrameLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply {
@@ -1409,17 +1409,17 @@ class GeneratorPlayer : FullScreenPlayer() {
         val root = playerBinding?.root ?: return
         root.findViewById<TextView>(R.id.twitch_player_chat_title)?.apply {
             text = "Twitch chat"
-            textSize = if (isLayout(TV)) 12f else 11f
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            includeFontPadding = false
+        textSize = if (isLayout(TV)) 12f else 11f
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        includeFontPadding = false
         }
         root.findViewById<TextView>(R.id.twitch_player_chat_status)?.apply {
             text = twitchPlayerChatStatusText(target)
-            textSize = if (isLayout(TV)) 10f else 9.5f
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            includeFontPadding = false
+        textSize = if (isLayout(TV)) 10f else 9.5f
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        includeFontPadding = false
         }
         root.findViewById<TextView>(R.id.twitch_player_chat_hint)?.isGone = true
     }
@@ -1498,14 +1498,14 @@ class GeneratorPlayer : FullScreenPlayer() {
         container.addView(
             TextView(container.context).apply {
                 this.text = text
-                textSize = if (isLayout(TV)) 10f else 9.5f
-                setTextColor(0xFFDADADA.toInt())
-                alpha = 0.86f
-                maxLines = 3
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                includeFontPadding = false
-                setLineSpacing(0f, 1.02f)
-                layoutParams = LinearLayout.LayoutParams(
+            textSize = if (isLayout(TV)) 10f else 9.5f
+            setTextColor(0xFFDADADA.toInt())
+            alpha = 0.86f
+            maxLines = 3
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        includeFontPadding = false
+            setLineSpacing(0f, 1.02f)
+            layoutParams = LinearLayout.LayoutParams(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                 )
@@ -1547,7 +1547,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                             text = buildTwitchPlayerChatLine(message)
                             textSize = if (isLayout(TV)) 9.5f else 9f
                             setTextColor(0xFFFFFFFF.toInt())
-                            alpha = 0.96f maxLines = Int.MAX_VALUE ellipsize = null setSingleLine(false) setHorizontallyScrolling(false) includeFontPadding = true setLineSpacing(0f, 1.03f)
+            alpha = 0.96f maxLines = Int.MAX_VALUE ellipsize = null setSingleLine(false) setHorizontallyScrolling(false) includeFontPadding = true setLineSpacing(0f, 1.03f)
                             layoutParams = LinearLayout.LayoutParams(
                                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,

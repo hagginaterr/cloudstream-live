@@ -2,10 +2,12 @@ package com.lagradost.cloudstream3.ui.player
 
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
+import android.text.style.ImageSpan
 import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.View
@@ -20,6 +22,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import recloudstream.twitchlivefavorites.TwitchChatBadges
+import recloudstream.twitchlivefavorites.TwitchChatEmote
+import java.net.URL
 
 internal object TwitchChatMessageRows {
     fun create(
@@ -33,6 +37,7 @@ internal object TwitchChatMessageRows {
         text: String,
         badges: List<String>,
         isTv: Boolean,
+        emotes: List<TwitchChatEmote> = emptyList(),
     ): View {
         val ctx = container.context
         val row = LinearLayout(ctx).apply {
@@ -43,9 +48,7 @@ internal object TwitchChatMessageRows {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply {
-                bottomMargin = dp(container, if (isTv) 4 else 3)
-            }
+            ).apply { bottomMargin = dp(container, if (isTv) 4 else 3) }
         }
 
         val badgeStrip = LinearLayout(ctx).apply {
@@ -80,7 +83,7 @@ internal object TwitchChatMessageRows {
         }
 
         val textView = TextView(ctx).apply {
-            this.text = formatText(timestampLabel, displayName, fallbackName, color, text)
+            this.text = formatText(timestampLabel, displayName, fallbackName, color, text, emotes)
             setTextColor(Color.WHITE)
             textSize = if (isTv) 12.0f else 11.5f
             maxLines = 2
@@ -93,11 +96,12 @@ internal object TwitchChatMessageRows {
 
         if (badgeViews.isNotEmpty()) row.addView(badgeStrip)
         row.addView(textView)
-
         if (badgeViews.isNotEmpty() && !channelLogin.isNullOrBlank()) {
             loadOfficialBadges(scope, channelLogin, row, badgeViews)
         }
-
+        if (emotes.isNotEmpty()) {
+            loadInlineEmotes(scope, row, textView, timestampLabel, displayName, fallbackName, color, text, emotes, isTv)
+        }
         return row
     }
 
@@ -109,9 +113,7 @@ internal object TwitchChatMessageRows {
             contentDescription = TwitchChatBadges.badgeTitle(rawBadge)
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = false
-            layoutParams = LinearLayout.LayoutParams(size, size).apply {
-                marginEnd = margin
-            }
+            layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = margin }
         }
     }
 
@@ -142,11 +144,13 @@ internal object TwitchChatMessageRows {
         fallbackName: String,
         color: Int?,
         text: String,
+        emotes: List<TwitchChatEmote> = emptyList(),
+        emoteDrawables: Map<String, Drawable> = emptyMap(),
+        emoteSizePx: Int = 0,
     ): CharSequence {
         val cleanName = clean(displayName).ifBlank { clean(fallbackName).ifBlank { "Twitch" } }
-        val cleanText = clean(text)
+        val cleanText = cleanMessagePreservingOffsets(text)
         val builder = SpannableStringBuilder()
-
         if (timestampLabel.isNotBlank()) {
             val timeStart = builder.length
             builder.append(timestampLabel).append(' ')
@@ -157,7 +161,6 @@ internal object TwitchChatMessageRows {
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
             )
         }
-
         val nameStart = builder.length
         builder.append(cleanName)
         builder.setSpan(
@@ -168,8 +171,77 @@ internal object TwitchChatMessageRows {
         )
         builder.setSpan(StyleSpan(Typeface.BOLD), nameStart, builder.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         builder.append(": ")
+        val messageStart = builder.length
         builder.append(cleanText)
+        applyEmoteSpans(builder, messageStart, cleanText, emotes, emoteDrawables, emoteSizePx)
         return builder
+    }
+
+    private fun applyEmoteSpans(
+        builder: SpannableStringBuilder,
+        messageStart: Int,
+        messageText: String,
+        emotes: List<TwitchChatEmote>,
+        emoteDrawables: Map<String, Drawable>,
+        emoteSizePx: Int,
+    ) {
+        if (emoteDrawables.isEmpty() || emoteSizePx <= 0) return
+        emotes.forEach { emote ->
+            val spanStart = messageStart + emote.start
+            val spanEnd = messageStart + emote.endExclusive
+            if (emote.start < 0 || emote.endExclusive > messageText.length || spanStart >= spanEnd) return@forEach
+            val source = emoteDrawables[emote.imageUrl] ?: return@forEach
+            val drawable = source.constantState?.newDrawable()?.mutate() ?: source.mutate()
+            drawable.setBounds(0, 0, emoteSizePx, emoteSizePx)
+            builder.setSpan(ImageSpan(drawable, ImageSpan.ALIGN_BOTTOM), spanStart, spanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+
+    private fun loadInlineEmotes(
+        scope: CoroutineScope,
+        row: View,
+        textView: TextView,
+        timestampLabel: String,
+        displayName: String,
+        fallbackName: String,
+        color: Int?,
+        text: String,
+        emotes: List<TwitchChatEmote>,
+        isTv: Boolean,
+    ) {
+        val sizePx = dp(textView, if (isTv) 26 else 22)
+        val urls = emotes.map { it.imageUrl }.filter { it.isNotBlank() }.distinct().take(40)
+        if (urls.isEmpty()) return
+
+        scope.launch {
+            val drawables = withContext(Dispatchers.IO) {
+                urls.mapNotNull { url -> loadDrawable(url, sizePx)?.let { url to it } }.toMap()
+            }
+            if (drawables.isEmpty()) return@launch
+            withContext(Dispatchers.Main.immediate) {
+                if (!row.isAttachedToWindow) return@withContext
+                textView.text = formatText(timestampLabel, displayName, fallbackName, color, text, emotes, drawables, sizePx)
+            }
+        }
+    }
+
+    private fun loadDrawable(url: String, sizePx: Int): Drawable? = runCatching {
+        val connection = URL(url).openConnection().apply {
+            connectTimeout = 3_000
+            readTimeout = 5_000
+        }
+        connection.getInputStream().use { stream ->
+            Drawable.createFromStream(stream, null)?.apply { setBounds(0, 0, sizePx, sizePx) }
+        }
+    }.getOrNull()
+
+    private fun cleanMessagePreservingOffsets(value: String): String {
+        if (value.isEmpty()) return value
+        return buildString(value.length) {
+            value.forEach { ch ->
+                append(if (ch == '\r' || ch == '\n' || ch == '\t' || ch.isISOControl()) ' ' else ch)
+            }
+        }.trim()
     }
 
     private fun clean(value: String): String {

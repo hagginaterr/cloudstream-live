@@ -85,12 +85,14 @@ object TwitchVodChat {
         vodId: String,
         positionMs: Long,
         maxMessages: Int,
+        channelLogin: String? = null,
     ): List<TwitchLiveChat.LiveMessage> {
         val cleanId = vodId.filter { it.isDigit() }
         if (cleanId.isBlank()) return emptyList()
         val cappedMax = maxMessages.coerceIn(1, 12)
         val offsetSeconds = (positionMs.coerceAtLeast(0L) / 1000.0).roundToLong()
         return withContext(Dispatchers.IO) {
+            try { TwitchChatEmotes.loadForChannel(channelLogin, null) } catch (_: Throwable) {}
             runCatching {
                 val request = Request.Builder()
                     .url(GQL_URL)
@@ -104,7 +106,7 @@ object TwitchVodChat {
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@use emptyList()
                     val body = response.body?.string().orEmpty()
-                    parseResponse(body, cleanId, positionMs, cappedMax)
+                    parseResponse(body, cleanId, positionMs, cappedMax, channelLogin)
                 }
             }.getOrElse { emptyList() }
         }
@@ -130,6 +132,7 @@ object TwitchVodChat {
         videoId: String,
         playerPositionMs: Long,
         cappedMax: Int,
+        channelLogin: String?,
     ): List<TwitchLiveChat.LiveMessage> {
         val root = runCatching { JSONArray(body).optJSONObject(0) }.getOrNull()
             ?: runCatching { JSONObject(body) }.getOrNull()
@@ -144,7 +147,7 @@ object TwitchVodChat {
         val upperBound = playerPositionMs + 45_000L
         val parsed = (0 until edges.length())
             .mapNotNull { index -> edges.optJSONObject(index)?.optJSONObject("node") }
-            .mapNotNull { node -> parseNode(videoId, node) }
+            .mapNotNull { node -> parseNode(videoId, node, channelLogin) }
             .filter { message ->
                 val offsetMs = message.timestampMs
                 offsetMs in lowerBound..upperBound || playerPositionMs <= 5_000L
@@ -154,7 +157,7 @@ object TwitchVodChat {
         return parsed.take(cappedMax)
     }
 
-    private fun parseNode(videoId: String, node: JSONObject): TwitchLiveChat.LiveMessage? {
+    private fun parseNode(videoId: String, node: JSONObject, channelLogin: String?): TwitchLiveChat.LiveMessage? {
         val offsetSeconds = node.optDouble("contentOffsetSeconds", -1.0)
         if (offsetSeconds < 0.0) return null
         val offsetMs = (offsetSeconds * 1000.0).roundToLong().coerceAtLeast(0L)
@@ -186,6 +189,12 @@ object TwitchVodChat {
             timestampLabel = formatOffset(offsetMs),
             text = text,
             badges = parseBadges(message.optJSONArray("userBadges")),
+            emotes = TwitchChatEmotes.resolveFromCache(
+                text = text,
+                nativeEmotesTag = null,
+                channelLogin = channelLogin,
+                channelId = null,
+            ),
         )
     }
 

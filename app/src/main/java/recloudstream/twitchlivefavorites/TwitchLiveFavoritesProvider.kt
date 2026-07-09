@@ -803,17 +803,20 @@ private suspend fun annotateTwitchPlayerLinks(
     data: String,
     links: List<ExtractorLink>,
 ): List<ExtractorLink> {
-    val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links val vodChatId = if (isTwitchVideoUrl(data)) extractVideoId(data).filter { it.isDigit() }.takeIf { it.isNotBlank() } else null val carrierBaseWithVodChat = if (vodChatId != null) appendTwitchProfileQueryParam(carrierBase, "cs_twitch_vod_id", vodChatId) else carrierBase val carrier = if (isTwitchReconnectableLivePlayerData(data)) {
+    val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links
+        val vodChatId = if (isTwitchVideoUrl(data)) extractVideoId(data).filter { it.isDigit() }.takeIf { it.isNotBlank() } else null
+        val carrierBaseWithVodChat = if (vodChatId != null) appendTwitchProfileQueryParam(carrierBase, "cs_twitch_vod_id", vodChatId) else carrierBase
+        val carrier = if (isTwitchReconnectableLivePlayerData(data)) {
         appendTwitchProfileQueryParam(carrierBaseWithVodChat, "cs_twitch_reconnect", "1")
     } else {
         carrierBase
     }
     return links.onEach { link ->
-        val existing = link.extractorData?.ifBlank { null }
-        if (existing?.contains("cs_twitch_reconnect=1", ignoreCase = true) == true) {
+            val existing = link.extractorData?.ifBlank { null }
+            if (existing?.contains("cs_twitch_reconnect=1", ignoreCase = true) == true) {
             return@onEach
         }
-        link.extractorData = listOfNotNull(existing, carrier)
+            link.extractorData = listOfNotNull(existing, carrier)
             .joinToString("\n")
             .ifBlank { null }
     }
@@ -1154,7 +1157,6 @@ private suspend fun fetchFollowedClipsHome(
         val now = nowMs()
         val cacheKey = "followed:$cleanUserId"
         val forceImmediateRefresh = TwitchLiveNowImmediateRefresh.consumeForUser(cleanUserId)
-
         if (forceImmediateRefresh) {
             cachedLiveExpiresAtMs = 0L
         }
@@ -1260,7 +1262,7 @@ private suspend fun fetchLiveFavoriteChannels(favorites: List<String>): List<Fav
         val now = nowMs()
     val cacheKey = normalized.joinToString("|")
     val forceImmediateRefresh = TwitchLiveNowImmediateRefresh.consumeForUser(cacheKey)
-    if (forceImmediateRefresh) {
+        if (forceImmediateRefresh) {
         cachedLiveExpiresAtMs = 0L
     }
     if (!forceImmediateRefresh && cacheKey == cachedLiveKey && now < cachedLiveExpiresAtMs) {

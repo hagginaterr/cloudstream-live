@@ -180,7 +180,7 @@ internal class TwitchLiveChatUiController(
                     abs(positionMs - lastVodFetchPositionMs) >= VOD_REFETCH_DISTANCE_MS
                 if (shouldFetch) {
                     lastVodFetchPositionMs = positionMs
-                    val messages = TwitchVodChat.fetchAt(vodId, positionMs, max)
+                    val messages = TwitchVodChat.fetchAt(vodId, positionMs, max, target.channel)
                     if (activeTarget == target) {
                         latestMessages = messages.takeLast(max)
                         statusText = if (latestMessages.isEmpty()) {
@@ -272,7 +272,25 @@ internal class TwitchLiveChatUiController(
             overlay.addView(statusTextView(statusText))
             return
         }
-        messages.forEach { message -> overlay.addView(messageTextView(message)) }
+                val channelLogin = activeTarget?.channel
+        val isTv = isTvDevice()
+        messages.forEach { message ->
+            overlay.addView(
+                TwitchChatMessageRows.create(
+                    container = overlay,
+                    scope = scope,
+                    channelLogin = channelLogin,
+                    timestampLabel = message.timestampLabel,
+                    displayName = message.displayName,
+                    fallbackName = "Twitch",
+                    color = message.color,
+                    text = message.text,
+                    badges = message.badges,
+                    isTv = isTv,
+                    emotes = message.emotes,
+                )
+            )
+        }
     }
 
     private fun statusTextView(text: String): TextView {

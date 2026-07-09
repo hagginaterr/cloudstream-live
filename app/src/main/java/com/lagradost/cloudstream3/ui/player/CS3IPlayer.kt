@@ -2243,7 +2243,8 @@ Player.STATE_ENDED -> {
 
             currentLink = link
             currentIsTwitchVodStream = TwitchVodChat.extractVodIdFromLink(link) != null && !TwitchPlayerReconnect.isAutoReconnectable(link)
-            currentIsTwitchStream = link.isTwitchLowLatencyCandidate() && !currentIsTwitchVodStream if (!retry) {
+            currentIsTwitchStream = link.isTwitchLowLatencyCandidate() && !currentIsTwitchVodStream
+        if (!retry) {
     resetTwitchReconnectState()
 }
 if (currentIsTwitchStream) {
