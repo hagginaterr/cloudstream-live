@@ -997,7 +997,7 @@
 
 </LinearLayout>
     <LinearLayout
-        android:id="@+id/twitch_player_chat_overlay" android:layout_width="220dp" android:layout_height="156dp"
+        android:id="@+id/twitch_player_chat_overlay" android:layout_width="200dp" android:layout_height="126dp"
         android:background="@drawable/twitch_player_chat_overlay_bg"
         android:clickable="true"
         android:descendantFocusability="blocksDescendants"

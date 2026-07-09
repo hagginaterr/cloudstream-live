@@ -18,8 +18,8 @@ internal data class TwitchChatSettingsState(
     val badgesEnabled: Boolean,
     val slowMode: Boolean,
 ) {
-    val clampedWidthDp: Int get() = widthDp.coerceIn(220, 760)
-    val clampedHeightDp: Int get() = heightDp.coerceIn(120, 620)
+    val clampedWidthDp: Int get() = widthDp.coerceIn(180, 760)
+    val clampedHeightDp: Int get() = heightDp.coerceIn(100, 620)
     val clampedTransparencyPercent: Int get() = transparencyPercent.coerceIn(0, 95)
     val clampedFontSizeSp: Int get() = fontSizeSp.coerceIn(8, 24)
 
@@ -37,7 +37,7 @@ internal data class TwitchChatSettingsState(
     }
 
     fun maxVisibleMessages(isTv: Boolean): Int {
-        val usableHeight = (clampedHeightDp - if (isTv) 70 else 58).coerceAtLeast(56)
+        val usableHeight = (clampedHeightDp - if (isTv) 22 else 16).coerceAtLeast(56)
         val approximateRowHeight = (clampedFontSizeSp * if (isTv) 2.65f else 2.35f)
             .toInt()
             .coerceAtLeast(if (isTv) 28 else 22)
@@ -62,15 +62,15 @@ internal object TwitchChatSettings {
     fun defaultState(context: Context): TwitchChatSettingsState {
         val isTv = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
         return TwitchChatSettingsState(
-            widthDp = if (isTv) 520 else 360,
-            heightDp = if (isTv) 330 else 260,
+            widthDp = if (isTv) 360 else 260,
+            heightDp = if (isTv) 230 else 170,
             transparencyPercent = 18,
             twitchEmotesEnabled = true,
             bttvEmotesEnabled = true,
             ffzEmotesEnabled = true,
             sevenTvEmotesEnabled = true,
             coloredUsernames = true,
-            fontSizeSp = if (isTv) 13 else 12,
+            fontSizeSp = if (isTv) 12 else 11,
             badgesEnabled = true,
             slowMode = false,
         )

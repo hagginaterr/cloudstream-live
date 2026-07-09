@@ -297,7 +297,6 @@ internal class TwitchLiveChatUiController(
     private fun render() {
         val overlay = ensureOverlay() ?: return
         overlay.removeAllViews()
-        overlay.addView(headerView())
 
         val messages = latestMessages.takeLast(maxVisibleMessages())
         if (messages.isEmpty()) {
@@ -415,9 +414,9 @@ internal class TwitchLiveChatUiController(
         val corner = cornerIndex()
         val alignTop = corner == 1 || corner == 2
         val alignStart = corner == 2 || corner == 3
-        val sideMargin = dp(28)
-        val topMargin = dp(48)
-        val bottomMargin = overlayBottomMargin()
+        val sideMargin = 0
+        val topMargin = 0
+        val bottomMargin = 0
         val width = overlayWidth()
         val height = overlayHeight()
 
@@ -468,6 +467,9 @@ internal class TwitchLiveChatUiController(
                 overlay.layoutParams = ViewGroup.LayoutParams(width, height)
             }
         }
+        overlay.translationX = 0f
+        overlay.translationY = 0f
+        overlay.bringToFront()
     }
 
     private fun showSettingsMenu() {
@@ -492,8 +494,9 @@ internal class TwitchLiveChatUiController(
             ).apply { bottomMargin = dp(12) }
         })
 
-        val widthSeek = addSeekRow(content, "Box width", 220, 760, settings.clampedWidthDp) { "$it dp" }
-        val heightSeek = addSeekRow(content, "Box height", 120, 620, settings.clampedHeightDp) { "$it dp" }
+        val cornerGroup = addCornerRow(content)
+        val widthSeek = addSeekRow(content, "Box width", 180, 760, settings.clampedWidthDp) { "$it dp" }
+        val heightSeek = addSeekRow(content, "Box height", 100, 620, settings.clampedHeightDp) { "$it dp" }
         val transparencySeek = addSeekRow(content, "Transparency", 0, 95, settings.clampedTransparencyPercent) { "$it%" }
         val fontSeek = addSeekRow(content, "Font size", 8, 24, settings.clampedFontSizeSp) { "$it sp" }
 
@@ -513,6 +516,7 @@ internal class TwitchLiveChatUiController(
             addView(Button(ctx).apply {
                 text = "Defaults"
                 setOnClickListener {
+                    saveCornerIndex(0)
                     applySettings(TwitchChatSettings.reset(ctx))
                     dialog.dismiss()
                 }
@@ -524,9 +528,10 @@ internal class TwitchLiveChatUiController(
             addView(Button(ctx).apply {
                 text = "Save"
                 setOnClickListener {
+                    saveCornerIndex(selectedCornerIndex(cornerGroup))
                     val newSettings = TwitchChatSettingsState(
-                        widthDp = widthSeek.progress + 220,
-                        heightDp = heightSeek.progress + 120,
+                        widthDp = widthSeek.progress + 180,
+                        heightDp = heightSeek.progress + 100,
                         transparencyPercent = transparencySeek.progress,
                         twitchEmotesEnabled = twitchCheck.isChecked,
                         bttvEmotesEnabled = bttvCheck.isChecked,
@@ -553,6 +558,61 @@ internal class TwitchLiveChatUiController(
         dialog.window?.setLayout(if (isTvDevice()) dp(520) else dp(380), ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
+
+    // BEGIN TwitchChatCornerSettingsPatch
+    private fun cornerLabel(index: Int): String {
+        return when (index.coerceIn(0, 3)) {
+            0 -> "Bottom right"
+            1 -> "Top right"
+            2 -> "Top left"
+            else -> "Bottom left"
+        }
+    }
+
+    private fun addCornerRow(parent: LinearLayout): android.widget.RadioGroup {
+        val ctx = parent.context
+        parent.addView(TextView(ctx).apply {
+            text = "Position"
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            includeFontPadding = false
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(4) }
+        })
+
+        return android.widget.RadioGroup(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            val current = cornerIndex()
+            for (index in 0..3) {
+                addView(android.widget.RadioButton(ctx).apply {
+                    id = View.generateViewId()
+                    tag = index
+                    text = cornerLabel(index)
+                    setTextColor(Color.WHITE)
+                    textSize = 14f
+                    isChecked = index == current
+                })
+            }
+            parent.addView(
+                this,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = dp(8) },
+            )
+        }
+    }
+
+    private fun selectedCornerIndex(group: android.widget.RadioGroup): Int {
+        return group.findViewById<android.widget.RadioButton>(group.checkedRadioButtonId)
+            ?.tag
+            ?.let { it as? Int }
+            ?.coerceIn(0, 3)
+            ?: 0
+    }
+    // END TwitchChatCornerSettingsPatch
     private fun addSeekRow(
         parent: LinearLayout,
         title: String,

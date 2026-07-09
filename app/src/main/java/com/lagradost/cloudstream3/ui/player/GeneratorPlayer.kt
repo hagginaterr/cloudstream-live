@@ -1059,7 +1059,7 @@ class GeneratorPlayer : FullScreenPlayer() {
     )
 
     private var twitchPlayerChatVisible = false
-    private var twitchPlayerChatCorner = TwitchPlayerChatCorner.TOP_END
+    private var twitchPlayerChatCorner = TwitchPlayerChatCorner.BOTTOM_END
     private val twitchPlayerChatOverlayHostTag = "twitch_player_chat_overlay_host"
     private val twitchPlayerChatMessageContainerTag = "twitch_player_chat_message_container"
     private var twitchPlayerChatLoadJob: Job? = null
@@ -1139,9 +1139,9 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     private fun twitchPlayerChatOverlayRoot(): android.view.ViewGroup? {
         val binding = playerBinding ?: return null
-        val holder = binding.playerHolder as? android.view.ViewGroup
         val root = binding.root as? android.view.ViewGroup
-        val target = holder ?: root
+        val holder = binding.playerHolder as? android.view.ViewGroup
+        val target = root ?: holder
 
         target?.clipChildren = false
         target?.clipToPadding = false
@@ -1204,10 +1204,10 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     private fun twitchPlayerChatOverlayWidth(host: View): Int {
-        val maxWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 360 else 300)
-        val minWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 260 else 220)
+        val maxWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 320 else 240)
+        val minWidth = host.twitchPlayerChatDp(if (isLayout(TV)) 220 else 180)
         val scaledWidth = if (host.width > 0) {
-            (host.width * 0.34f).toInt().coerceAtLeast(minWidth)
+            (host.width * 0.26f).toInt().coerceAtLeast(minWidth)
         } else {
             maxWidth
         }
@@ -1216,10 +1216,10 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     private fun twitchPlayerChatOverlayHeight(host: View): Int {
-        val maxHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 270 else 230)
-        val minHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 180 else 160)
+        val maxHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 220 else 170)
+        val minHeight = host.twitchPlayerChatDp(if (isLayout(TV)) 140 else 112)
         val scaledHeight = if (host.height > 0) {
-            (host.height * 0.32f).toInt().coerceAtLeast(minHeight)
+            (host.height * 0.24f).toInt().coerceAtLeast(minHeight)
         } else {
             maxHeight
         }
@@ -1392,7 +1392,7 @@ class GeneratorPlayer : FullScreenPlayer() {
             0,
             1f,
         ).apply {
-            topMargin = containerParent.twitchPlayerChatDp(6)
+            topMargin = 0
         }
     } else {
         android.view.ViewGroup.LayoutParams(
@@ -1407,21 +1407,29 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     private fun configureTwitchPlayerChatHeader(target: TwitchPlayerChatTarget) {
         val root = playerBinding?.root ?: return
-        root.findViewById<TextView>(R.id.twitch_player_chat_title)?.apply {
-            text = "Twitch chat"
-        textSize = if (isLayout(TV)) 12f else 11f
-        maxLines = 1
-        ellipsize = android.text.TextUtils.TruncateAt.END
-        includeFontPadding = false
+        val names = listOf(
+            "twitch_player_chat_header",
+            "twitch_player_chat_header_row",
+            "twitch_player_chat_top_row",
+            "twitch_player_chat_title_row",
+            "twitch_player_chat_title",
+            "twitch_player_chat_status",
+            "twitch_player_chat_hint",
+            "twitch_player_chat_move",
+            "twitch_player_chat_settings",
+        )
+        names.forEach { name ->
+            val id = root.resources.getIdentifier(name, "id", root.context.packageName)
+            if (id != 0) {
+                root.findViewById<View>(id)?.let { view ->
+                    view.isGone = true
+                    val parent = view.parent as? View
+                    if (parent != null && parent.id != R.id.twitch_player_chat_overlay) {
+                        parent.isGone = true
+                    }
+                }
+            }
         }
-        root.findViewById<TextView>(R.id.twitch_player_chat_status)?.apply {
-            text = twitchPlayerChatStatusText(target)
-        textSize = if (isLayout(TV)) 10f else 9.5f
-        maxLines = 1
-        ellipsize = android.text.TextUtils.TruncateAt.END
-        includeFontPadding = false
-        }
-        root.findViewById<TextView>(R.id.twitch_player_chat_hint)?.isGone = true
     }
 
     private fun buildTwitchPlayerChatLine(message: TwitchHistoricalChat.Message): CharSequence {
@@ -1541,7 +1549,13 @@ private fun renderTwitchPlayerChatMessages(
                             text = buildTwitchPlayerChatLine(message)
                             textSize = if (isLayout(TV)) 9.5f else 9f
                             setTextColor(0xFFFFFFFF.toInt())
-            alpha = 0.96f; setMaxLines(Int.MAX_VALUE); ellipsize = null; setSingleLine(false); setHorizontallyScrolling(false); includeFontPadding = true; setLineSpacing(0f, 1.03f)
+            alpha = 0.96f
+                            setMaxLines(Int.MAX_VALUE)
+                            ellipsize = null
+                            setSingleLine(false)
+                            setHorizontallyScrolling(false)
+                            includeFontPadding = true
+                            setLineSpacing(0f, 1.03f)
                             layoutParams = LinearLayout.LayoutParams(
                                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
