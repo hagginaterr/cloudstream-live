@@ -168,9 +168,7 @@ object TwitchVodChat {
                 }
             }
         }.ifBlank { message.optString("body", "") }
-            .let(::cleanVisibleText)
-            .take(220)
-            .trim()
+            .let(::cleanVisibleText) .trim()
         if (text.isBlank()) return null
 
         val login = commenter?.optString("login")?.ifBlank { null }

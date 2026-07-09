@@ -123,9 +123,7 @@ object TwitchHistoricalChat {
         val trailingIndex = remaining.indexOf(" :")
         if (trailingIndex < 0) return null
 
-        val messageText = cleanVisibleText(remaining.substring(trailingIndex + 2))
-            .take(180)
-            .trim()
+        val messageText = cleanVisibleText(remaining.substring(trailingIndex + 2)) .trim()
         if (messageText.isBlank()) return null
 
         val login = cleanVisibleText(

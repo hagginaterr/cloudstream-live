@@ -1343,45 +1343,67 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     private fun ensureTwitchPlayerChatMessageContainer(overlay: View): LinearLayout? {
-        val containerParent = overlay as? android.view.ViewGroup ?: return null
-        val existing = containerParent.findViewWithTag<LinearLayout>(twitchPlayerChatMessageContainerTag)
-        if (existing != null) return existing
+    val containerParent = overlay as? android.view.ViewGroup ?: return null
+    val existing = containerParent.findViewWithTag<LinearLayout>(twitchPlayerChatMessageContainerTag)
+    if (existing != null) return existing
 
-        if (containerParent is LinearLayout) {
-            containerParent.orientation = LinearLayout.VERTICAL
-            val paddingHorizontal = containerParent.twitchPlayerChatDp(if (isLayout(TV)) 12 else 10)
-            val paddingVertical = containerParent.twitchPlayerChatDp(if (isLayout(TV)) 10 else 8)
-            containerParent.setPadding(paddingHorizontal, paddingVertical, paddingHorizontal, paddingVertical)
-        }
-
-        val container = LinearLayout(containerParent.context).apply {
-            tag = twitchPlayerChatMessageContainerTag
-            orientation = LinearLayout.VERTICAL
-            gravity = android.view.Gravity.BOTTOM
-            clipToPadding = false
-            clipChildren = false
-            isFocusable = false
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-
-        val params = if (containerParent is LinearLayout) {
-            LinearLayout.LayoutParams(
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f,
-            ).apply {
-                topMargin = containerParent.twitchPlayerChatDp(6)
-            }
-        } else {
-            android.view.ViewGroup.LayoutParams(
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-        }
-
-        containerParent.addView(container, params)
-        return container
+    if (containerParent is LinearLayout) {
+        containerParent.orientation = LinearLayout.VERTICAL
+        val paddingHorizontal = containerParent.twitchPlayerChatDp(if (isLayout(TV)) 12 else 10)
+        val paddingVertical = containerParent.twitchPlayerChatDp(if (isLayout(TV)) 10 else 8)
+        containerParent.setPadding(paddingHorizontal, paddingVertical, paddingHorizontal, paddingVertical)
     }
+
+    val scrollView = android.widget.ScrollView(containerParent.context).apply {
+        tag = "twitch_player_chat_scroll_container"
+        isFillViewport = false
+        clipToPadding = false
+        clipChildren = false
+        isFocusable = false
+        isFocusableInTouchMode = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        isVerticalScrollBarEnabled = false
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    val container = LinearLayout(containerParent.context).apply {
+        tag = twitchPlayerChatMessageContainerTag
+        orientation = LinearLayout.VERTICAL
+        gravity = android.view.Gravity.BOTTOM
+        clipToPadding = false
+        clipChildren = false
+        isFocusable = false
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    scrollView.addView(
+        container,
+        android.widget.ScrollView.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = android.view.Gravity.BOTTOM
+        },
+    )
+
+    val params = if (containerParent is LinearLayout) {
+        LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+            1f,
+        ).apply {
+            topMargin = containerParent.twitchPlayerChatDp(6)
+        }
+    } else {
+        android.view.ViewGroup.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+    }
+
+    containerParent.addView(scrollView, params)
+    return container
+}
 
     private fun configureTwitchPlayerChatHeader(target: TwitchPlayerChatTarget) {
         val root = playerBinding?.root ?: return
@@ -1525,11 +1547,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                             text = buildTwitchPlayerChatLine(message)
                             textSize = if (isLayout(TV)) 9.5f else 9f
                             setTextColor(0xFFFFFFFF.toInt())
-                            alpha = 0.96f
-                            maxLines = 2
-                            ellipsize = android.text.TextUtils.TruncateAt.END
-                            includeFontPadding = false
-                            setLineSpacing(0f, 1.0f)
+                            alpha = 0.96f maxLines = Int.MAX_VALUE ellipsize = null setSingleLine(false) setHorizontallyScrolling(false) includeFontPadding = true setLineSpacing(0f, 1.03f)
                             layoutParams = LinearLayout.LayoutParams(
                                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1541,7 +1559,9 @@ class GeneratorPlayer : FullScreenPlayer() {
                 }
             }
         }
-    }
+        (container.parent as? android.widget.ScrollView)?.post {
+        (container.parent as? android.widget.ScrollView)?.fullScroll(View.FOCUS_DOWN)
+    }}
 
     private fun maybeLoadTwitchPlayerHistoricalChat(target: TwitchPlayerChatTarget) {
         if (!twitchPlayerChatVisible) return
