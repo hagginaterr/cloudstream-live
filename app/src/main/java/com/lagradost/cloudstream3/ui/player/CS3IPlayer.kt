@@ -183,9 +183,12 @@ class CS3IPlayer : IPlayer {
 
     private var lastMuteVolume: Float = 1.0f
 
-    private var currentLink: ExtractorLink? = null private var currentIsTwitchStream = false private var currentIsTwitchVodStream = false private var twitchReconnectAttempt = 0
-private var twitchReconnectInFlight = false
-private var lastTwitchLiveDelayLogMs = 0L
+    private var currentLink: ExtractorLink? = null
+    private var currentIsTwitchStream = false
+    private var currentIsTwitchVodStream = false
+    private var twitchReconnectAttempt = 0
+    private var twitchReconnectInFlight = false
+    private var lastTwitchLiveDelayLogMs = 0L
     private var currentDownloadedFile: ExtractorUri? = null
     private var hasUsedFirstRender = false
 
@@ -681,7 +684,14 @@ private var lastTwitchLiveDelayLogMs = 0L
         playBackSpeed = speed
     }
 
-    override fun isTwitchLiveStream(): Boolean = currentIsTwitchStream override fun isTwitchVodStream(): Boolean = currentIsTwitchVodStream override fun getTwitchVodId(): String? { return currentLink?.let { TwitchVodChat.extractVodIdFromLink(it) } } override fun getTwitchChatChannelLogin(): String? { return currentLink?.let { TwitchLiveChat.extractChannelLoginFromLink(it) } }
+    override fun isTwitchLiveStream(): Boolean = currentIsTwitchStream
+    override fun isTwitchVodStream(): Boolean = currentIsTwitchVodStream
+    override fun getTwitchVodId(): String? {
+        return currentLink?.let { TwitchVodChat.extractVodIdFromLink(it) }
+    }
+    override fun getTwitchChatChannelLogin(): String? {
+        return currentLink?.let { TwitchLiveChat.extractChannelLoginFromLink(it) }
+    }
 
     override fun getLiveDelayMs(): Long? {
         val liveOffset = exoPlayer?.currentLiveOffset ?: return null
@@ -1916,13 +1926,13 @@ Player.STATE_ENDED -> {
     twitchReconnectInFlight = false
 }
 
-private fun twitchReconnectDelayMs(attempt: Int): Long {
+    private fun twitchReconnectDelayMs(attempt: Int): Long {
     val safeAttempt = attempt.coerceAtLeast(1).coerceAtMost(TWITCH_RECONNECT_MAX_ATTEMPTS)
     val delay = TWITCH_RECONNECT_INITIAL_DELAY_MS * (1L shl (safeAttempt - 1).coerceAtMost(3))
     return delay.coerceAtMost(TWITCH_RECONNECT_MAX_DELAY_MS)
 }
 
-private fun maybeReconnectTwitchStream(context: Context, error: Throwable? = null): Boolean {
+    private fun maybeReconnectTwitchStream(context: Context, error: Throwable? = null): Boolean {
     val failedLink = currentLink ?: return false
     if (!currentIsTwitchStream || !TwitchPlayerReconnect.isAutoReconnectable(failedLink)) return false
     if (twitchReconnectInFlight) return true
@@ -1983,7 +1993,8 @@ private fun maybeReconnectTwitchStream(context: Context, error: Throwable? = nul
     }
     return true
 }
-private var lastTimeStamps: List<VideoSkipStamp> = emptyList()
+
+    private var lastTimeStamps: List<VideoSkipStamp> = emptyList()
 
     override fun addTimeStamps(timeStamps: List<VideoSkipStamp>) {
         lastTimeStamps = timeStamps
@@ -2230,7 +2241,9 @@ private var lastTimeStamps: List<VideoSkipStamp> = emptyList()
                 }
             }
 
-            currentLink = link currentIsTwitchVodStream = TwitchVodChat.extractVodIdFromLink(link) != null && !TwitchPlayerReconnect.isAutoReconnectable(link) currentIsTwitchStream = link.isTwitchLowLatencyCandidate() && !currentIsTwitchVodStream if (!retry) {
+            currentLink = link
+            currentIsTwitchVodStream = TwitchVodChat.extractVodIdFromLink(link) != null && !TwitchPlayerReconnect.isAutoReconnectable(link)
+            currentIsTwitchStream = link.isTwitchLowLatencyCandidate() && !currentIsTwitchVodStream if (!retry) {
     resetTwitchReconnectState()
 }
 if (currentIsTwitchStream) {

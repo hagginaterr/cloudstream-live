@@ -304,7 +304,8 @@ private val cachedGameNames: MutableMap<String, Pair<Long, String>> = mutableMap
         val channelDisplayName: String,
         val channelLogin: String,
         val channelAvatar: String?,
-    )private data class TwitchSearchResponse(
+    )
+    private data class TwitchSearchResponse(
         val data: List<TwitchSearchChannel> = emptyList(),
     )
 
