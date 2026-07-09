@@ -1491,24 +1491,18 @@ class GeneratorPlayer : FullScreenPlayer() {
         return builder
     }
 
-    private fun addTwitchPlayerChatPlaceholder(
-        container: LinearLayout,
-        text: String,
-    ) {
-        val label = TextView(container.context)
-        label.text = text
-        label.textSize = if (isLayout(TV)) 10f else 9.5f
-        label.setTextColor(0xFFDADADA.toInt())
-        label.alpha = 0.86f
-        label.setMaxLines(3)
-        label.ellipsize = android.text.TextUtils.TruncateAt.END
-        label.includeFontPadding = false
-        label.setLineSpacing(0f, 1.02f)
-        label.layoutParams = LinearLayout.LayoutParams(
-            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-        )
-        container.addView(label)
+        private fun addTwitchPlayerChatPlaceholder(container: LinearLayout, text: String) {
+        val label = TextView(container.context);
+        label.text = text;
+        label.textSize = if (isLayout(TV)) 10f else 9.5f;
+        label.setTextColor(0xFFDADADA.toInt());
+        label.alpha = 0.86f;
+        label.setMaxLines(3);
+        label.ellipsize = android.text.TextUtils.TruncateAt.END;
+        label.includeFontPadding = false;
+        label.setLineSpacing(0f, 1.02f);
+        label.layoutParams = LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        container.addView(label);
     }
 
 
