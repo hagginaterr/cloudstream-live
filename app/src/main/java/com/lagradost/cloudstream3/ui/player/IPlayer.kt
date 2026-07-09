@@ -212,7 +212,9 @@ interface IPlayer {
     fun isTwitchLiveStream(): Boolean = false
     fun getLiveDelayMs(): Long? = null
 
-    fun getIsPlaying(): Boolean
+    
+    fun getTwitchChatChannelLogin(): String? = null
+fun getIsPlaying(): Boolean
     /** Current player duration in milliseconds */
     fun getDuration(): Long?
     /** Current player position in milliseconds */

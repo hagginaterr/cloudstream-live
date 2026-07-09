@@ -1,4 +1,6 @@
 package com.lagradost.cloudstream3.ui.player
+import androidx.lifecycle.lifecycleScope
+
 
 import android.animation.ObjectAnimator
 import android.annotation.SuppressLint
@@ -78,7 +80,9 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
     protected open var lockRotation = true
     protected var playerBinding: PlayerCustomLayoutBinding? = null
 
-    // state of player UI
+    
+    private var twitchLiveChatUiController: TwitchLiveChatUiController? = null
+// state of player UI
     protected var isShowing = false
     protected var isLocked = false
     protected var timestampShowState = false
@@ -221,7 +225,10 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
     }
 
     override fun onDestroyView() {
-        playerHostView?.releaseOverlayLayoutListener()
+        
+        twitchLiveChatUiController?.release()
+        twitchLiveChatUiController = null
+playerHostView?.releaseOverlayLayoutListener()
         playerBinding = null
         super.onDestroyView()
     }
@@ -826,6 +833,17 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
         updateLockUI()
     }
 
+        private fun syncTwitchLiveChatUi() {
+        val binding = playerBinding ?: return
+        val controller = twitchLiveChatUiController ?: TwitchLiveChatUiController(
+            scope = viewLifecycleOwner.lifecycleScope,
+            root = binding.root,
+            player = player,
+        ).also { twitchLiveChatUiController = it }
+        controller.setControlsVisible(isShowing && !isLocked)
+        controller.sync()
+    }
+
     private fun updateTwitchJumpToLiveButtonLabel() {
         playerBinding?.apply {
             if (player.isTwitchLiveStream()) {
@@ -845,7 +863,9 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
     }
 
 private fun updateUIVisibility() {
-        val isGone = isLocked || !isShowing
+        
+        syncTwitchLiveChatUi()
+val isGone = isLocked || !isShowing
         var togglePlayerTitleGone = isGone
         context?.let {
             val settingsManager = PreferenceManager.getDefaultSharedPreferences(it)
@@ -942,6 +962,7 @@ private fun updateUIVisibility() {
     override fun playerStatusChanged() {
         super.playerStatusChanged()
         updateTwitchJumpToLiveButtonLabel()
+        syncTwitchLiveChatUi()
         scheduleMetadataVisibility()
     }
 

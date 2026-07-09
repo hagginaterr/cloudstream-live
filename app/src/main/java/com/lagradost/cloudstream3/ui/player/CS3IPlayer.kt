@@ -1,6 +1,8 @@
 @file:Suppress("DEPRECATION")
 
 package com.lagradost.cloudstream3.ui.player
+import recloudstream.twitchlivefavorites.TwitchLiveChat
+
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -682,6 +684,10 @@ private var lastTwitchLiveDelayLogMs = 0L
     }
 
     override fun isTwitchLiveStream(): Boolean = currentIsTwitchStream
+
+        override fun getTwitchChatChannelLogin(): String? {
+        return currentLink?.let { TwitchLiveChat.extractChannelLoginFromLink(it) }
+    }
 
     override fun getLiveDelayMs(): Long? {
         val liveOffset = exoPlayer?.currentLiveOffset ?: return null

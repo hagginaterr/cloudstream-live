@@ -16,7 +16,7 @@ object TwitchAccountAuth {
     private const val OAUTH_DEVICE_URL = "https://id.twitch.tv/oauth2/device"
     private const val OAUTH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
     private const val HELIX_BASE = "https://api.twitch.tv/helix"
-    private const val SCOPE = "user:read:follows"
+    private const val SCOPE = "user:read:follows chat:read"
 
     private const val ACCESS_TOKEN_KEY = "twitch_user_access_token"
     private const val REFRESH_TOKEN_KEY = "twitch_user_refresh_token"
@@ -147,6 +147,13 @@ fun isSignedIn(): Boolean {
         restoreAccountFromDeviceBackupIfNeeded()
         return getKey(USER_DISPLAY_KEY) ?: getKey(USER_LOGIN_KEY)
     }
+    fun userLogin(): String? {
+        restoreAccountFromDeviceBackupIfNeeded()
+        return getKey<String>(USER_LOGIN_KEY)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
 
     fun userId(): String? {
         restoreAccountFromDeviceBackupIfNeeded()
