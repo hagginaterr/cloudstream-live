@@ -1,5 +1,23 @@
-package recloudstream.twitchlivefavorites
+﻿package recloudstream.twitchlivefavorites
 
+
+
+
+
+
+
+
+
+
+import com.lagradost.cloudstream3.utils.getImageFromDrawable
+import com.lagradost.cloudstream3.utils.ImageLoader.loadImage
+import android.widget.ImageView
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.os.Build
+import android.graphics.drawable.GradientDrawable
+import android.animation.ValueAnimator
+import android.animation.ObjectAnimator
+import android.animation.AnimatorSet
 import android.widget.Toast
 import android.graphics.Color
 import android.view.Gravity
@@ -31,6 +49,7 @@ object TwitchDirectPlayHelper {
     private const val STREAM_API = "https://pwn.sh/tools/streamapi.py?url="
     private const val HOME_RESTORE_DELAY_MS = 3_000L
     private const val DIRECT_PLAY_LOADING_OVERLAY_TAG = "cloudstream_twitch_direct_play_loading_overlay"
+    private var directPlayLoadingPulse: AnimatorSet? = null
 
     private fun noAnimationNavOptions(): NavOptions {
         return NavOptions.Builder()
@@ -41,7 +60,7 @@ object TwitchDirectPlayHelper {
             .build()
     }
 
-        private fun showDirectPlayLoadingOverlay(title: String) {
+        private fun showDirectPlayLoadingOverlay(avatarUrl: String?) {
         val act = activity ?: return
         act.runOnUiThread {
             val decor = act.window?.decorView as? ViewGroup ?: return@runOnUiThread
@@ -52,6 +71,8 @@ object TwitchDirectPlayHelper {
                 return@runOnUiThread
             }
 
+            fun dp(value: Int): Int = (value * act.resources.displayMetrics.density).toInt()
+
             val overlay = FrameLayout(act).apply {
                 tag = DIRECT_PLAY_LOADING_OVERLAY_TAG
                 setBackgroundColor(Color.BLACK)
@@ -61,48 +82,56 @@ object TwitchDirectPlayHelper {
                 alpha = 0f
             }
 
-            val stack = LinearLayout(act).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
+            val avatarSize = dp(132)
+            val avatarPadding = dp(6)
+            val avatarFrame = FrameLayout(act).apply {
+                contentDescription = "Loading stream"
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.rgb(16, 16, 16))
+                    setStroke(dp(3), Color.argb(190, 255, 255, 255))
+                }
+                elevation = dp(10).toFloat()
+                setPadding(avatarPadding, avatarPadding, avatarPadding, avatarPadding)
             }
 
-            val progress = ProgressBar(act).apply {
-                isIndeterminate = true
+            val avatar = ImageView(act).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.rgb(28, 28, 28))
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    clipToOutline = true
+                }
+
+                avatarUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                    loadImage(url) {
+                        error {
+                            getImageFromDrawable(act, R.drawable.default_cover)
+                        }
+                    }
+                } ?: loadImage(R.drawable.default_cover)
             }
 
-            val textView = TextView(act).apply {
-                text = title.takeIf { it.isNotBlank() }
-                    ?.let { "Loading $it..." }
-                    ?: "Loading stream..."
-                setTextColor(Color.WHITE)
-                textSize = 18f
-                gravity = Gravity.CENTER
-                maxLines = 2
-                setPadding(48, 24, 48, 0)
-            }
-
-            stack.addView(
-                progress,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ),
-            )
-            stack.addView(
-                textView,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                ),
-            )
-            overlay.addView(
-                stack,
+            avatarFrame.addView(
+                avatar,
                 FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
                     Gravity.CENTER,
                 ),
             )
+
+            overlay.addView(
+                avatarFrame,
+                FrameLayout.LayoutParams(
+                    avatarSize,
+                    avatarSize,
+                    Gravity.CENTER,
+                ),
+            )
+
             decor.addView(
                 overlay,
                 ViewGroup.LayoutParams(
@@ -110,13 +139,31 @@ object TwitchDirectPlayHelper {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 ),
             )
+
             overlay.bringToFront()
             overlay.requestFocus()
             overlay.animate().alpha(1f).setDuration(120L).start()
+
+            directPlayLoadingPulse?.cancel()
+            val scaleX = ObjectAnimator.ofFloat(avatarFrame, View.SCALE_X, 0.94f, 1.08f)
+            val scaleY = ObjectAnimator.ofFloat(avatarFrame, View.SCALE_Y, 0.94f, 1.08f)
+            val alphaPulse = ObjectAnimator.ofFloat(avatarFrame, View.ALPHA, 0.72f, 1.0f)
+            listOf(scaleX, scaleY, alphaPulse).forEach { animator ->
+                animator.repeatCount = ValueAnimator.INFINITE
+                animator.repeatMode = ValueAnimator.REVERSE
+            }
+            directPlayLoadingPulse = AnimatorSet().apply {
+                playTogether(scaleX, scaleY, alphaPulse)
+                duration = 900L
+                interpolator = AccelerateDecelerateInterpolator()
+                start()
+            }
         }
     }
 
     private fun hideDirectPlayLoadingOverlay(animated: Boolean = true) {
+        directPlayLoadingPulse?.cancel()
+        directPlayLoadingPulse = null
         val act = activity ?: return
         act.runOnUiThread {
             val decor = act.window?.decorView as? ViewGroup ?: return@runOnUiThread
@@ -195,7 +242,7 @@ private fun setHomeLaunchSuppressed(suppressed: Boolean) {
         val title = card.name.ifBlank { "Twitch" }
 
         TwitchHomeRefreshFocus.suppressForMediaLaunch()
-        showDirectPlayLoadingOverlay(title)
+        showDirectPlayLoadingOverlay(card.posterUrl)
         suppressHomeDuringDirectPlayLaunch()
 
         ioSafe {
