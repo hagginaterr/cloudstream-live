@@ -51,8 +51,8 @@ object TwitchHistoricalChat {
             .mapNotNull(::parseRawIrcMessage)
             .filter { it.text.isNotBlank() }
             .sortedBy { it.timestampMs }
-            .takeLast(cappedMax)
             .toList()
+            .takeLast(cappedMax)
     }
 
     private fun normalizeLogin(value: String): String? {
