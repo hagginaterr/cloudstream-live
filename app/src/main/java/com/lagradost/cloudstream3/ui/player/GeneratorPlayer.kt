@@ -1541,7 +1541,7 @@ private fun renderTwitchPlayerChatMessages(
                             text = buildTwitchPlayerChatLine(message)
                             textSize = if (isLayout(TV)) 9.5f else 9f
                             setTextColor(0xFFFFFFFF.toInt())
-            alpha = 0.96f maxLines = Int.MAX_VALUE ellipsize = null setSingleLine(false) setHorizontallyScrolling(false) includeFontPadding = true setLineSpacing(0f, 1.03f)
+            alpha = 0.96f; setMaxLines(Int.MAX_VALUE); ellipsize = null; setSingleLine(false); setHorizontallyScrolling(false); includeFontPadding = true; setLineSpacing(0f, 1.03f)
                             layoutParams = LinearLayout.LayoutParams(
                                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
