@@ -451,10 +451,41 @@ internal class TwitchLiveChatUiController(
 
         val channelLogin = activeTarget?.channel
         val isTv = isTvDevice()
+        val messageScroller = ScrollView(root.context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            )
+            isFillViewport = true
+            clipToPadding = false
+            clipChildren = false
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isFocusable = false
+            isFocusableInTouchMode = false
+            isClickable = false
+            isEnabled = false
+        }
+        val messageContainer = LinearLayout(root.context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.START or Gravity.BOTTOM
+            setPadding(0, 0, 0, dp(if (isTv) 3 else 2))
+            clipToPadding = false
+            clipChildren = false
+            layoutParams = ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+        }
+        messageScroller.addView(messageContainer)
+        overlay.addView(messageScroller)
+
         messages.forEach { message ->
-            overlay.addView(
+            messageContainer.addView(
                 TwitchChatMessageRows.create(
-                    container = overlay,
+                    container = messageContainer,
                     scope = scope,
                     channelLogin = channelLogin,
                     timestampLabel = message.timestampLabel,
@@ -468,6 +499,11 @@ internal class TwitchLiveChatUiController(
                     settings = settings,
                 )
             )
+        }
+
+        messageScroller.post {
+            val childHeight = messageScroller.getChildAt(0)?.measuredHeight ?: 0
+            messageScroller.scrollTo(0, maxOf(0, childHeight - messageScroller.measuredHeight))
         }
     }
 

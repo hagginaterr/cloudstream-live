@@ -17,7 +17,9 @@ import android.text.style.ImageSpan
 import android.text.style.StyleSpan
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,7 @@ import java.io.ByteArrayInputStream
 import java.net.URL
 import java.nio.ByteBuffer
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 internal object TwitchChatMessageRows {
     fun create(
@@ -83,6 +86,7 @@ internal object TwitchChatMessageRows {
             setHorizontallyScrolling(false)
             setLineSpacing(0f, if (settings.clampedFontSizeSp >= 18) 1.0f else 1.04f)
             setShadowLayer(2f, 1f, 1f, Color.BLACK)
+            setPadding(0, 0, 0, dp(container, 1))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -150,7 +154,11 @@ internal object TwitchChatMessageRows {
                 if (drawable != null) {
                     val badgeStart = builder.length
                     val badge = drawable.constantState?.newDrawable()?.mutate() ?: drawable.mutate()
-                    badge.setBounds(0, 0, badgeSizePx, badgeSizePx)
+                    setBoundsPreservingAspectRatio(
+                        drawable = badge,
+                        targetHeightPx = badgeSizePx,
+                        maxWidthPx = badgeSizePx * 2,
+                    )
                     builder.append('\uFFFC')
                     builder.setSpan(
                         ImageSpan(badge, ImageSpan.ALIGN_BOTTOM),
@@ -230,7 +238,11 @@ internal object TwitchChatMessageRows {
                         if (url.isNullOrBlank()) {
                             null
                         } else {
-                            loadDrawable(url, badgeSizePx)?.let { rawBadge to it }
+                            loadDrawable(
+                                url = url,
+                                targetHeightPx = badgeSizePx,
+                                maxWidthPx = badgeSizePx * 2,
+                            )?.let { rawBadge to it }
                         }
                     }.toMap()
                 } else {
@@ -242,7 +254,13 @@ internal object TwitchChatMessageRows {
                     .filter { it.isNotBlank() }
                     .distinct()
                     .take(40)
-                    .mapNotNull { url -> loadDrawable(url, emoteSizePx)?.let { url to it } }
+                    .mapNotNull { url ->
+                        loadDrawable(
+                            url = url,
+                            targetHeightPx = emoteSizePx,
+                            maxWidthPx = emoteSizePx * 6,
+                        )?.let { url to it }
+                    }
                     .toMap()
 
                 badgeDrawables to emoteDrawables
@@ -269,6 +287,7 @@ internal object TwitchChatMessageRows {
                     settings = settings,
                     spanHost = textView,
                 )
+                scrollOwningChatToBottom(textView)
             }
         }
     }
@@ -291,7 +310,11 @@ internal object TwitchChatMessageRows {
 
             val source = emoteDrawables[emote.imageUrl] ?: return@forEach
             val drawable = source.constantState?.newDrawable()?.mutate() ?: source.mutate()
-            drawable.setBounds(0, 0, emoteSizePx, emoteSizePx)
+            setBoundsPreservingAspectRatio(
+                drawable = drawable,
+                targetHeightPx = emoteSizePx,
+                maxWidthPx = emoteSizePx * 6,
+            )
             prepareAnimatedDrawable(drawable)
 
             val span = if (spanHost != null && drawable is Animatable) {
@@ -303,7 +326,11 @@ internal object TwitchChatMessageRows {
         }
     }
 
-    private fun loadDrawable(url: String, sizePx: Int): Drawable? {
+    private fun loadDrawable(
+        url: String,
+        targetHeightPx: Int,
+        maxWidthPx: Int,
+    ): Drawable? {
         candidateImageUrls(url).forEach { candidate ->
             val drawable = runCatching {
                 val connection = URL(candidate).openConnection().apply {
@@ -311,19 +338,33 @@ internal object TwitchChatMessageRows {
                     readTimeout = 5_000
                 }
                 val bytes = connection.getInputStream().use { stream -> stream.readBytes() }
-                decodeDrawable(bytes, sizePx)
+                decodeDrawable(
+                    bytes = bytes,
+                    targetHeightPx = targetHeightPx,
+                    maxWidthPx = maxWidthPx,
+                )
             }.getOrNull()
             if (drawable != null) return drawable
         }
         return null
     }
 
-    private fun decodeDrawable(bytes: ByteArray, sizePx: Int): Drawable? {
+    private fun decodeDrawable(
+        bytes: ByteArray,
+        targetHeightPx: Int,
+        maxWidthPx: Int,
+    ): Drawable? {
         val decoded = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             runCatching {
-                ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, _, _ ->
+                ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
                     decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                    decoder.setTargetSize(sizePx, sizePx)
+                    val targetWidthPx = scaledWidthForHeight(
+                        sourceWidth = info.size.width,
+                        sourceHeight = info.size.height,
+                        targetHeightPx = targetHeightPx,
+                        maxWidthPx = maxWidthPx,
+                    )
+                    decoder.setTargetSize(targetWidthPx, targetHeightPx)
                 }
             }.getOrNull()
         } else {
@@ -331,9 +372,49 @@ internal object TwitchChatMessageRows {
         }
 
         val drawable = decoded ?: Drawable.createFromStream(ByteArrayInputStream(bytes), null)
-        drawable?.setBounds(0, 0, sizePx, sizePx)
-        drawable?.let { prepareAnimatedDrawable(it) }
+        drawable?.let {
+            setBoundsPreservingAspectRatio(
+                drawable = it,
+                targetHeightPx = targetHeightPx,
+                maxWidthPx = maxWidthPx,
+            )
+            prepareAnimatedDrawable(it)
+        }
         return drawable
+    }
+
+    private fun setBoundsPreservingAspectRatio(
+        drawable: Drawable,
+        targetHeightPx: Int,
+        maxWidthPx: Int,
+    ) {
+        val sourceWidth = drawable.intrinsicWidth
+            .takeIf { it > 0 }
+            ?: drawable.bounds.width().takeIf { it > 0 }
+            ?: targetHeightPx
+        val sourceHeight = drawable.intrinsicHeight
+            .takeIf { it > 0 }
+            ?: drawable.bounds.height().takeIf { it > 0 }
+            ?: targetHeightPx
+        val targetWidthPx = scaledWidthForHeight(
+            sourceWidth = sourceWidth,
+            sourceHeight = sourceHeight,
+            targetHeightPx = targetHeightPx,
+            maxWidthPx = maxWidthPx,
+        )
+        drawable.setBounds(0, 0, targetWidthPx, targetHeightPx)
+    }
+
+    private fun scaledWidthForHeight(
+        sourceWidth: Int,
+        sourceHeight: Int,
+        targetHeightPx: Int,
+        maxWidthPx: Int,
+    ): Int {
+        if (sourceWidth <= 0 || sourceHeight <= 0) return targetHeightPx
+        return (sourceWidth.toFloat() / sourceHeight.toFloat() * targetHeightPx.toFloat())
+            .roundToInt()
+            .coerceIn(1, maxWidthPx.coerceAtLeast(1))
     }
 
     private fun prepareAnimatedDrawable(drawable: Drawable) {
@@ -408,6 +489,28 @@ internal object TwitchChatMessageRows {
         override fun unscheduleDrawable(who: Drawable, what: Runnable) {
             host.removeCallbacks(what)
         }
+    }
+
+    private fun scrollOwningChatToBottom(view: View) {
+        var parent = view.parent
+        while (parent != null && parent !is ScrollView) {
+            parent = parent.parent
+        }
+        val scrollView = parent as? ScrollView ?: return
+        val observer = scrollView.viewTreeObserver
+        if (!observer.isAlive) return
+        observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                val currentObserver = scrollView.viewTreeObserver
+                if (currentObserver.isAlive) {
+                    currentObserver.removeOnPreDrawListener(this)
+                }
+                val childHeight = scrollView.getChildAt(0)?.measuredHeight ?: 0
+                scrollView.scrollTo(0, max(0, childHeight - scrollView.measuredHeight))
+                return true
+            }
+        })
+        scrollView.requestLayout()
     }
 
     private fun cleanMessagePreservingOffsets(value: String): String {
