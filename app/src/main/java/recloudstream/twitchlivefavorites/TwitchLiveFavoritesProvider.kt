@@ -87,32 +87,9 @@ private var cachedRecentTopClips: List<SearchResponse> = emptyList()
 private val cachedGameNames: MutableMap<String, Pair<Long, String>> = mutableMapOf()
 
     private var rateLimitedUntilMs: Long = 0L
-    private var lastTwitchApiError: String? = null
-
-    override val mainPage = mainPageOf(
-        "$actionBase/live" to liveFavoritesNowName,
-    )
-
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // FollowingLiveNowPatch: when signed in, the Live Now row comes directly
-        // from Twitch's streams/followed endpoint instead of the local favorites list.
-        // NewFromFollowedChannelsHomePatch: also add fast-capped media rows from followed channels.
-        ensureStartupFavoritesSaved()
-        val signedInUserId = TwitchAccountAuth.signedInUserId()
-        val useSignedInFollows = !signedInUserId.isNullOrBlank()
-        val savedFavorites = getSavedFavoriteChannels()
-        val usingStarterFavorites = savedFavorites.isEmpty()
-        val favorites = if (usingStarterFavorites) starterFavoriteChannels else savedFavorites
-        refreshCloudStreamFavoritePosters(favorites)
-
-        if (useSignedInFollows) {
-            val liveFollowed = fetchLiveFollowedStreams(signedInUserId.orEmpty())
-            maybeScheduleAutoRefresh("followed:${signedInUserId.orEmpty()}")
-
-            val liveItems = when {
-                !hasTwitchCredentials() -> listOf(setupRequiredCard())
-                liveFollowed == null -> listOf(apiErrorCard(lastTwitchApiError.orEmpty()))
-                liveFollowed.isNotEmpty() -> liveFollowed.map { it.toChannelCard(showOfflineLabel = false, directPlay = true) }
+    private fun hasTwitchCredentials(): Boolean {
+    return TwitchCredentials.CLIENT_ID.isNotBlank() && TwitchAccountAuth.isSignedIn()
+}
                 else -> listOf(statusCard("No followed Twitch channels are live right now", "no-followed-live"))
             }
 
@@ -539,7 +516,7 @@ private fun getSavedFavoriteChannels(): List<String> {
 
     private fun hasTwitchCredentials(): Boolean {
         return TwitchCredentials.CLIENT_ID.isNotBlank() && (
-            TwitchCredentials.CLIENT_SECRET.isNotBlank() || TwitchAccountAuth.isSignedIn()
+            TwitchAccountAuth.isSignedIn()
         )
     }
 
@@ -615,91 +592,71 @@ private fun shouldTreatAsUnauthorized(error: Throwable): Boolean {
         return updatedAtText()?.let { "$liveFavoritesNowName - $it" } ?: liveFavoritesNowName
     }
 
-    private suspend fun getAppAccessToken(): String? {
-        TwitchAccountAuth.getValidAccessToken()?.let { userToken ->
-            lastTwitchApiError = null
-            return userToken
-        }
-        if (!hasTwitchCredentials()) {
-            lastTwitchApiError = "Twitch API credentials are missing."
-            return null
-        }
-        if (isBackoffActive()) {
-            lastTwitchApiError = "Twitch API backoff is active. Try again in about ${secondsUntilBackoffEnds()}s."
-            return null
-        }
-
-        val now = nowMs()
-        cachedAccessToken?.let { token ->
-            if (now < cachedAccessTokenExpiresAtMs) return token
-        }
-
-        return runCatching {
-            val response = app.post(
-                oauthTokenUrl,
-                headers = mapOf("Content-Type" to "application/x-www-form-urlencoded"),
-                data = mapOf(
-                    "client_id" to TwitchCredentials.CLIENT_ID,
-                    "client_secret" to TwitchCredentials.CLIENT_SECRET,
-                    "grant_type" to "client_credentials",
-                ),
-            ).parsed<TwitchTokenResponse>()
-
-            val token = response.access_token.trim()
-            if (token.isBlank()) return@runCatching null
-            cachedAccessToken = token
-            cachedAccessTokenExpiresAtMs = now + maxOf(60L, response.expires_in - 60L) * 1000L
-            lastTwitchApiError = null
-            token
-        }.getOrElse { error ->
-            cachedAccessToken = null
-            cachedAccessTokenExpiresAtMs = 0L
-            if (shouldTreatAsRateLimit(error)) {
-                noteRateLimit(error)
-            } else {
-                lastTwitchApiError = "Could not get Twitch API token: ${error.message ?: error.javaClass.simpleName}"
-            }
-            null
-        }
-    }
-
-    private suspend inline fun <reified T : Any> twitchGet(url: String): T? {
-        if (isBackoffActive()) {
-            lastTwitchApiError = "Twitch API backoff is active. Try again in about ${secondsUntilBackoffEnds()}s."
-            return null
-        }
-
-        val token = getAppAccessToken() ?: return null
-        val firstTry = runCatching { twitchGetWithToken<T>(url, token) }
-        firstTry.getOrNull()?.let { result ->
-            lastTwitchApiError = null
-            return result
-        }
-
-        firstTry.exceptionOrNull()?.let { error ->
-            if (shouldTreatAsRateLimit(error)) {
-                noteRateLimit(error)
-                return null
-            }
-        }
-
-        // If the cached token was stale or revoked, clear it and try once more.
+    private suspend fun getAppAccessToken(forceRefresh: Boolean = false): String? {
+    if (TwitchCredentials.CLIENT_ID.isBlank()) {
+        lastTwitchApiError = "Twitch API Client ID is missing."
         cachedAccessToken = null
         cachedAccessTokenExpiresAtMs = 0L
-        val retryToken = getAppAccessToken() ?: return null
+        return null
+    }
+
+    val token = if (forceRefresh) {
+        TwitchAccountAuth.forceRefreshAccessToken()
+    } else {
+        TwitchAccountAuth.getValidAccessToken()
+    }
+
+    if (token.isNullOrBlank()) {
+        lastTwitchApiError = "Sign in to Twitch again."
+        cachedAccessToken = null
+        cachedAccessTokenExpiresAtMs = 0L
+        return null
+    }
+
+    cachedAccessToken = null
+    cachedAccessTokenExpiresAtMs = 0L
+    lastTwitchApiError = null
+    return token
+}
+
+    private suspend inline fun <reified T> twitchGet(url: String): T? {
+    if (isBackoffActive()) {
+        lastTwitchApiError = "Twitch API backoff is active. Try again in about ${secondsUntilBackoffEnds()}s."
+        return null
+    }
+
+    val token = getAppAccessToken() ?: return null
+    val firstTry = runCatching { twitchGetWithToken<T>(url, token) }
+    firstTry.getOrNull()?.let { result ->
+        lastTwitchApiError = null
+        return result
+    }
+
+    val firstError = firstTry.exceptionOrNull()
+    if (firstError != null && shouldTreatAsRateLimit(firstError)) {
+        noteRateLimit(firstError)
+        return null
+    }
+
+    if (firstError != null && shouldTreatAsUnauthorized(firstError)) {
+        val retryToken = getAppAccessToken(forceRefresh = true) ?: return null
         return runCatching { twitchGetWithToken<T>(url, retryToken) }
             .onSuccess { lastTwitchApiError = null }
             .getOrElse { error ->
-                cachedAccessToken = null
-                cachedAccessTokenExpiresAtMs = 0L
                 if (shouldTreatAsRateLimit(error)) {
                     noteRateLimit(error)
+                } else if (shouldTreatAsUnauthorized(error)) {
+                    lastTwitchApiError = "Twitch sign-in expired. Please sign in again."
                 } else {
                     lastTwitchApiError = "Twitch API request failed: ${error.message ?: error.javaClass.simpleName}"
                 }
                 null
             }
     }
+
+    lastTwitchApiError = "Twitch API request failed: ${firstError?.message ?: firstError?.javaClass?.simpleName ?: "unknown error"}"
+    return null
+}
 
     private suspend inline fun <reified T : Any> twitchGetWithToken(url: String, token: String): T {
         return app.get(
@@ -1945,7 +1902,7 @@ private fun formatViewerCount(count: Int?): String? {
     out = appendTwitchProfileQueryParam(out, "cs_api_name", name)
     return out
 }
-    
+
     private fun appendTwitchHomeCardMeta(
         url: String,
         title: String?,
@@ -2230,7 +2187,7 @@ private suspend fun fetchTwitchProfileRecommendations(channel: String): List<Sea
             }
             code == "setup" -> {
                 title = "Twitch API setup needed"
-                message = "This v3.5 build did not receive Twitch API credentials. Add TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET to GitHub Actions secrets and rebuild. The workflow should fail if either secret is missing."
+                message = "This v3.5 build did not receive Twitch API credentials. Add TWITCH_CLIENT_ID to GitHub Actions secrets and rebuild. The workflow should fail if it is missing."
                 tags = listOf("Setup", "Twitch API")
             }
             code == "no-favorites" -> {

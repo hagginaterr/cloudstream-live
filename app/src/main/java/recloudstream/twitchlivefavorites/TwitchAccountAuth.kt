@@ -10,6 +10,8 @@ import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.utils.DataStoreHelper
 import java.net.URLEncoder
 import com.lagradost.cloudstream3.mvvm.logError
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 object TwitchAccountAuth {
     private const val CLIENT_ID_MISSING = "Twitch client ID is missing from this build."
@@ -30,6 +32,8 @@ object TwitchAccountAuth {
     private const val LAST_SYNC_FOLLOWED_COUNT_KEY = "twitch_user_last_sync_followed_count"
     private const val SYNC_ON_STARTUP_KEY = "twitch_user_sync_on_startup"
     private const val REMOVE_UNFOLLOWED_KEY = "twitch_user_remove_unfollowed"
+    private const val PUBLIC_CLIENT_MIGRATION_KEY = "twitch_public_client_migration_v14_client_id"
+    private val tokenRefreshMutex = Mutex()
 private val refreshMutex = kotlinx.coroutines.sync.Mutex()
 private fun isAccessTokenFresh(expiresAt: Long): Boolean {
     return expiresAt > 0L && System.currentTimeMillis() < expiresAt - 60_000L
@@ -100,8 +104,34 @@ private fun isAccessTokenFresh(expiresAt: Long): Boolean {
         val cursor: String? = null,
     )
 
-        // BEGIN TwitchRestorableAccountBackupPatch
+
+    private fun clearStoredTwitchAccountStateForPublicClientMigration() {
+        listOf(
+            ACCESS_TOKEN_KEY,
+            REFRESH_TOKEN_KEY,
+            EXPIRES_AT_KEY,
+            USER_ID_KEY,
+            USER_LOGIN_KEY,
+            USER_DISPLAY_KEY,
+            LAST_IMPORT_COUNT_KEY,
+            LAST_IMPORT_AT_KEY,
+            LAST_SYNC_REMOVED_COUNT_KEY,
+            LAST_SYNC_FOLLOWED_COUNT_KEY,
+        ).forEach { removeKey(it) }
+        TwitchAccountRestoreStore.clear()
+    }
+
+    private fun ensurePublicClientMigrationForCurrentBuild() {
+        val clientId = TwitchCredentials.CLIENT_ID.trim()
+        if (clientId.isBlank()) return
+        val migratedForClientId: String? = getKey(PUBLIC_CLIENT_MIGRATION_KEY)
+        if (migratedForClientId == clientId) return
+        clearStoredTwitchAccountStateForPublicClientMigration()
+        setKey(PUBLIC_CLIENT_MIGRATION_KEY, clientId)
+    }
+    // BEGIN TwitchRestorableAccountBackupPatch
     private fun restoreAccountFromDeviceBackupIfNeeded(): Boolean {
+        ensurePublicClientMigrationForCurrentBuild()
         val restored = TwitchAccountRestoreStore.restore() ?: return false
         var changed = false
 
@@ -187,27 +217,16 @@ fun isSignedIn(): Boolean {
         }.getOrNull() ?: userId()
     }
 
-    suspend fun forceRefreshAccessToken(): String? {
-    restoreAccountFromDeviceBackupIfNeeded()
-    val refreshToken = getKey(REFRESH_TOKEN_KEY)
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-    val currentAccessToken = getKey(ACCESS_TOKEN_KEY)
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-    val currentExpiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
-    if (refreshToken.isNullOrBlank()) {
-        return currentAccessToken?.takeIf { isAccessTokenFresh(currentExpiresAt) }
+            suspend fun forceRefreshAccessToken(): String? {
+        restoreAccountFromDeviceBackupIfNeeded()
+        return tokenRefreshMutex.withLock {
+            val refreshToken = getKey(REFRESH_TOKEN_KEY)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@withLock null
+            refreshAccessToken(refreshToken)
+        }
     }
-
-    refreshMutex.lock()
-    return try {
-        refreshAccessToken(refreshToken)
-            ?: currentAccessToken?.takeIf { isAccessTokenFresh(currentExpiresAt) }
-    } finally {
-        refreshMutex.unlock()
-    }
-}
 
 
     fun lastImportSummary(): String? {
@@ -331,32 +350,28 @@ fun isSyncOnStartupEnabled(): Boolean {
         )
     }
 
-    suspend fun getValidAccessToken(): String? {
-    restoreAccountFromDeviceBackupIfNeeded()
-    val savedAccessToken = getKey(ACCESS_TOKEN_KEY)?.trim().orEmpty()
-    val expiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
-    if (savedAccessToken.isNotBlank() && isAccessTokenFresh(expiresAt)) {
-        return savedAccessToken
-    }
+            suspend fun getValidAccessToken(): String? {
+        restoreAccountFromDeviceBackupIfNeeded()
+        val now = System.currentTimeMillis()
+        val savedAccessToken = getKey(ACCESS_TOKEN_KEY)?.trim().orEmpty()
+        val expiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
+        if (savedAccessToken.isNotBlank() && now < expiresAt - 60_000L) {
+            return savedAccessToken
+        }
 
-    val refreshToken = getKey(REFRESH_TOKEN_KEY)?.trim().orEmpty()
-    if (refreshToken.isBlank()) {
-        return savedAccessToken.takeIf { it.isNotBlank() && expiresAt <= 0L }
-    }
-
-    refreshMutex.lock()
-    return try {
-        val currentAccessToken = getKey(ACCESS_TOKEN_KEY)?.trim().orEmpty()
-        val currentExpiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
-        if (currentAccessToken.isNotBlank() && isAccessTokenFresh(currentExpiresAt)) {
-            currentAccessToken
-        } else {
+        return tokenRefreshMutex.withLock {
+            val currentAccessToken = getKey(ACCESS_TOKEN_KEY)?.trim().orEmpty()
+            val currentExpiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
+            if (currentAccessToken.isNotBlank() && System.currentTimeMillis() < currentExpiresAt - 60_000L) {
+                return@withLock currentAccessToken
+            }
+            val refreshToken = getKey(REFRESH_TOKEN_KEY)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@withLock null
             refreshAccessToken(refreshToken)
         }
-    } finally {
-        refreshMutex.unlock()
     }
-}
 
 
     suspend fun syncFollowedFavorites(
@@ -423,36 +438,31 @@ fun isSyncOnStartupEnabled(): Boolean {
         )
     }
 
-    private suspend fun refreshAccessToken(refreshToken: String): String? {
-    val clientId = TwitchCredentials.CLIENT_ID.trim()
-    val cleanRefreshToken = refreshToken.trim().takeIf { it.isNotBlank() } ?: return null
-    if (clientId.isBlank()) return null
-
-    return runCatching {
-        // Twitch Device Code / QR sign-in can be a public-client flow.
-        // Public clients do not keep or send a client_secret when refreshing.
-        val token: TwitchTokenResponse = app.post(
-            OAUTH_TOKEN_URL,
-            headers = mapOf("Content-Type" to "application/x-www-form-urlencoded"),
-            data = mapOf(
-                "client_id" to clientId,
-                "grant_type" to "refresh_token",
-                "refresh_token" to cleanRefreshToken,
-            ),
-        ).parsed()
-        if (token.access_token.isBlank()) {
-            val detail = token.error
-                .ifBlank { token.message }
-                .ifBlank { token.error_description }
-                .ifBlank { "empty token" }
-            throw IllegalStateException("Twitch refresh failed: $detail")
-        }
-        saveToken(token)
-        token.access_token.trim().takeIf { it.isNotBlank() }
-    }.onFailure { error ->
-        logError(error)
-    }.getOrNull()
-}
+            private suspend fun refreshAccessToken(refreshToken: String): String? {
+        val clientId = TwitchCredentials.CLIENT_ID.trim()
+        if (clientId.isBlank() || refreshToken.isBlank()) return null
+        return runCatching {
+            val token = app.post(
+                OAUTH_TOKEN_URL,
+                headers = mapOf("Content-Type" to "application/x-www-form-urlencoded"),
+                data = mapOf(
+                    "client_id" to clientId,
+                    "grant_type" to "refresh_token",
+                    "refresh_token" to refreshToken,
+                ),
+            ).parsed<TwitchTokenResponse>()
+            val accessToken = token.access_token.trim()
+            if (accessToken.isBlank()) {
+                throw IllegalStateException("Twitch returned an empty refreshed access token.")
+            }
+            saveToken(token)
+            accessToken
+        }.onFailure { error ->
+            logError(error)
+            removeKey(ACCESS_TOKEN_KEY)
+            removeKey(EXPIRES_AT_KEY)
+        }.getOrNull()
+    }
 
 
     private fun saveToken(token: TwitchTokenResponse) {
@@ -466,6 +476,8 @@ fun isSyncOnStartupEnabled(): Boolean {
 
         val expiresAt = System.currentTimeMillis() + maxOf(60L, token.expires_in) * 1000L
         setKey(EXPIRES_AT_KEY, expiresAt)
+        val clientId = TwitchCredentials.CLIENT_ID.trim()
+        if (clientId.isNotBlank()) setKey(PUBLIC_CLIENT_MIGRATION_KEY, clientId)
 
         persistAccountToDeviceBackup()
     }
