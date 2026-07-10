@@ -789,6 +789,33 @@ class CS3IPlayer : IPlayer {
         )
     }
 
+    // TwitchTrueLiveEdgeJumpPatch:
+    // Media3's default live position honors the configured Twitch target offset
+    // (currently 15 seconds). For the growing Twitch VOD EVENT source, the seek
+    // bar's right edge is the actual available playlist edge, so Jump to Live
+    // should seek there directly instead of seeking to the default live position.
+    private fun ExoPlayer.getTwitchTrueLiveEdgePositionMs(): Long? {
+        val timeline = currentTimeline
+        val windowIndex = currentMediaItemIndex
+        if (!timeline.isEmpty && windowIndex in 0 until timeline.windowCount) {
+            val window = Timeline.Window()
+            timeline.getWindow(windowIndex, window)
+            val windowDurationMs = window.durationMs
+            if (windowDurationMs != TIME_UNSET && windowDurationMs > 0L) {
+                // Stay one millisecond inside the known window rather than requesting
+                // a position beyond its final boundary.
+                return (windowDurationMs - 1L).coerceAtLeast(0L)
+            }
+        }
+
+        val playerDurationMs = duration
+        return if (playerDurationMs != TIME_UNSET && playerDurationMs > 0L) {
+            (playerDurationMs - 1L).coerceAtLeast(0L)
+        } else {
+            null
+        }
+    }
+
     private fun ExoPlayer.jumpToLive(source: PlayerEventSource) {
         val liveOffset = currentLiveOffset
         val liveDelayText = if (liveOffset == TIME_UNSET) {
@@ -807,10 +834,29 @@ class CS3IPlayer : IPlayer {
         )
 
         if (isCurrentMediaItemLive || isCurrentMediaItemDynamic) {
-            seekToDefaultPosition()
+            val trueLiveEdgeMs = if (currentIsTwitchLiveRewindSource) {
+                getTwitchTrueLiveEdgePositionMs()
+            } else {
+                null
+            }
+
+            if (trueLiveEdgeMs != null) {
+                seekTo(trueLiveEdgeMs)
+                Log.i(
+                    TAG,
+                    "Jump to Live seeking Twitch DVR EVENT source to true edge: ${trueLiveEdgeMs}ms"
+                )
+            } else {
+                // Ordinary live sources retain Media3's safer configured default offset.
+                seekToDefaultPosition()
+            }
+
             play()
             maybeLogTwitchLiveDelay("jump-to-live")
-            updatedTime(source = source)
+            updatedTime(
+                writePosition = trueLiveEdgeMs,
+                source = source,
+            )
         } else {
             Log.i(TAG, "Jump to Live ignored because current media is not live.")
         }
