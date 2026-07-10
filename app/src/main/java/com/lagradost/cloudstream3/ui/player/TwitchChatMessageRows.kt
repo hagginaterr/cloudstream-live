@@ -15,6 +15,7 @@ import android.text.style.DynamicDrawableSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.ImageSpan
 import android.text.style.StyleSpan
+import android.util.LruCache
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -30,10 +31,22 @@ import recloudstream.twitchlivefavorites.TwitchChatEmote
 import java.io.ByteArrayInputStream
 import java.net.URL
 import java.nio.ByteBuffer
+import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 internal object TwitchChatMessageRows {
+    // TwitchChatMediaCacheV27: share decoded media and coalesce layout settling.
+    private const val DRAWABLE_FAILURE_TTL_MS = 30_000L
+    private const val MEDIA_SETTLE_DELAY_MS = 48L
+    private val drawableStateCache = object : LruCache<String, Drawable.ConstantState>(192) {}
+    private val drawableBytesCache = object : LruCache<String, ByteArray>(12 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: ByteArray): Int = value.size
+    }
+    private val drawableLoadLocks = ConcurrentHashMap<String, Any>()
+    private val drawableFailureUntil = ConcurrentHashMap<String, Long>()
+    private val pendingMediaSettles = WeakHashMap<ScrollView, Runnable>()
     fun create(
         container: LinearLayout,
         scope: CoroutineScope,
@@ -272,7 +285,7 @@ internal object TwitchChatMessageRows {
 
             withContext(Dispatchers.Main.immediate) {
                 if (!textView.isAttachedToWindow) return@withContext
-                textView.text = formatText(
+                textView.setTextKeepState(formatText(
                     timestampLabel = timestampLabel,
                     badges = badges,
                     displayName = displayName,
@@ -286,8 +299,8 @@ internal object TwitchChatMessageRows {
                     emoteSizePx = emoteSizePx,
                     settings = settings,
                     spanHost = textView,
-                )
-                scrollOwningChatToBottom(textView)
+                ))
+                scheduleOwningChatSettle(textView)
             }
         }
     }
@@ -332,21 +345,76 @@ internal object TwitchChatMessageRows {
         maxWidthPx: Int,
     ): Drawable? {
         candidateImageUrls(url).forEach { candidate ->
-            val drawable = runCatching {
-                val connection = URL(candidate).openConnection().apply {
-                    connectTimeout = 3_000
-                    readTimeout = 5_000
-                }
-                val bytes = connection.getInputStream().use { stream -> stream.readBytes() }
-                decodeDrawable(
-                    bytes = bytes,
-                    targetHeightPx = targetHeightPx,
-                    maxWidthPx = maxWidthPx,
-                )
-            }.getOrNull()
-            if (drawable != null) return drawable
+            loadDrawableCandidate(candidate, targetHeightPx, maxWidthPx)?.let { return it }
         }
         return null
+    }
+
+    private fun loadDrawableCandidate(
+        candidate: String,
+        targetHeightPx: Int,
+        maxWidthPx: Int,
+    ): Drawable? {
+        val renderKey = "$candidate|$targetHeightPx|$maxWidthPx"
+        cachedDrawable(renderKey, targetHeightPx, maxWidthPx)?.let { return it }
+
+        val lock = drawableLoadLocks.getOrPut(candidate) { Any() }
+        return try {
+            synchronized(lock) {
+                cachedDrawable(renderKey, targetHeightPx, maxWidthPx)?.let { return@synchronized it }
+
+                var bytes = synchronized(drawableBytesCache) { drawableBytesCache.get(candidate) }
+                if (bytes == null) {
+                    val now = SystemClock.uptimeMillis()
+                    val failedUntil = drawableFailureUntil[candidate] ?: 0L
+                    if (failedUntil > now) return@synchronized null
+                    val downloaded = runCatching {
+                        val connection = URL(candidate).openConnection().apply {
+                            connectTimeout = 3_000
+                            readTimeout = 5_000
+                            useCaches = true
+                        }
+                        connection.getInputStream().use { stream -> stream.readBytes() }
+                    }.getOrNull()
+                    if (downloaded == null) {
+                        drawableFailureUntil[candidate] = now + DRAWABLE_FAILURE_TTL_MS
+                        return@synchronized null
+                    }
+                    bytes = downloaded
+                    drawableFailureUntil.remove(candidate)
+                    synchronized(drawableBytesCache) { drawableBytesCache.put(candidate, downloaded) }
+                }
+
+                val loadedBytes = bytes ?: return@synchronized null
+                val decoded = decodeDrawable(
+                    bytes = loadedBytes,
+                    targetHeightPx = targetHeightPx,
+                    maxWidthPx = maxWidthPx,
+                ) ?: return@synchronized null
+                decoded.constantState?.let { state ->
+                    synchronized(drawableStateCache) { drawableStateCache.put(renderKey, state) }
+                    return@synchronized state.newDrawable().mutate().also { drawable ->
+                        setBoundsPreservingAspectRatio(drawable, targetHeightPx, maxWidthPx)
+                        prepareAnimatedDrawable(drawable)
+                    }
+                }
+                decoded
+            }
+        } finally {
+            drawableLoadLocks.remove(candidate, lock)
+        }
+    }
+
+    private fun cachedDrawable(
+        renderKey: String,
+        targetHeightPx: Int,
+        maxWidthPx: Int,
+    ): Drawable? {
+        val state = synchronized(drawableStateCache) { drawableStateCache.get(renderKey) } ?: return null
+        return state.newDrawable().mutate().also { drawable ->
+            setBoundsPreservingAspectRatio(drawable, targetHeightPx, maxWidthPx)
+            prepareAnimatedDrawable(drawable)
+        }
     }
 
     private fun decodeDrawable(
@@ -575,13 +643,28 @@ internal object TwitchChatMessageRows {
             (margins?.bottomMargin ?: 0)
     }
 
-    private fun scrollOwningChatToBottom(view: View) {
+    private fun scheduleOwningChatSettle(view: View) {
         var parent = view.parent
         while (parent != null && parent !is ScrollView) {
             parent = parent.parent
         }
         val scrollView = parent as? ScrollView ?: return
-        fitAndScrollToBottom(scrollView)
+        val pending = synchronized(pendingMediaSettles) { pendingMediaSettles.remove(scrollView) }
+        if (pending != null) scrollView.removeCallbacks(pending)
+
+        lateinit var settle: Runnable
+        settle = Runnable {
+            synchronized(pendingMediaSettles) {
+                if (pendingMediaSettles[scrollView] === settle) {
+                    pendingMediaSettles.remove(scrollView)
+                }
+            }
+            if (scrollView.isAttachedToWindow) {
+                fitAndScrollToBottom(scrollView)
+            }
+        }
+        synchronized(pendingMediaSettles) { pendingMediaSettles[scrollView] = settle }
+        scrollView.postDelayed(settle, MEDIA_SETTLE_DELAY_MS)
     }
 
     private fun cleanMessagePreservingOffsets(value: String): String {

@@ -1,5 +1,8 @@
 package com.lagradost.cloudstream3.ui.player
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.app.Dialog
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -8,6 +11,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
@@ -41,6 +45,10 @@ internal class TwitchLiveChatUiController(
         const val VOD_REFETCH_DISTANCE_MS = 3_000L
         const val LIVE_DVR_CHAT_THRESHOLD_MS = 20_000L
         const val SLOW_RENDER_INTERVAL_MS = 2_000L
+        const val NORMAL_RENDER_INTERVAL_MS = 80L
+        const val CHAT_SCROLL_DURATION_MS = 180L
+        const val CHAT_SCROLL_SETTLE_DELAY_MS = 220L
+        // TwitchChatSmoothPipelineV27: batch appends and retain existing row views.
     }
 
     private enum class ChatMode { LIVE, VOD }
@@ -64,6 +72,11 @@ internal class TwitchLiveChatUiController(
     private var liveStartupHistoryJob: Job? = null
     private var lastVodFetchPositionMs: Long = Long.MIN_VALUE
     private var lastRenderedAtMs: Long = 0L
+    private var messageScroller: ScrollView? = null
+    private var messageContainer: LinearLayout? = null
+    private var lastSubmittedMessageIds: List<String> = emptyList()
+    private var chatScrollAnimator: ValueAnimator? = null
+    private var pendingChatSettle: Runnable? = null
     private var settings: TwitchChatSettingsState = TwitchChatSettings.load(root.context)
 
     fun setControlsVisible(visible: Boolean) {
@@ -215,6 +228,7 @@ internal class TwitchLiveChatUiController(
 
 
     private fun hideOverlay() {
+        cancelChatMotion()
         overlayView()?.isVisible = false
     }
 
@@ -348,6 +362,7 @@ internal class TwitchLiveChatUiController(
         liveIrcMessages = emptyList()
         lastVodFetchPositionMs = Long.MIN_VALUE
         lastRenderedAtMs = 0L
+        cancelChatMotion()
     }
 
     private fun releaseConnection() {
@@ -410,43 +425,81 @@ internal class TwitchLiveChatUiController(
 
     private fun removeOverlay() {
         val parent = root as? ViewGroup ?: return
+        resetMessageViewport()
         overlayView()?.let { parent.removeView(it) }
     }
 
     private fun renderRespectingSlowMode(force: Boolean) {
-        if (!settings.slowMode || force) {
+        val intervalMs = if (settings.slowMode) {
+            SLOW_RENDER_INTERVAL_MS
+        } else {
+            NORMAL_RENDER_INTERVAL_MS
+        }
+
+        if (force) {
+            slowRenderJob?.cancel()
+            slowRenderJob = null
             lastRenderedAtMs = System.currentTimeMillis()
             render()
             return
         }
+
+        if (slowRenderJob?.isActive == true) return
         val now = System.currentTimeMillis()
-        val remaining = SLOW_RENDER_INTERVAL_MS - (now - lastRenderedAtMs)
+        val remaining = intervalMs - (now - lastRenderedAtMs)
         if (remaining <= 0L) {
             lastRenderedAtMs = now
             render()
             return
         }
-        if (slowRenderJob?.isActive == true) return
+
         slowRenderJob = scope.launch {
             delay(remaining)
             lastRenderedAtMs = System.currentTimeMillis()
             render()
+            slowRenderJob = null
         }
     }
 
-    private fun render() {
+    private fun render(rebuildRows: Boolean = false) {
         val overlay = ensureOverlay() ?: return
-        overlay.removeAllViews()
-
         val messages = latestMessages.takeLast(maxVisibleMessages())
         if (messages.isEmpty()) {
-            overlay.addView(statusTextView(statusText))
+            showStatusOnly(overlay)
             return
         }
 
-        val channelLogin = activeTarget?.channel
+        val viewport = ensureMessageViewport(overlay)
+        updateMessageRows(
+            scrollView = viewport.first,
+            container = viewport.second,
+            messages = messages,
+            rebuildRows = rebuildRows,
+        )
+    }
+
+    private fun showStatusOnly(overlay: LinearLayout) {
+        resetMessageViewport()
+        val existing = overlay.getChildAt(0) as? TextView
+        if (overlay.childCount == 1 && existing?.tag == "twitch_chat_status") {
+            existing.text = statusText
+            return
+        }
+        overlay.removeAllViews()
+        overlay.addView(statusTextView(statusText).apply { tag = "twitch_chat_status" })
+    }
+
+    private fun ensureMessageViewport(overlay: LinearLayout): Pair<ScrollView, LinearLayout> {
+        val existingScroller = messageScroller
+        val existingContainer = messageContainer
+        if (existingScroller?.parent === overlay && existingContainer?.parent === existingScroller) {
+            return existingScroller to existingContainer
+        }
+
+        resetMessageViewport()
+        overlay.removeAllViews()
         val isTv = isTvDevice()
-        val messageScroller = ScrollView(root.context).apply {
+        val scroller = ScrollView(root.context).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
@@ -463,10 +516,9 @@ internal class TwitchLiveChatUiController(
             isClickable = false
             isEnabled = false
         }
-        val messageContainer = LinearLayout(root.context).apply {
+        val container = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.START or Gravity.BOTTOM
-            // TwitchChatWholeRowViewportPaddingPatch:
             val edgePadding = dp(if (isTv) 3 else 2)
             setPadding(0, edgePadding, 0, edgePadding)
             clipToPadding = false
@@ -476,29 +528,191 @@ internal class TwitchLiveChatUiController(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             )
         }
-        messageScroller.addView(messageContainer)
-        overlay.addView(messageScroller)
+        scroller.addView(container)
+        overlay.addView(scroller)
+        messageScroller = scroller
+        messageContainer = container
+        return scroller to container
+    }
 
-        messages.forEach { message ->
-            messageContainer.addView(
-                TwitchChatMessageRows.create(
-                    container = messageContainer,
-                    scope = scope,
-                    channelLogin = channelLogin,
-                    timestampLabel = message.timestampLabel,
-                    displayName = message.displayName,
-                    fallbackName = "Twitch",
-                    color = message.color,
-                    text = message.text,
-                    badges = message.badges,
-                    isTv = isTv,
-                    emotes = message.emotes,
-                    settings = settings,
-                )
-            )
+    private fun updateMessageRows(
+        scrollView: ScrollView,
+        container: LinearLayout,
+        messages: List<TwitchLiveChat.LiveMessage>,
+        rebuildRows: Boolean,
+    ) {
+        val desiredIds = messages.map { it.id }
+        val appendStart = if (!rebuildRows) {
+            appendStartIndex(lastSubmittedMessageIds, desiredIds)
+        } else {
+            -1
+        }
+        val canAppend = appendStart >= 0 &&
+            container.childCount > 0 &&
+            containerHasMessage(container, lastSubmittedMessageIds.lastOrNull())
+
+        if (!canAppend) {
+            cancelChatMotion()
+            container.removeAllViews()
+            messages.forEach { message -> container.addView(createMessageRow(container, message)) }
+            lastSubmittedMessageIds = desiredIds
+            TwitchChatMessageRows.fitAndScrollToBottom(scrollView)
+            return
         }
 
-        TwitchChatMessageRows.fitAndScrollToBottom(messageScroller)
+        val existingIds = mutableSetOf<String>()
+        for (index in 0 until container.childCount) {
+            (container.getChildAt(index).tag as? String)?.let(existingIds::add)
+        }
+
+        var added = false
+        messages.drop(appendStart).forEach { message ->
+            if (existingIds.add(message.id)) {
+                container.addView(createMessageRow(container, message))
+                added = true
+            }
+        }
+        lastSubmittedMessageIds = desiredIds
+
+        if (added) {
+            animateChatToBottom(scrollView, container)
+        } else {
+            scheduleChatSettle(scrollView, container)
+        }
+    }
+
+    private fun appendStartIndex(oldIds: List<String>, newIds: List<String>): Int {
+        if (oldIds.isEmpty() || newIds.isEmpty()) return -1
+        if (oldIds == newIds) return newIds.size
+        val oldLast = oldIds.last()
+        val oldLastInNew = newIds.indexOf(oldLast)
+        if (oldLastInNew < 0 || oldLastInNew >= newIds.lastIndex) return -1
+
+        val oldSet = oldIds.toHashSet()
+        val newSet = newIds.toHashSet()
+        val retainedOld = oldIds.filter(newSet::contains)
+        val retainedNew = newIds.filter(oldSet::contains)
+        if (retainedOld != retainedNew) return -1
+        return oldLastInNew + 1
+    }
+
+    private fun containerHasMessage(container: LinearLayout, messageId: String?): Boolean {
+        if (messageId == null) return false
+        for (index in 0 until container.childCount) {
+            if (container.getChildAt(index).tag == messageId) return true
+        }
+        return false
+    }
+
+    private fun createMessageRow(
+        container: LinearLayout,
+        message: TwitchLiveChat.LiveMessage,
+    ): View {
+        return TwitchChatMessageRows.create(
+            container = container,
+            scope = scope,
+            channelLogin = activeTarget?.channel,
+            timestampLabel = message.timestampLabel,
+            displayName = message.displayName,
+            fallbackName = "Twitch",
+            color = message.color,
+            text = message.text,
+            badges = message.badges,
+            isTv = isTvDevice(),
+            emotes = message.emotes,
+            settings = settings,
+        ).apply {
+            tag = message.id
+        }
+    }
+
+    private fun animateChatToBottom(scrollView: ScrollView, container: LinearLayout) {
+        pendingChatSettle?.let(scrollView::removeCallbacks)
+        pendingChatSettle = null
+        scrollView.post {
+            if (messageScroller !== scrollView || messageContainer !== container) return@post
+            val viewportHeight = (
+                scrollView.height - scrollView.paddingTop - scrollView.paddingBottom
+                ).coerceAtLeast(0)
+            val target = (container.measuredHeight - viewportHeight).coerceAtLeast(0)
+            val start = scrollView.scrollY.coerceAtLeast(0)
+            if (target <= start) {
+                scheduleChatSettle(scrollView, container)
+                return@post
+            }
+
+            chatScrollAnimator?.cancel()
+            val distance = target - start
+            val durationMs = (CHAT_SCROLL_DURATION_MS + distance / dp(18).coerceAtLeast(1) * 8L)
+                .coerceIn(120L, 260L)
+            val animator = ValueAnimator.ofInt(start, target).apply {
+                duration = durationMs
+                interpolator = DecelerateInterpolator(1.35f)
+                addUpdateListener { valueAnimator ->
+                    if (messageScroller === scrollView) {
+                        scrollView.scrollTo(0, valueAnimator.animatedValue as Int)
+                    }
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        if (chatScrollAnimator === animation) {
+                            chatScrollAnimator = null
+                            scheduleChatSettle(scrollView, container)
+                        }
+                    }
+
+                    override fun onAnimationCancel(animation: Animator) {
+                        if (chatScrollAnimator === animation) {
+                            chatScrollAnimator = null
+                        }
+                    }
+                })
+            }
+            chatScrollAnimator = animator
+            animator.start()
+        }
+    }
+
+    private fun scheduleChatSettle(scrollView: ScrollView, container: LinearLayout) {
+        pendingChatSettle?.let(scrollView::removeCallbacks)
+        val settle = Runnable {
+            if (messageScroller !== scrollView || messageContainer !== container) return@Runnable
+            pendingChatSettle = null
+            val keepIds = lastSubmittedMessageIds.toHashSet()
+            var removedHeight = 0
+            for (index in container.childCount - 1 downTo 0) {
+                val child = container.getChildAt(index)
+                val id = child.tag as? String
+                if (id == null || id !in keepIds) {
+                    val margins = child.layoutParams as? ViewGroup.MarginLayoutParams
+                    removedHeight += child.measuredHeight +
+                        (margins?.topMargin ?: 0) +
+                        (margins?.bottomMargin ?: 0)
+                    container.removeViewAt(index)
+                }
+            }
+            if (removedHeight > 0) {
+                scrollView.scrollTo(0, (scrollView.scrollY - removedHeight).coerceAtLeast(0))
+            }
+            TwitchChatMessageRows.fitAndScrollToBottom(scrollView)
+        }
+        pendingChatSettle = settle
+        scrollView.postDelayed(settle, CHAT_SCROLL_SETTLE_DELAY_MS)
+    }
+
+    private fun cancelChatMotion() {
+        chatScrollAnimator?.cancel()
+        chatScrollAnimator = null
+        val scroller = messageScroller
+        pendingChatSettle?.let { pending -> scroller?.removeCallbacks(pending) }
+        pendingChatSettle = null
+    }
+
+    private fun resetMessageViewport() {
+        cancelChatMotion()
+        messageScroller = null
+        messageContainer = null
+        lastSubmittedMessageIds = emptyList()
     }
 
     private fun headerView(): View {
@@ -982,10 +1196,7 @@ internal class TwitchLiveChatUiController(
             styleOverlay(overlay)
             applyOverlayPosition(overlay)
             if (overlay.isVisible) {
-                render()
-                overlay.post {
-                    if (overlay.isVisible) render()
-                }
+                render(rebuildRows = true)
             }
             overlay.bringToFront()
         }
