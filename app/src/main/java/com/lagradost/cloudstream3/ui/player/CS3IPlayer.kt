@@ -33,6 +33,7 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.Timeline
+import androidx.media3.common.Timeline
 import androidx.media3.common.VideoSize
 // import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
@@ -189,6 +190,8 @@ class CS3IPlayer : IPlayer {
     private var currentIsTwitchStream = false
     private var currentIsTwitchLiveDvrStream = false
     private var currentIsTwitchVodStream = false
+    private var currentTwitchVodId: String? = null
+    private var currentTwitchChatChannelLogin: String? = null
     private var currentTwitchVodId: String? = null
     private var currentTwitchChatChannelLogin: String? = null
     private var twitchReconnectAttempt = 0

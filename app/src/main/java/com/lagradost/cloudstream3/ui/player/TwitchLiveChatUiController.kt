@@ -166,6 +166,13 @@ internal class TwitchLiveChatUiController(
             ?: 0L
     }
 
+    private fun currentVodContentPositionMs(): Long {
+        return player.getTwitchVodContentPositionMs()
+            ?.coerceAtLeast(0L)
+            ?: player.getPosition()?.coerceAtLeast(0L)
+            ?: 0L
+    }
+
     private fun isDefinitelyAtLiveEdge(): Boolean {
         val liveDelayMs = player.getLiveDelayMs()?.coerceAtLeast(0L)
         if (liveDelayMs != null) {
