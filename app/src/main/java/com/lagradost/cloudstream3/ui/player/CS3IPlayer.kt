@@ -770,6 +770,11 @@ class CS3IPlayer : IPlayer {
     }
 
     private fun ExtractorLink.isTwitchLowLatencyCandidate(): Boolean {
+        // Twitch clips are finite MP4 files. A Twitch name or referer alone must
+        // not route them through live-HLS load control, reconnect, or live timeline logic.
+        if (type != ExtractorLinkType.M3U8) return false
+        if (extractorData.orEmpty().contains("cs_twitch_clip=1", ignoreCase = true)) return false
+
         val markerText = listOf(
             source,
             name,

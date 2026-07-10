@@ -362,16 +362,42 @@ private val cachedGameNames: MutableMap<String, Pair<Long, String>> = mutableMap
 
     private data class TwitchGqlClipPlaybackClip(
         val title: String? = null,
-            val playbackAccessToken: TwitchPlaybackAccessToken? = null,
-val videoQualities: List<TwitchGqlClipQuality> = emptyList(),
+        val playbackAccessToken: TwitchPlaybackAccessToken? = null,
+        val videoQualities: List<TwitchGqlClipQuality> = emptyList(),
     )
-private data class TwitchGqlClipQuality(
+
+    private data class TwitchGqlClipQuality(
         val frameRate: Double? = null,
         val quality: String? = null,
         val sourceURL: String? = null,
     )
 
-private data class ApiResponse(
+    private data class TwitchGqlShareClipPlaybackResponse(
+        val data: TwitchGqlShareClipPlaybackData? = null,
+    )
+
+    private data class TwitchGqlShareClipPlaybackData(
+        val clip: TwitchGqlShareClipPlaybackClip? = null,
+    )
+
+    private data class TwitchGqlShareClipPlaybackClip(
+        val title: String? = null,
+        val thumbnailURL: String? = null,
+        val playbackAccessToken: TwitchPlaybackAccessToken? = null,
+        val assets: List<TwitchGqlShareClipAsset> = emptyList(),
+        val videoQualities: List<TwitchGqlClipQuality> = emptyList(),
+    )
+
+    private data class TwitchGqlShareClipAsset(
+        val id: String? = null,
+        val aspectRatio: Double? = null,
+        val type: String? = null,
+        val creationState: String? = null,
+        val thumbnailURL: String? = null,
+        val videoQualities: List<TwitchGqlClipQuality> = emptyList(),
+    )
+
+    private data class ApiResponse(
         val success: Boolean = false,
         val urls: Map<String, String>? = null,
     )
@@ -2518,15 +2544,26 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         return clean.contains("clips.twitch.tv/") || clean.contains("/clip/") || twitchProfileMediaMarker(url) == "clip"
     }
 
-    private suspend fun twitchClipFallbackLink(url: String, label: String = "Twitch Clip"): ExtractorLink {
+    private suspend fun twitchClipFallbackLink(
+        url: String,
+        label: String = "Twitch Clip",
+    ): ExtractorLink {
         return newExtractorLink(name, label, url) {
             this.type = ExtractorLinkType.VIDEO
             this.quality = getQualityFromName("720p")
             this.referer = "https://clips.twitch.tv/"
-            this.headers = mapOf("User-Agent" to twitchWebUserAgent)
+            this.headers = mapOf(
+                "User-Agent" to twitchWebUserAgent,
+                "Referer" to "https://clips.twitch.tv/",
+            )
+            this.extractorData = "cs_twitch_clip=1"
         }
     }
-    private fun signedTwitchClipSourceUrl(sourceUrl: String, token: TwitchPlaybackAccessToken?): String? {
+
+    private fun signedTwitchClipSourceUrl(
+        sourceUrl: String,
+        token: TwitchPlaybackAccessToken?,
+    ): String? {
         val source = sourceUrl.ifBlank { null } ?: return null
         val nonNullToken = token ?: return null
         val signature = nonNullToken.signature.ifBlank { null } ?: return null
@@ -2535,16 +2572,114 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         return "$source${separator}sig=${encode(signature)}&token=${encode(value)}"
     }
 
-    private suspend fun fetchTwitchClipLinks(url: String): List<ExtractorLink> {
-        val slug = extractTwitchClipSlug(url)
-        val direct = twitchProfileMediaParam(url, "cs_clip_video")?.takeIf { isTwitchClipDirectVideoUrl(it) }
-        val directFallback = if (slug.isBlank()) {
-            direct?.let { listOf(twitchClipFallbackLink(it, "$name Clip fallback")) } ?: emptyList()
-        } else {
-            emptyList()
-        }
-        if (slug.isBlank()) return directFallback
+    private fun preferredTwitchClipQualities(
+        clip: TwitchGqlShareClipPlaybackClip,
+    ): List<TwitchGqlClipQuality> {
+        val populatedAssets = clip.assets.filter { it.videoQualities.isNotEmpty() }
+        if (populatedAssets.isEmpty()) return clip.videoQualities
 
+        val completedAssets = populatedAssets.filter { asset ->
+            val state = asset.creationState.orEmpty()
+            state.isBlank() ||
+                state.equals("CREATED", ignoreCase = true) ||
+                state.equals("COMPLETED", ignoreCase = true) ||
+                state.equals("READY", ignoreCase = true)
+        }.ifEmpty { populatedAssets }
+
+        val landscapeAssets = completedAssets.filter { asset ->
+            val type = asset.type.orEmpty()
+            val aspectRatio = asset.aspectRatio
+            !type.contains("portrait", ignoreCase = true) &&
+                (aspectRatio == null || aspectRatio >= 1.0)
+        }
+
+        val candidates = landscapeAssets.ifEmpty { completedAssets }
+        return candidates.maxWithOrNull(
+            compareBy<TwitchGqlShareClipAsset> { asset ->
+                when {
+                    asset.type.orEmpty().contains("original", ignoreCase = true) -> 3
+                    asset.type.orEmpty().contains("landscape", ignoreCase = true) -> 2
+                    else -> 1
+                }
+            }.thenBy { it.videoQualities.size },
+        )?.videoQualities.orEmpty()
+    }
+
+    private suspend fun buildTwitchClipExtractorLinks(
+        qualities: List<TwitchGqlClipQuality>,
+        token: TwitchPlaybackAccessToken?,
+        sourceLabel: String,
+    ): List<ExtractorLink> {
+        return qualities.mapNotNull { item ->
+            val source = item.sourceURL?.ifBlank { null } ?: return@mapNotNull null
+            val signedSource = signedTwitchClipSourceUrl(source, token) ?: return@mapNotNull null
+            val rawQuality = item.quality?.ifBlank { null }.orEmpty()
+            val qualityLabel = when {
+                rawQuality.isBlank() -> "source"
+                rawQuality.endsWith("p", ignoreCase = true) -> rawQuality
+                else -> "${rawQuality}p"
+            }
+            val frameRate = item.frameRate
+                ?.takeIf { it >= 45.0 }
+                ?.toInt()
+                ?.toString()
+                .orEmpty()
+            val displayQuality = if (frameRate.isBlank() || qualityLabel == "source") {
+                qualityLabel
+            } else {
+                "$qualityLabel$frameRate"
+            }
+            newExtractorLink(name, "$name Clip $displayQuality ($sourceLabel)", signedSource) {
+                this.type = ExtractorLinkType.VIDEO
+                this.quality = getQualityFromName(qualityLabel)
+                this.referer = "https://clips.twitch.tv/"
+                this.headers = mapOf(
+                    "User-Agent" to twitchWebUserAgent,
+                    "Referer" to "https://clips.twitch.tv/",
+                )
+                this.extractorData = "cs_twitch_clip=1"
+            }
+        }.distinctBy { it.url }
+    }
+
+    private suspend fun fetchShareClipPlayback(
+        slug: String,
+    ): TwitchGqlShareClipPlaybackClip? {
+        val persistedHashes = listOf(
+            // Current yt-dlp ShareClipRenderStatus hash (July 2026).
+            "0a02bb974443b576f5579aab0fef1d4b7f44e58a8a256f0c5adfead0db70640f",
+            // TwitchDownloader 1.56.4 compatibility hash.
+            "761bc03a4b100ec4f73fa78a5011847bb8ad7693d223d055fd013f79390acd41",
+        )
+
+        for (hash in persistedHashes) {
+            val response: TwitchGqlShareClipPlaybackResponse? = twitchGqlPost(
+                mapOf(
+                    "operationName" to "ShareClipRenderStatus",
+                    "variables" to mapOf("slug" to slug),
+                    "extensions" to mapOf(
+                        "persistedQuery" to mapOf(
+                            "version" to 1,
+                            "sha256Hash" to hash,
+                        ),
+                    ),
+                ),
+            )
+            val clip = response?.data?.clip
+            if (
+                clip != null &&
+                clip.playbackAccessToken != null &&
+                (clip.assets.any { it.videoQualities.isNotEmpty() } || clip.videoQualities.isNotEmpty())
+            ) {
+                return clip
+            }
+        }
+        return null
+    }
+
+    private suspend fun fetchLegacyTwitchClipPlayback(
+        slug: String,
+    ): TwitchGqlClipPlaybackClip? {
         val response: TwitchGqlClipPlaybackResponse? = twitchGqlPost(
             mapOf(
                 "operationName" to "VideoAccessToken_Clip",
@@ -2557,31 +2692,43 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
                 ),
             ),
         )
+        return response?.data?.clip
+    }
 
-        val clip = response?.data?.clip ?: return directFallback
-        val token = clip.playbackAccessToken
-        val links = clip.videoQualities.orEmpty().mapNotNull { item ->
-            val source = item.sourceURL?.ifBlank { null } ?: return@mapNotNull null
-            val signedSource = signedTwitchClipSourceUrl(source, token) ?: return@mapNotNull null
-            val rawQuality = item.quality?.ifBlank { null }.orEmpty()
-            val qualityLabel = when {
-                rawQuality.isBlank() -> "source"
-                rawQuality.endsWith("p", ignoreCase = true) -> rawQuality
-                else -> "${rawQuality}p"
-            }
-            val quality = getQualityFromName(qualityLabel)
-            newExtractorLink(name, "$name Clip $qualityLabel", signedSource) {
-                this.type = ExtractorLinkType.VIDEO
-                this.quality = quality
-                this.referer = "https://clips.twitch.tv/"
-                this.headers = mapOf(
-                    "User-Agent" to twitchWebUserAgent,
-                    "Referer" to "https://clips.twitch.tv/",
-                )
-            }
-        }.distinctBy { it.url }
+    private suspend fun fetchTwitchClipLinks(url: String): List<ExtractorLink> {
+        val slug = extractTwitchClipSlug(url)
+        val direct = twitchProfileMediaParam(url, "cs_clip_video")
+            ?.takeIf { isTwitchClipDirectVideoUrl(it) }
+        val directFallback = direct
+            ?.let { listOf(twitchClipFallbackLink(it, "$name Clip fallback")) }
+            .orEmpty()
+        if (slug.isBlank()) return directFallback
 
-        return links.ifEmpty { directFallback }
+        val shareClip = fetchShareClipPlayback(slug)
+        if (shareClip != null) {
+            val links = buildTwitchClipExtractorLinks(
+                qualities = preferredTwitchClipQualities(shareClip),
+                token = shareClip.playbackAccessToken,
+                sourceLabel = "current API",
+            )
+            if (links.isNotEmpty()) return links
+        }
+
+        // Retain the older endpoint as a compatibility fallback. Twitch changes
+        // clip GraphQL operations independently from VOD and live playback.
+        val legacyClip = fetchLegacyTwitchClipPlayback(slug)
+        if (legacyClip != null) {
+            val links = buildTwitchClipExtractorLinks(
+                qualities = legacyClip.videoQualities,
+                token = legacyClip.playbackAccessToken,
+                sourceLabel = "legacy API",
+            )
+            if (links.isNotEmpty()) return links
+        }
+
+        // Cards already carry a thumbnail-derived MP4 URL. Keep it usable when
+        // Twitch rotates a persisted query hash instead of returning no links.
+        return directFallback
     }
 
     // LiveNowDvrChatMetadataPatch:
@@ -2699,6 +2846,11 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
                         this.type = ExtractorLinkType.VIDEO
                         this.quality = getQualityFromName("720p")
                         this.referer = "https://clips.twitch.tv/"
+                        this.headers = mapOf(
+                            "User-Agent" to twitchWebUserAgent,
+                            "Referer" to "https://clips.twitch.tv/",
+                        )
+                        this.extractorData = "cs_twitch_clip=1"
                     },
                 ),
             )
