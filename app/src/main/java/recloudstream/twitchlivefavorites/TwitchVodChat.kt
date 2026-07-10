@@ -89,7 +89,7 @@ object TwitchVodChat {
     ): List<TwitchLiveChat.LiveMessage> {
         val cleanId = vodId.filter { it.isDigit() }
         if (cleanId.isBlank()) return emptyList()
-        val cappedMax = maxMessages.coerceIn(1, 36)
+        val cappedMax = maxMessages.coerceIn(1, 60)
         val offsetSeconds = (positionMs.coerceAtLeast(0L) / 1000.0).roundToLong()
         return withContext(Dispatchers.IO) {
             try { TwitchChatEmotes.loadForChannel(channelLogin, null) } catch (_: Throwable) {}

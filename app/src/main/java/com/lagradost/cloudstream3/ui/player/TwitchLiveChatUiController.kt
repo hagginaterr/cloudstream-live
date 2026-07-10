@@ -137,14 +137,22 @@ internal class TwitchLiveChatUiController(
             false
         }
     }
-}    private fun currentTarget(): ChatTarget? {
+}        private fun currentTarget(): ChatTarget? {
         val channel = TwitchLiveChat.normalizeChannelLogin(player.getTwitchChatChannelLogin())
         val vodId = player.getTwitchVodId()?.filter { it.isDigit() }?.ifBlank { null }
         val isLiveStream = player.isTwitchLiveStream()
         val isVodStream = player.isTwitchVodStream()
 
-        if (vodId != null && (isVodStream || !isLiveStream || shouldUseVodChatForCurrentPosition())) {
-            return ChatTarget(ChatMode.VOD, channel, vodId)
+        // If the selected media source carries a VOD id, prefer replay chat unless
+        // we can positively prove that playback is still at the live edge. V17 only
+        // switched when ExoPlayer reported live-delay/duration data, which is not
+        // reliable for Twitch DVR playlists and caused the overlay to stay on live IRC.
+        if (vodId != null) {
+            val behindLiveEdge = shouldUseVodChatForCurrentPosition()
+            val definitelyAtLiveEdge = isDefinitelyAtLiveEdge()
+            if (isVodStream || !isLiveStream || behindLiveEdge || !definitelyAtLiveEdge) {
+                return ChatTarget(ChatMode.VOD, channel, vodId)
+            }
         }
 
         if (isLiveStream && channel != null) {
@@ -154,15 +162,27 @@ internal class TwitchLiveChatUiController(
         return null
     }
 
-    private fun shouldUseVodChatForCurrentPosition(): Boolean {
+        private fun shouldUseVodChatForCurrentPosition(): Boolean {
         val liveDelayMs = player.getLiveDelayMs()?.coerceAtLeast(0L)
         if (liveDelayMs != null) {
             return liveDelayMs >= LIVE_DVR_CHAT_THRESHOLD_MS
         }
 
-        val durationMs = player.getDuration()?.takeIf { it > 0L } ?: return false
-        val positionMs = player.getPosition()?.coerceAtLeast(0L) ?: return false
+        val durationMs = player.getDuration()?.takeIf { it > 0L && it < Long.MAX_VALUE / 4 } ?: return false
+        val positionMs = player.getPosition()?.takeIf { it >= 0L } ?: return false
         return durationMs - positionMs >= LIVE_DVR_CHAT_THRESHOLD_MS
+    }
+
+    private fun isDefinitelyAtLiveEdge(): Boolean {
+        val liveDelayMs = player.getLiveDelayMs()?.coerceAtLeast(0L)
+        if (liveDelayMs != null) {
+            return liveDelayMs < LIVE_DVR_CHAT_THRESHOLD_MS
+        }
+
+        val durationMs = player.getDuration()?.takeIf { it > 0L && it < Long.MAX_VALUE / 4 } ?: return false
+        val positionMs = player.getPosition()?.takeIf { it >= 0L } ?: return false
+        val distanceFromEndMs = durationMs - positionMs
+        return distanceFromEndMs in 0L until LIVE_DVR_CHAT_THRESHOLD_MS
     }
 
     private fun isChatOpenPreference(): Boolean {

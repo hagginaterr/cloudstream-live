@@ -786,28 +786,52 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
         normalizeChannel(data).isNotBlank()
 }
 
-private suspend fun annotateTwitchPlayerLinks(
-    data: String,
-    links: List<ExtractorLink>,
-): List<ExtractorLink> {
-    val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links
-        val vodChatId = if (isTwitchVideoUrl(data)) extractVideoId(data).filter { it.isDigit() }.takeIf { it.isNotBlank() } else null
-        val carrierBaseWithVodChat = if (vodChatId != null) appendTwitchProfileQueryParam(carrierBase, "cs_twitch_vod_id", vodChatId) else carrierBase
-        val carrier = if (isTwitchReconnectableLivePlayerData(data)) {
-        appendTwitchProfileQueryParam(carrierBaseWithVodChat, "cs_twitch_reconnect", "1")
-    } else {
-        carrierBase
-    }
-    return links.onEach { link ->
-            val existing = link.extractorData?.ifBlank { null }
-            if (existing?.contains("cs_twitch_reconnect=1", ignoreCase = true) == true) {
-            return@onEach
+    private suspend fun annotateTwitchPlayerLinks(
+        data: String,
+        links: List<ExtractorLink>,
+    ): List<ExtractorLink> {
+        val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links
+        val pageVodChatId = if (isTwitchVideoUrl(data)) {
+            extractVideoId(data).filter { it.isDigit() }.takeIf { it.isNotBlank() }
+        } else {
+            null
         }
+
+        return links.onEach { link ->
+            val linkVodChatId = TwitchVodChat.extractVodIdFromLink(link)
+                ?.filter { it.isDigit() }
+                ?.takeIf { it.isNotBlank() }
+                ?: pageVodChatId
+
+            val carrierWithVod = if (linkVodChatId != null) {
+                appendTwitchProfileQueryParam(carrierBase, "cs_twitch_vod_id", linkVodChatId)
+            } else {
+                carrierBase
+            }
+
+            val shouldMarkReconnectable = isTwitchReconnectableLivePlayerData(data) && linkVodChatId == null
+            val carrier = if (shouldMarkReconnectable) {
+                appendTwitchProfileQueryParam(carrierWithVod, "cs_twitch_reconnect", "1")
+            } else {
+                carrierWithVod
+            }
+
+            val existing = link.extractorData
+                ?.lineSequence()
+                ?.filterNot { line -> linkVodChatId != null && line.contains("cs_twitch_reconnect=1", ignoreCase = true) }
+                ?.joinToString("\n")
+                ?.ifBlank { null }
+
+            if (existing?.contains("cs_twitch_reconnect=1", ignoreCase = true) == true && linkVodChatId == null) {
+                return@onEach
+            }
+
             link.extractorData = listOfNotNull(existing, carrier)
-            .joinToString("\n")
-            .ifBlank { null }
+                .distinct()
+                .joinToString("\n")
+                .ifBlank { null }
+        }
     }
-}
 // END TwitchPlayerMetadataOnlyPatch
 private fun buildHelixUrl(
         endpoint: String,
