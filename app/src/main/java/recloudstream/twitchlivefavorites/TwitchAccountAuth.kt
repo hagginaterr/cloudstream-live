@@ -124,7 +124,7 @@ private fun isAccessTokenFresh(expiresAt: Long): Boolean {
     private fun ensurePublicClientMigrationForCurrentBuild() {
         val clientId = TwitchCredentials.CLIENT_ID.trim()
         if (clientId.isBlank()) return
-        val migratedForClientId: String? = getKey(PUBLIC_CLIENT_MIGRATION_KEY)
+        val migratedForClientId: String? = getKey<String>(PUBLIC_CLIENT_MIGRATION_KEY)
         if (migratedForClientId == clientId) return
         clearStoredTwitchAccountStateForPublicClientMigration()
         setKey(PUBLIC_CLIENT_MIGRATION_KEY, clientId)
@@ -136,7 +136,7 @@ private fun isAccessTokenFresh(expiresAt: Long): Boolean {
         var changed = false
 
         fun restoreStringIfMissing(key: String, value: String?) {
-            val current: String? = getKey(key)
+            val current: String? = getKey<String>(key)
             val clean = value?.trim()?.takeIf { it.isNotBlank() } ?: return
             if (current.isNullOrBlank()) {
                 setKey(key, clean)
@@ -145,7 +145,7 @@ private fun isAccessTokenFresh(expiresAt: Long): Boolean {
         }
 
         fun restoreLongIfMissing(key: String, value: Long) {
-            val current: Long = getKey(key) ?: 0L
+            val current: Long = getKey<Long>(key) ?: 0L
             if (current <= 0L && value > 0L) {
                 setKey(key, value)
                 changed = true
@@ -180,7 +180,7 @@ fun isSignedIn(): Boolean {
 
     fun displayName(): String? {
         restoreAccountFromDeviceBackupIfNeeded()
-        return getKey(USER_DISPLAY_KEY) ?: getKey(USER_LOGIN_KEY)
+        return getKey<String>(USER_DISPLAY_KEY) ?: getKey<String>(USER_LOGIN_KEY)
     }
     fun userLogin(): String? {
         restoreAccountFromDeviceBackupIfNeeded()
@@ -220,7 +220,7 @@ fun isSignedIn(): Boolean {
             suspend fun forceRefreshAccessToken(): String? {
         restoreAccountFromDeviceBackupIfNeeded()
         return tokenRefreshMutex.withLock {
-            val refreshToken = getKey(REFRESH_TOKEN_KEY)
+            val refreshToken = getKey<String>(REFRESH_TOKEN_KEY)
                 ?.trim()
                 ?.takeIf { it.isNotBlank() }
                 ?: return@withLock null
@@ -353,19 +353,19 @@ fun isSyncOnStartupEnabled(): Boolean {
             suspend fun getValidAccessToken(): String? {
         restoreAccountFromDeviceBackupIfNeeded()
         val now = System.currentTimeMillis()
-        val savedAccessToken = getKey(ACCESS_TOKEN_KEY)?.trim().orEmpty()
-        val expiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
+        val savedAccessToken = getKey<String>(ACCESS_TOKEN_KEY)?.trim().orEmpty()
+        val expiresAt = getKey<Long>(EXPIRES_AT_KEY) ?: 0L
         if (savedAccessToken.isNotBlank() && now < expiresAt - 60_000L) {
             return savedAccessToken
         }
 
         return tokenRefreshMutex.withLock {
-            val currentAccessToken = getKey(ACCESS_TOKEN_KEY)?.trim().orEmpty()
-            val currentExpiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
+            val currentAccessToken = getKey<String>(ACCESS_TOKEN_KEY)?.trim().orEmpty()
+            val currentExpiresAt = getKey<Long>(EXPIRES_AT_KEY) ?: 0L
             if (currentAccessToken.isNotBlank() && System.currentTimeMillis() < currentExpiresAt - 60_000L) {
                 return@withLock currentAccessToken
             }
-            val refreshToken = getKey(REFRESH_TOKEN_KEY)
+            val refreshToken = getKey<String>(REFRESH_TOKEN_KEY)
                 ?.trim()
                 ?.takeIf { it.isNotBlank() }
                 ?: return@withLock null

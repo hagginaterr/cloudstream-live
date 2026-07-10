@@ -385,8 +385,9 @@ internal object TwitchChatMessageRows {
     ) : DynamicDrawableSpan(DynamicDrawableSpan.ALIGN_BOTTOM), Drawable.Callback {
         init {
             animatedDrawable.callback = this
-            if (animatedDrawable is Animatable && !animatedDrawable.isRunning) {
-                runCatching { animatedDrawable.start() }
+            val animatable = animatedDrawable as? Animatable
+            if (animatable != null && !animatable.isRunning) {
+                runCatching { animatable.start() }
             }
         }
 

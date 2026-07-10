@@ -87,9 +87,32 @@ private var cachedRecentTopClips: List<SearchResponse> = emptyList()
 private val cachedGameNames: MutableMap<String, Pair<Long, String>> = mutableMapOf()
 
     private var rateLimitedUntilMs: Long = 0L
-    private fun hasTwitchCredentials(): Boolean {
-    return TwitchCredentials.CLIENT_ID.isNotBlank() && TwitchAccountAuth.isSignedIn()
-}
+    private var lastTwitchApiError: String? = null
+
+    override val mainPage = mainPageOf(
+        "$actionBase/live" to liveFavoritesNowName,
+    )
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // FollowingLiveNowPatch: when signed in, the Live Now row comes directly
+        // from Twitch's streams/followed endpoint instead of the local favorites list.
+        // NewFromFollowedChannelsHomePatch: also add fast-capped media rows from followed channels.
+        ensureStartupFavoritesSaved()
+        val signedInUserId = TwitchAccountAuth.signedInUserId()
+        val useSignedInFollows = !signedInUserId.isNullOrBlank()
+        val savedFavorites = getSavedFavoriteChannels()
+        val usingStarterFavorites = savedFavorites.isEmpty()
+        val favorites = if (usingStarterFavorites) starterFavoriteChannels else savedFavorites
+        refreshCloudStreamFavoritePosters(favorites)
+
+        if (useSignedInFollows) {
+            val liveFollowed = fetchLiveFollowedStreams(signedInUserId.orEmpty())
+            maybeScheduleAutoRefresh("followed:${signedInUserId.orEmpty()}")
+
+            val liveItems = when {
+                !hasTwitchCredentials() -> listOf(setupRequiredCard())
+                liveFollowed == null -> listOf(apiErrorCard(lastTwitchApiError.orEmpty()))
+                liveFollowed.isNotEmpty() -> liveFollowed.map { it.toChannelCard(showOfflineLabel = false, directPlay = true) }
                 else -> listOf(statusCard("No followed Twitch channels are live right now", "no-followed-live"))
             }
 
@@ -111,18 +134,18 @@ private val cachedGameNames: MutableMap<String, Pair<Long, String>> = mutableMap
                     liveFavorites == null -> listOf(apiErrorCard(lastTwitchApiError.orEmpty()))
                     liveFavorites.isNotEmpty() -> liveFavorites.map { it.toChannelCard(showOfflineLabel = false, directPlay = true) }
                     usingStarterFavorites -> {
-                            val starterUsers = fetchUsers(favorites)
-                            favorites.map { channel ->
-                                val normalized = normalizeChannel(channel)
-                                val user = starterUsers[normalized]
-                                val favorite = if (user != null) {
-                                    favoriteFromApi(normalized, user, stream = null)
-                                } else {
-                                    fallbackChannel(normalized)
-                                }
-                                favorite.toChannelCard(showOfflineLabel = true, directPlay = true)
+                        val starterUsers = fetchUsers(favorites)
+                        favorites.map { channel ->
+                            val normalized = normalizeChannel(channel)
+                            val user = starterUsers[normalized]
+                            val favorite = if (user != null) {
+                                favoriteFromApi(normalized, user, stream = null)
+                            } else {
+                                fallbackChannel(normalized)
                             }
+                            favorite.toChannelCard(showOfflineLabel = true, directPlay = true)
                         }
+                    }
                     else -> listOf(statusCard("No saved favorites are live right now", "no-favorites"))
                 }
             }
@@ -130,7 +153,6 @@ private val cachedGameNames: MutableMap<String, Pair<Long, String>> = mutableMap
 
         return singleHomeResponse(liveFavoritesRowTitle(), items, hasNext = false)
     }
-
     private fun singleHomeResponse(
         name: String,
         items: List<SearchResponse>,
@@ -593,33 +615,32 @@ private fun shouldTreatAsUnauthorized(error: Throwable): Boolean {
     }
 
     private suspend fun getAppAccessToken(forceRefresh: Boolean = false): String? {
-    if (TwitchCredentials.CLIENT_ID.isBlank()) {
-        lastTwitchApiError = "Twitch API Client ID is missing."
+        if (TwitchCredentials.CLIENT_ID.isBlank()) {
+            lastTwitchApiError = "Twitch API Client ID is missing."
+            cachedAccessToken = null
+            cachedAccessTokenExpiresAtMs = 0L
+            return null
+        }
+
+        val token = if (forceRefresh) {
+            TwitchAccountAuth.forceRefreshAccessToken()
+        } else {
+            TwitchAccountAuth.getValidAccessToken()
+        }
+
+        if (token.isNullOrBlank()) {
+            lastTwitchApiError = "Sign in to Twitch again."
+            cachedAccessToken = null
+            cachedAccessTokenExpiresAtMs = 0L
+            return null
+        }
+
         cachedAccessToken = null
         cachedAccessTokenExpiresAtMs = 0L
-        return null
+        lastTwitchApiError = null
+        return token
     }
-
-    val token = if (forceRefresh) {
-        TwitchAccountAuth.forceRefreshAccessToken()
-    } else {
-        TwitchAccountAuth.getValidAccessToken()
-    }
-
-    if (token.isNullOrBlank()) {
-        lastTwitchApiError = "Sign in to Twitch again."
-        cachedAccessToken = null
-        cachedAccessTokenExpiresAtMs = 0L
-        return null
-    }
-
-    cachedAccessToken = null
-    cachedAccessTokenExpiresAtMs = 0L
-    lastTwitchApiError = null
-    return token
-}
-
-    private suspend inline fun <reified T> twitchGet(url: String): T? {
+    private suspend inline fun <reified T : Any> twitchGet(url: String): T? {
     if (isBackoffActive()) {
         lastTwitchApiError = "Twitch API backoff is active. Try again in about ${secondsUntilBackoffEnds()}s."
         return null
