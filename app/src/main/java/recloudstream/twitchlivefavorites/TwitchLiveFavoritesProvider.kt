@@ -2481,11 +2481,11 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         return links.ifEmpty { directFallback }
     }
 
-    // LiveNowUsesCurrentPastBroadcastPatch:
-    // When a live channel is opened, prefer the channel's current archive VOD.
-    // That gives the player a seekable DVR-style playlist so the user can rewind
-    // and then seek back near the live edge. If Twitch has not exposed the current
-    // archive yet, normal live HLS fallback is used below.
+    // LiveNowDvrChatMetadataPatch:
+    // Keep playback on the channel's actual live HLS playlist. The current archive
+    // is looked up only to attach its VOD ID as replay-chat metadata. A live card
+    // must never substitute fetchTwitchVodLinks(), because that turns Live Now into
+    // an ordinary finite past broadcast instead of a dynamic live/DVR timeline.
     private fun twitchIsoToMillis(value: String?): Long? {
         val clean = value?.ifBlank { null } ?: return null
         return runCatching {
@@ -2555,19 +2555,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         }
     }
 
-    private data class TwitchLiveDvrLinkSet(
-        val vodId: String,
-        val links: List<ExtractorLink>,
-    )
 
-    private suspend fun fetchCurrentLivePastBroadcastLinks(channelOrUrl: String): TwitchLiveDvrLinkSet? {
-        val currentVod = fetchCurrentLivePastBroadcast(channelOrUrl) ?: return null
-        val videoId = currentVod.id.filter { it.isDigit() }
-        if (videoId.isBlank()) return null
-        val links = fetchTwitchVodLinks(videoId)
-        if (links.isEmpty()) return null
-        return TwitchLiveDvrLinkSet(videoId, links)
-    }
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -2616,19 +2604,25 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             return emit(fetchTwitchVodLinks(videoId), explicitVodChatId = videoId)
         }
 
-        val liveDvrLinkSet = fetchCurrentLivePastBroadcastLinks(data)
-        if (liveDvrLinkSet != null) {
-            return emit(
-                links = liveDvrLinkSet.links,
-                explicitVodChatId = liveDvrLinkSet.vodId,
-                liveDvr = true,
-            )
+        // Resolve the real live playlist and the current archive ID in parallel.
+        // The archive ID is chat metadata only; it must not become the media URL.
+        val liveResolution = coroutineScope {
+            val liveLinksDeferred = async {
+                runCatching {
+                    app.get("https://pwn.sh/tools/streamapi.py?url=$data").parsed<ApiResponse>()
+                }.getOrNull()
+            }
+            val vodChatIdDeferred = async {
+                fetchCurrentLivePastBroadcast(data)
+                    ?.id
+                    ?.filter { it.isDigit() }
+                    ?.takeIf { it.isNotBlank() }
+            }
+            liveLinksDeferred.await() to vodChatIdDeferred.await()
         }
 
-        val response = runCatching {
-            app.get("https://pwn.sh/tools/streamapi.py?url=$data").parsed<ApiResponse>()
-        }.getOrNull() ?: return false
-
+        val response = liveResolution.first ?: return false
+        val currentVodChatId = liveResolution.second
         val links = response.urls?.map { (qualityName, streamUrl) ->
             val quality = getQualityFromName(qualityName.substringBefore("p"))
             newExtractorLink(
@@ -2642,7 +2636,11 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             }
         }.orEmpty()
 
-        return emit(links)
+        return emit(
+            links = links,
+            explicitVodChatId = currentVodChatId,
+            liveDvr = currentVodChatId != null,
+        )
     }
 }
 
