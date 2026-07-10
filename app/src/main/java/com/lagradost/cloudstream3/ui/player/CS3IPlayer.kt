@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.util.Rational
 import android.widget.FrameLayout
@@ -134,6 +135,8 @@ const val TAG = "CS3ExoPlayer"
 const val PREFERRED_AUDIO_LANGUAGE_KEY = "preferred_audio_language"
 
 private const val TWITCH_LIVE_TARGET_OFFSET_MS = 15_000L
+private const val TWITCH_RECOMMENDED_LIVE_POSITION_TOLERANCE_MS = 5_000L
+private const val TWITCH_LIVE_CHAT_OVERRIDE_MS = 8_000L
 private const val TWITCH_LIVE_MIN_OFFSET_MS = 10_000L
 private const val TWITCH_LIVE_MAX_OFFSET_MS = 45_000L
 private const val TWITCH_MIN_BUFFER_MS = 12_000
@@ -195,6 +198,7 @@ class CS3IPlayer : IPlayer {
     private var twitchReconnectAttempt = 0
     private var twitchReconnectInFlight = false
     private var lastTwitchLiveDelayLogMs = 0L
+    private var twitchLiveChatOverrideUntilElapsedMs = 0L
     private var currentDownloadedFile: ExtractorUri? = null
     private var hasUsedFirstRender = false
 
@@ -621,6 +625,7 @@ class CS3IPlayer : IPlayer {
 
     private fun releasePlayer(saveTime: Boolean = true) {
         Log.i(TAG, "releasePlayer")
+        clearTwitchRecommendedLivePositionOverride()
         eventLooperIndex += 1
         if (saveTime)
             updatedTime()
@@ -734,6 +739,36 @@ class CS3IPlayer : IPlayer {
         return if (liveOffset == TIME_UNSET) null else liveOffset
     }
 
+    override fun isTwitchAtRecommendedLivePosition(): Boolean {
+        if (!currentIsTwitchStream && !currentIsTwitchLiveDvrStream) return false
+        if (SystemClock.elapsedRealtime() < twitchLiveChatOverrideUntilElapsedMs) return true
+
+        val currentPlayer = exoPlayer ?: return false
+        val timeline = currentPlayer.currentTimeline
+        val windowIndex = currentPlayer.currentMediaItemIndex
+        if (!timeline.isEmpty && windowIndex in 0 until timeline.windowCount) {
+            val window = Timeline.Window()
+            timeline.getWindow(windowIndex, window)
+            val recommendedPositionMs = window.defaultPositionMs
+            val playbackPositionMs = currentPlayer.contentPosition
+                .takeIf { it != TIME_UNSET && it >= 0L }
+                ?: currentPlayer.currentPosition.takeIf { it != TIME_UNSET && it >= 0L }
+
+            if (
+                recommendedPositionMs != TIME_UNSET &&
+                playbackPositionMs != null &&
+                playbackPositionMs + TWITCH_RECOMMENDED_LIVE_POSITION_TOLERANCE_MS >= recommendedPositionMs
+            ) {
+                return true
+            }
+        }
+
+        val liveOffsetMs = currentPlayer.currentLiveOffset
+        return liveOffsetMs != TIME_UNSET &&
+            liveOffsetMs <= TWITCH_LIVE_TARGET_OFFSET_MS +
+                TWITCH_RECOMMENDED_LIVE_POSITION_TOLERANCE_MS
+    }
+
     private fun ExtractorLink.isTwitchLowLatencyCandidate(): Boolean {
         val markerText = listOf(
             source,
@@ -789,31 +824,17 @@ class CS3IPlayer : IPlayer {
         )
     }
 
-    // TwitchTrueLiveEdgeJumpPatch:
-    // Media3's default live position honors the configured Twitch target offset
-    // (currently 15 seconds). For the growing Twitch VOD EVENT source, the seek
-    // bar's right edge is the actual available playlist edge, so Jump to Live
-    // should seek there directly instead of seeking to the default live position.
-    private fun ExoPlayer.getTwitchTrueLiveEdgePositionMs(): Long? {
-        val timeline = currentTimeline
-        val windowIndex = currentMediaItemIndex
-        if (!timeline.isEmpty && windowIndex in 0 until timeline.windowCount) {
-            val window = Timeline.Window()
-            timeline.getWindow(windowIndex, window)
-            val windowDurationMs = window.durationMs
-            if (windowDurationMs != TIME_UNSET && windowDurationMs > 0L) {
-                // Stay one millisecond inside the known window rather than requesting
-                // a position beyond its final boundary.
-                return (windowDurationMs - 1L).coerceAtLeast(0L)
-            }
-        }
+    // TwitchRecommendedLivePositionPatch:
+    // Media3's default live position is the stable playback target. It intentionally
+    // stays behind the absolute playlist edge by the configured live offset, so chat
+    // must treat that recommended position as live rather than requiring zero delay.
+    private fun markTwitchRecommendedLivePositionForChat() {
+        twitchLiveChatOverrideUntilElapsedMs =
+            SystemClock.elapsedRealtime() + TWITCH_LIVE_CHAT_OVERRIDE_MS
+    }
 
-        val playerDurationMs = duration
-        return if (playerDurationMs != TIME_UNSET && playerDurationMs > 0L) {
-            (playerDurationMs - 1L).coerceAtLeast(0L)
-        } else {
-            null
-        }
+    private fun clearTwitchRecommendedLivePositionOverride() {
+        twitchLiveChatOverrideUntilElapsedMs = 0L
     }
 
     private fun ExoPlayer.jumpToLive(source: PlayerEventSource) {
@@ -834,29 +855,11 @@ class CS3IPlayer : IPlayer {
         )
 
         if (isCurrentMediaItemLive || isCurrentMediaItemDynamic) {
-            val trueLiveEdgeMs = if (currentIsTwitchLiveRewindSource) {
-                getTwitchTrueLiveEdgePositionMs()
-            } else {
-                null
-            }
-
-            if (trueLiveEdgeMs != null) {
-                seekTo(trueLiveEdgeMs)
-                Log.i(
-                    TAG,
-                    "Jump to Live seeking Twitch DVR EVENT source to true edge: ${trueLiveEdgeMs}ms"
-                )
-            } else {
-                // Ordinary live sources retain Media3's safer configured default offset.
-                seekToDefaultPosition()
-            }
-
+            markTwitchRecommendedLivePositionForChat()
+            seekToDefaultPosition()
             play()
-            maybeLogTwitchLiveDelay("jump-to-live")
-            updatedTime(
-                writePosition = trueLiveEdgeMs,
-                source = source,
-            )
+            maybeLogTwitchLiveDelay("jump-to-recommended-live")
+            updatedTime(source = source)
         } else {
             Log.i(TAG, "Jump to Live ignored because current media is not live.")
         }
@@ -1275,6 +1278,7 @@ companion object {
     }
 
     override fun seekTime(time: Long, source: PlayerEventSource) {
+        clearTwitchRecommendedLivePositionOverride()
         exoPlayer?.seekTime(time, source)
     }
 
@@ -1284,8 +1288,10 @@ companion object {
             val targetPosition = time.coerceAtLeast(0L)
             updatedTime(targetPosition, source)
             if (player.shouldSeekToLiveDefault(targetPosition)) {
+                markTwitchRecommendedLivePositionForChat()
                 player.seekToDefaultPosition()
             } else {
+                clearTwitchRecommendedLivePositionOverride()
                 player.seekTo(targetPosition)
             }
         } else {

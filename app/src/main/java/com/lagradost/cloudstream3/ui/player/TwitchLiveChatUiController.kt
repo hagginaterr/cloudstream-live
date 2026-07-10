@@ -41,7 +41,7 @@ internal class TwitchLiveChatUiController(
         const val CORNER_PREF_KEY = "twitch_chat_overlay_corner_v1"
         const val CHAT_OPEN_PREF_KEY = "twitch_chat_overlay_open_v1"
         const val VOD_POLL_INTERVAL_MS = 2_500L
-        const val TARGET_REFRESH_INTERVAL_MS = 1_000L
+        const val TARGET_REFRESH_INTERVAL_MS = 500L
         const val VOD_REFETCH_DISTANCE_MS = 3_000L
         const val LIVE_DVR_CHAT_THRESHOLD_MS = 20_000L
         const val SLOW_RENDER_INTERVAL_MS = 2_000L
@@ -182,6 +182,8 @@ internal class TwitchLiveChatUiController(
 
 
     private fun isDefinitelyAtLiveEdge(): Boolean {
+        if (player.isTwitchAtRecommendedLivePosition()) return true
+
         val liveDelayMs = player.getLiveDelayMs()?.coerceAtLeast(0L)
         if (liveDelayMs != null) {
             return liveDelayMs < LIVE_DVR_CHAT_THRESHOLD_MS

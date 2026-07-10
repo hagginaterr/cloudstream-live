@@ -212,6 +212,7 @@ interface IPlayer {
     fun isTwitchLiveStream(): Boolean = false
     fun isTwitchLiveDvrStream(): Boolean = false
     fun getLiveDelayMs(): Long? = null
+    fun isTwitchAtRecommendedLivePosition(): Boolean = false
     fun getTwitchChatChannelLogin(): String? = null
     fun isTwitchVodStream(): Boolean = false
     fun getTwitchVodId(): String? = null
