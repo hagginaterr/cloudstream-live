@@ -35,6 +35,7 @@ internal class TwitchLiveChatUiController(
     private companion object {
         const val OVERLAY_TAG = "cloudstream_twitch_live_chat_overlay"
         const val CORNER_PREF_KEY = "twitch_chat_overlay_corner_v1"
+        const val CHAT_OPEN_PREF_KEY = "twitch_chat_overlay_open_v1"
         const val VOD_POLL_INTERVAL_MS = 2_500L
         const val VOD_REFETCH_DISTANCE_MS = 7_000L
         const val SLOW_RENDER_INTERVAL_MS = 2_000L
@@ -65,25 +66,42 @@ internal class TwitchLiveChatUiController(
     }
 
     fun sync() {
-        settings = TwitchChatSettings.load(root.context)
-        updateButtonVisibility()
-        val target = currentTarget()
-        if (target == null) {
-            if (activeTarget != null) {
-                releaseConnection()
-                hideOverlay()
-            }
-            return
+    settings = TwitchChatSettings.load(root.context)
+    updateButtonVisibility()
+
+    val target = currentTarget()
+    if (target == null) {
+        if (activeTarget != null) {
+            releaseConnection()
         }
-        if (overlayView()?.isVisible == true && activeTarget != null && activeTarget != target) {
-            showOverlay(target)
-        } else {
-            overlayView()?.let { overlay ->
-                styleOverlay(overlay)
-                applyOverlayPosition(overlay)
-            }
+        hideOverlay()
+        return
+    }
+
+    if (!isChatOpenPreference()) {
+        if (activeTarget != null) {
+            releaseConnection()
+        }
+        hideOverlay()
+        overlayView()?.let { overlay ->
+            styleOverlay(overlay)
+            applyOverlayPosition(overlay)
+        }
+        return
+    }
+
+    val overlay = overlayView()
+    if (activeTarget != target || overlay?.isVisible != true) {
+        showOverlay(target)
+    } else {
+        overlay.let {
+            styleOverlay(it)
+            applyOverlayPosition(it)
+            it.bringToFront()
         }
     }
+}
+
 
     fun release() {
         releaseConnection()
@@ -91,30 +109,34 @@ internal class TwitchLiveChatUiController(
     }
 
     private fun updateButtonVisibility() {
-        val button = chatButton() ?: return
-        val target = currentTarget()
-        val available = target != null
-        button.isVisible = controlsVisible && available
-        button.isEnabled = available
-        button.isFocusable = available
-        button.setOnClickListener {
-            val freshTarget = currentTarget() ?: return@setOnClickListener
-            if (overlayView()?.isVisible == true) {
-                hideOverlay()
-                releaseConnection()
-            } else {
-                showOverlay(freshTarget)
-            }
-        }
-        button.setOnLongClickListener {
-            if (available) {
-                showSettingsMenu()
-                true
-            } else {
-                false
-            }
+    val button = chatButton() ?: return
+    val target = currentTarget()
+    val available = target != null
+
+    button.isVisible = controlsVisible && available
+    button.isEnabled = available
+    button.isFocusable = available
+    button.setOnClickListener {
+        val freshTarget = currentTarget() ?: return@setOnClickListener
+        if (overlayView()?.isVisible == true) {
+            saveChatOpenPreference(false)
+            hideOverlay()
+            releaseConnection()
+        } else {
+            saveChatOpenPreference(true)
+            showOverlay(freshTarget)
         }
     }
+    button.setOnLongClickListener {
+        if (available) {
+            showSettingsMenu()
+            true
+        } else {
+            false
+        }
+    }
+}
+
 
     private fun currentTarget(): ChatTarget? {
         val channel = TwitchLiveChat.normalizeChannelLogin(player.getTwitchChatChannelLogin())
@@ -128,7 +150,20 @@ internal class TwitchLiveChatUiController(
         return null
     }
 
-    private fun showOverlay(target: ChatTarget) {
+    private fun isChatOpenPreference(): Boolean {
+    return PreferenceManager.getDefaultSharedPreferences(root.context)
+        .getBoolean(CHAT_OPEN_PREF_KEY, false)
+}
+
+private fun saveChatOpenPreference(open: Boolean) {
+    PreferenceManager.getDefaultSharedPreferences(root.context)
+        .edit()
+        .putBoolean(CHAT_OPEN_PREF_KEY, open)
+        .apply()
+}
+
+private fun showOverlay(target: ChatTarget) {
+    saveChatOpenPreference(true)
         settings = TwitchChatSettings.load(root.context)
         val overlay = ensureOverlay() ?: return
         overlay.isVisible = true
