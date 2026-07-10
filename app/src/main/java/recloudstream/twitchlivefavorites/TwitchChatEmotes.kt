@@ -107,7 +107,7 @@ object TwitchChatEmotes {
 
                 result += TwitchChatEmote(
                     code = text.substring(start, endInclusive + 1),
-                    imageUrl = "https://static-cdn.jtvnw.net/emoticons/v2/$emoteId/default/dark/2.0",
+                    imageUrl = "https://static-cdn.jtvnw.net/emoticons/v2/$emoteId/animated/dark/2.0",
                     start = start,
                     endExclusive = endInclusive + 1,
                     provider = "twitch",
@@ -310,14 +310,22 @@ object TwitchChatEmotes {
             val id = item.optString("id").takeIf { it.isNotBlank() } ?: continue
             result[code] = EmoteDefinition(
                 code = code,
-                imageUrl = "https://cdn.betterttv.net/emote/$id/2x",
+                imageUrl = bttvImageUrl(id, item.optBoolean("animated", false)),
                 provider = "bttv",
             )
         }
         return result
     }
 
-    private fun fetchFfzGlobal(): Map<String, EmoteDefinition> = parseFfzSets(getJsonObject(FFZ_GLOBAL), defaultOnly = true)
+    
+private fun bttvImageUrl(id: String, animated: Boolean): String {
+    return if (animated) {
+        "https://cdn.betterttv.net/emote/$id/2x.gif"
+    } else {
+        "https://cdn.betterttv.net/emote/$id/2x.webp"
+    }
+}
+private fun fetchFfzGlobal(): Map<String, EmoteDefinition> = parseFfzSets(getJsonObject(FFZ_GLOBAL), defaultOnly = true)
 
     private fun parseFfzSets(root: JSONObject?, defaultOnly: Boolean = false): Map<String, EmoteDefinition> {
         if (root == null) return emptyMap()

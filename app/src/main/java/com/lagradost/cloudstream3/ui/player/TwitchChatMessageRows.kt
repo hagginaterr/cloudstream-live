@@ -1,11 +1,17 @@
 package com.lagradost.cloudstream3.ui.player
 
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.Typeface
+import android.graphics.drawable.Animatable
+import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.Drawable
+import android.os.Build
+import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.DynamicDrawableSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.ImageSpan
 import android.text.style.StyleSpan
@@ -19,7 +25,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import recloudstream.twitchlivefavorites.TwitchChatBadges
 import recloudstream.twitchlivefavorites.TwitchChatEmote
+import java.io.ByteArrayInputStream
 import java.net.URL
+import java.nio.ByteBuffer
+import kotlin.math.max
 
 internal object TwitchChatMessageRows {
     fun create(
@@ -48,6 +57,10 @@ internal object TwitchChatMessageRows {
         }
         val visibleEmotes = emotes.filter { settings.emotesEnabledFor(it.provider) }
         val badgeSizePx = dp(container, if (isTv) 16 else 14)
+        val emoteSizePx = dp(
+            container,
+            (settings.clampedFontSizeSp * if (isTv) 2.25f else 2.05f).toInt().coerceIn(18, 44),
+        )
 
         val textView = TextView(container.context).apply {
             this.text = formatText(
@@ -91,7 +104,7 @@ internal object TwitchChatMessageRows {
                 text = text,
                 emotes = visibleEmotes,
                 badgeSizePx = badgeSizePx,
-                emoteSizePx = dp(textView, (settings.clampedFontSizeSp * if (isTv) 2.25f else 2.05f).toInt().coerceIn(18, 44)),
+                emoteSizePx = emoteSizePx,
                 settings = settings,
             )
         }
@@ -112,6 +125,7 @@ internal object TwitchChatMessageRows {
         emoteDrawables: Map<String, Drawable> = emptyMap(),
         emoteSizePx: Int = 0,
         settings: TwitchChatSettingsState,
+        spanHost: TextView? = null,
     ): CharSequence {
         val cleanName = clean(displayName).ifBlank { clean(fallbackName).ifBlank { "Twitch" } }
         val cleanText = cleanMessagePreservingOffsets(text)
@@ -162,7 +176,15 @@ internal object TwitchChatMessageRows {
 
         val messageStart = builder.length
         builder.append(cleanText)
-        applyEmoteSpans(builder, messageStart, cleanText, emotes, emoteDrawables, emoteSizePx)
+        applyEmoteSpans(
+            builder = builder,
+            messageStart = messageStart,
+            messageText = cleanText,
+            emotes = emotes,
+            emoteDrawables = emoteDrawables,
+            emoteSizePx = emoteSizePx,
+            spanHost = spanHost,
+        )
         return builder
     }
 
@@ -245,6 +267,7 @@ internal object TwitchChatMessageRows {
                     emoteDrawables = emoteDrawables,
                     emoteSizePx = emoteSizePx,
                     settings = settings,
+                    spanHost = textView,
                 )
             }
         }
@@ -257,30 +280,134 @@ internal object TwitchChatMessageRows {
         emotes: List<TwitchChatEmote>,
         emoteDrawables: Map<String, Drawable>,
         emoteSizePx: Int,
+        spanHost: TextView?,
     ) {
         if (emoteDrawables.isEmpty() || emoteSizePx <= 0) return
+
         emotes.forEach { emote ->
             val spanStart = messageStart + emote.start
             val spanEnd = messageStart + emote.endExclusive
             if (emote.start < 0 || emote.endExclusive > messageText.length || spanStart >= spanEnd) return@forEach
+
             val source = emoteDrawables[emote.imageUrl] ?: return@forEach
             val drawable = source.constantState?.newDrawable()?.mutate() ?: source.mutate()
             drawable.setBounds(0, 0, emoteSizePx, emoteSizePx)
-            builder.setSpan(ImageSpan(drawable, ImageSpan.ALIGN_BOTTOM), spanStart, spanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            prepareAnimatedDrawable(drawable)
+
+            val span = if (spanHost != null && drawable is Animatable) {
+                AnimatedInlineImageSpan(spanHost, drawable)
+            } else {
+                ImageSpan(drawable, ImageSpan.ALIGN_BOTTOM)
+            }
+            builder.setSpan(span, spanStart, spanEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
     }
 
-    private fun loadDrawable(url: String, sizePx: Int): Drawable? = runCatching {
-        val connection = URL(url).openConnection().apply {
-            connectTimeout = 3_000
-            readTimeout = 5_000
+    private fun loadDrawable(url: String, sizePx: Int): Drawable? {
+        candidateImageUrls(url).forEach { candidate ->
+            val drawable = runCatching {
+                val connection = URL(candidate).openConnection().apply {
+                    connectTimeout = 3_000
+                    readTimeout = 5_000
+                }
+                val bytes = connection.getInputStream().use { stream -> stream.readBytes() }
+                decodeDrawable(bytes, sizePx)
+            }.getOrNull()
+            if (drawable != null) return drawable
         }
-        connection.getInputStream().use { stream ->
-            Drawable.createFromStream(stream, null)?.apply {
-                setBounds(0, 0, sizePx, sizePx)
+        return null
+    }
+
+    private fun decodeDrawable(bytes: ByteArray, sizePx: Int): Drawable? {
+        val decoded = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching {
+                ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, _, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    decoder.setTargetSize(sizePx, sizePx)
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
+
+        val drawable = decoded ?: Drawable.createFromStream(ByteArrayInputStream(bytes), null)
+        drawable?.setBounds(0, 0, sizePx, sizePx)
+        drawable?.let { prepareAnimatedDrawable(it) }
+        return drawable
+    }
+
+    private fun prepareAnimatedDrawable(drawable: Drawable) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && drawable is AnimatedImageDrawable) {
+            drawable.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
+        }
+        if (drawable is Animatable && !drawable.isRunning) {
+            runCatching { drawable.start() }
+        }
+    }
+
+    private fun candidateImageUrls(url: String): List<String> {
+        val clean = url.trim()
+        if (clean.isBlank()) return emptyList()
+        val candidates = linkedSetOf(clean)
+
+        if (clean.contains("/emoticons/v2/") && clean.contains("/animated/")) {
+            candidates.add(clean.replace("/animated/", "/default/"))
+        }
+
+        if (clean.contains("cdn.betterttv.net/emote/")) {
+            when {
+                clean.endsWith(".gif", ignoreCase = true) -> {
+                    candidates.add(clean.removeSuffix(".gif") + ".webp")
+                    candidates.add(clean.removeSuffix(".gif") + ".png")
+                }
+                clean.endsWith(".webp", ignoreCase = true) -> {
+                    candidates.add(clean.removeSuffix(".webp") + ".gif")
+                    candidates.add(clean.removeSuffix(".webp") + ".png")
+                }
+                clean.endsWith(".png", ignoreCase = true) -> {
+                    candidates.add(clean.removeSuffix(".png") + ".gif")
+                    candidates.add(clean.removeSuffix(".png") + ".webp")
+                }
+                else -> {
+                    candidates.add("$clean.gif")
+                    candidates.add("$clean.webp")
+                    candidates.add("$clean.png")
+                }
             }
         }
-    }.getOrNull()
+
+        return candidates.toList()
+    }
+
+    private class AnimatedInlineImageSpan(
+        private val host: TextView,
+        private val animatedDrawable: Drawable,
+    ) : DynamicDrawableSpan(DynamicDrawableSpan.ALIGN_BOTTOM), Drawable.Callback {
+        init {
+            animatedDrawable.callback = this
+            if (animatedDrawable is Animatable && !animatedDrawable.isRunning) {
+                runCatching { animatedDrawable.start() }
+            }
+        }
+
+        override fun getDrawable(): Drawable = animatedDrawable
+
+        override fun invalidateDrawable(who: Drawable) {
+            if (host.isAttachedToWindow) {
+                host.postInvalidateOnAnimation()
+            }
+        }
+
+        override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) {
+            if (host.isAttachedToWindow) {
+                host.postDelayed(what, max(0L, `when` - SystemClock.uptimeMillis()))
+            }
+        }
+
+        override fun unscheduleDrawable(who: Drawable, what: Runnable) {
+            host.removeCallbacks(what)
+        }
+    }
 
     private fun cleanMessagePreservingOffsets(value: String): String {
         if (value.isEmpty()) return value
