@@ -387,7 +387,7 @@ internal class TwitchLiveChatUiController(
 
     private fun overlayHeight(): Int = dp(settings.clampedHeightDp)
 
-    private fun overlayBottomMargin(): Int = if (isTvDevice()) dp(104) else dp(86)
+    private fun overlayBottomMargin(): Int = 0
 
     private fun cornerIndex(): Int {
         return PreferenceManager.getDefaultSharedPreferences(root.context)
@@ -414,9 +414,6 @@ internal class TwitchLiveChatUiController(
         val corner = cornerIndex()
         val alignTop = corner == 1 || corner == 2
         val alignStart = corner == 2 || corner == 3
-        val sideMargin = 0
-        val topMargin = 0
-        val bottomMargin = 0
         val width = overlayWidth()
         val height = overlayHeight()
 
@@ -426,10 +423,10 @@ internal class TwitchLiveChatUiController(
                 params.height = height
                 params.gravity = (if (alignStart) Gravity.START else Gravity.END) or
                     (if (alignTop) Gravity.TOP else Gravity.BOTTOM)
-                params.marginStart = if (alignStart) sideMargin else 0
-                params.marginEnd = if (alignStart) 0 else sideMargin
-                params.topMargin = if (alignTop) topMargin else 0
-                params.bottomMargin = if (alignTop) 0 else bottomMargin
+                params.marginStart = 0
+                params.marginEnd = 0
+                params.topMargin = 0
+                params.bottomMargin = 0
                 overlay.layoutParams = params
             }
             is ConstraintLayout.LayoutParams -> {
@@ -443,33 +440,29 @@ internal class TwitchLiveChatUiController(
                 params.topToBottom = ConstraintLayout.LayoutParams.UNSET
                 params.bottomToTop = ConstraintLayout.LayoutParams.UNSET
                 params.bottomToBottom = ConstraintLayout.LayoutParams.UNSET
+                params.marginStart = 0
+                params.marginEnd = 0
+                params.topMargin = 0
+                params.bottomMargin = 0
+
                 if (alignStart) {
                     params.startToStart = ConstraintLayout.LayoutParams.PARENT_ID
-                    params.marginStart = sideMargin
-                    params.marginEnd = 0
                 } else {
                     params.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID
-                    params.marginEnd = sideMargin
-                    params.marginStart = 0
                 }
+
                 if (alignTop) {
                     params.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
-                    params.topMargin = topMargin
-                    params.bottomMargin = 0
                 } else {
                     params.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID
-                    params.bottomMargin = bottomMargin
-                    params.topMargin = 0
                 }
+
                 overlay.layoutParams = params
             }
             else -> {
                 overlay.layoutParams = ViewGroup.LayoutParams(width, height)
             }
         }
-        overlay.translationX = 0f
-        overlay.translationY = 0f
-        overlay.bringToFront()
     }
 
     private fun showSettingsMenu() {
@@ -480,72 +473,174 @@ internal class TwitchLiveChatUiController(
 
         val content = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(14), dp(18), dp(14))
+            setPadding(dp(10), dp(8), dp(10), dp(8))
         }
 
         content.addView(TextView(ctx).apply {
             text = "Twitch chat settings"
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 14f
             includeFontPadding = false
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { bottomMargin = dp(12) }
+            ).apply { bottomMargin = dp(8) }
         })
 
-        val cornerGroup = addCornerRow(content)
-        val widthSeek = addSeekRow(content, "Box width", 180, 760, settings.clampedWidthDp) { "$it dp" }
-        val heightSeek = addSeekRow(content, "Box height", 100, 620, settings.clampedHeightDp) { "$it dp" }
-        val transparencySeek = addSeekRow(content, "Transparency", 0, 95, settings.clampedTransparencyPercent) { "$it%" }
-        val fontSeek = addSeekRow(content, "Font size", 8, 24, settings.clampedFontSizeSp) { "$it sp" }
+        var suppressLiveUpdates = false
+        lateinit var widthSeek: SeekBar
+        lateinit var heightSeek: SeekBar
+        lateinit var transparencySeek: SeekBar
+        lateinit var fontSeek: SeekBar
+        lateinit var twitchCheck: CheckBox
+        lateinit var bttvCheck: CheckBox
+        lateinit var ffzCheck: CheckBox
+        lateinit var sevenTvCheck: CheckBox
+        lateinit var coloredNamesCheck: CheckBox
+        lateinit var badgesCheck: CheckBox
+        lateinit var slowModeCheck: CheckBox
+        lateinit var positionGroup: android.widget.RadioGroup
+        val positionIds = intArrayOf(
+            View.generateViewId(),
+            View.generateViewId(),
+            View.generateViewId(),
+            View.generateViewId(),
+        )
 
-        val twitchCheck = addCheckBox(content, "Native Twitch emotes", settings.twitchEmotesEnabled)
-        val bttvCheck = addCheckBox(content, "BTTV emotes", settings.bttvEmotesEnabled)
-        val ffzCheck = addCheckBox(content, "FFZ emotes", settings.ffzEmotesEnabled)
-        val sevenTvCheck = addCheckBox(content, "7TV emotes", settings.sevenTvEmotesEnabled)
-        val coloredNamesCheck = addCheckBox(content, "Colored usernames", settings.coloredUsernames)
-        val badgesCheck = addCheckBox(content, "Badges", settings.badgesEnabled)
-        val slowModeCheck = addCheckBox(content, "Slow mode", settings.slowMode)
+        fun buildSettings(): TwitchChatSettingsState {
+            return TwitchChatSettingsState(
+                widthDp = widthSeek.progress + 220,
+                heightDp = heightSeek.progress + 120,
+                transparencyPercent = transparencySeek.progress,
+                twitchEmotesEnabled = twitchCheck.isChecked,
+                bttvEmotesEnabled = bttvCheck.isChecked,
+                ffzEmotesEnabled = ffzCheck.isChecked,
+                sevenTvEmotesEnabled = sevenTvCheck.isChecked,
+                coloredUsernames = coloredNamesCheck.isChecked,
+                fontSizeSp = fontSeek.progress + 8,
+                badgesEnabled = badgesCheck.isChecked,
+                slowMode = slowModeCheck.isChecked,
+            )
+        }
+
+        fun saveVisualSettings() {
+            if (suppressLiveUpdates) return
+            val newSettings = buildSettings()
+            TwitchChatSettings.save(ctx, newSettings)
+            applySettings(newSettings)
+        }
+
+        fun updateCorner(index: Int) {
+            if (suppressLiveUpdates) return
+            saveCornerIndex(index.coerceIn(0, 3))
+            overlayView()?.let { overlay ->
+                styleOverlay(overlay)
+                applyOverlayPosition(overlay)
+                if (overlay.isVisible) render()
+                overlay.bringToFront()
+            }
+        }
+
+        widthSeek = addSeekRow(content, "Width", 220, 760, settings.clampedWidthDp, { "$it dp" }) {
+            saveVisualSettings()
+        }
+        heightSeek = addSeekRow(content, "Height", 120, 620, settings.clampedHeightDp, { "$it dp" }) {
+            saveVisualSettings()
+        }
+        transparencySeek = addSeekRow(content, "Transparency", 0, 95, settings.clampedTransparencyPercent, { "$it%" }) {
+            saveVisualSettings()
+        }
+        fontSeek = addSeekRow(content, "Font", 8, 24, settings.clampedFontSizeSp, { "$it sp" }) {
+            saveVisualSettings()
+        }
+
+        content.addView(TextView(ctx).apply {
+            text = "Position"
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            includeFontPadding = false
+        })
+
+        positionGroup = android.widget.RadioGroup(ctx).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+            val labels = listOf("Bottom right", "Top right", "Top left", "Bottom left")
+            labels.forEachIndexed { index, label ->
+                addView(android.widget.RadioButton(ctx).apply {
+                    id = positionIds[index]
+                    text = label
+                    setTextColor(Color.WHITE)
+                    textSize = 12f
+                    minHeight = 0
+                    setPadding(0, 0, 0, 0)
+                })
+            }
+            check(positionIds[cornerIndex()])
+            setOnCheckedChangeListener { _, checkedId ->
+                val index = positionIds.indexOf(checkedId)
+                if (index >= 0) updateCorner(index)
+            }
+        }
+        content.addView(positionGroup, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = dp(4) })
+
+        twitchCheck = addCheckBox(content, "Native Twitch emotes", settings.twitchEmotesEnabled).apply {
+            setOnCheckedChangeListener { _, _ -> saveVisualSettings() }
+        }
+        bttvCheck = addCheckBox(content, "BTTV emotes", settings.bttvEmotesEnabled).apply {
+            setOnCheckedChangeListener { _, _ -> saveVisualSettings() }
+        }
+        ffzCheck = addCheckBox(content, "FFZ emotes", settings.ffzEmotesEnabled).apply {
+            setOnCheckedChangeListener { _, _ -> saveVisualSettings() }
+        }
+        sevenTvCheck = addCheckBox(content, "7TV emotes", settings.sevenTvEmotesEnabled).apply {
+            setOnCheckedChangeListener { _, _ -> saveVisualSettings() }
+        }
+        coloredNamesCheck = addCheckBox(content, "Colored usernames", settings.coloredUsernames).apply {
+            setOnCheckedChangeListener { _, _ -> saveVisualSettings() }
+        }
+        badgesCheck = addCheckBox(content, "Badges", settings.badgesEnabled).apply {
+            setOnCheckedChangeListener { _, _ -> saveVisualSettings() }
+        }
+        slowModeCheck = addCheckBox(content, "Slow mode", settings.slowMode).apply {
+            setOnCheckedChangeListener { _, _ -> saveVisualSettings() }
+        }
 
         content.addView(LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
-            setPadding(0, dp(12), 0, 0)
-
+            setPadding(0, dp(6), 0, 0)
             addView(Button(ctx).apply {
                 text = "Defaults"
+                textSize = 12f
+                minHeight = 0
                 setOnClickListener {
+                    suppressLiveUpdates = true
+                    val defaults = TwitchChatSettings.reset(ctx)
+                    settings = defaults
+                    widthSeek.progress = defaults.clampedWidthDp - 220
+                    heightSeek.progress = defaults.clampedHeightDp - 120
+                    transparencySeek.progress = defaults.clampedTransparencyPercent
+                    fontSeek.progress = defaults.clampedFontSizeSp - 8
+                    twitchCheck.isChecked = defaults.twitchEmotesEnabled
+                    bttvCheck.isChecked = defaults.bttvEmotesEnabled
+                    ffzCheck.isChecked = defaults.ffzEmotesEnabled
+                    sevenTvCheck.isChecked = defaults.sevenTvEmotesEnabled
+                    coloredNamesCheck.isChecked = defaults.coloredUsernames
+                    badgesCheck.isChecked = defaults.badgesEnabled
+                    slowModeCheck.isChecked = defaults.slowMode
                     saveCornerIndex(0)
-                    applySettings(TwitchChatSettings.reset(ctx))
-                    dialog.dismiss()
+                    positionGroup.check(positionIds[0])
+                    suppressLiveUpdates = false
+                    applySettings(defaults)
                 }
             })
             addView(Button(ctx).apply {
-                text = "Cancel"
+                text = "Close"
+                textSize = 12f
+                minHeight = 0
                 setOnClickListener { dialog.dismiss() }
-            })
-            addView(Button(ctx).apply {
-                text = "Save"
-                setOnClickListener {
-                    saveCornerIndex(selectedCornerIndex(cornerGroup))
-                    val newSettings = TwitchChatSettingsState(
-                        widthDp = widthSeek.progress + 180,
-                        heightDp = heightSeek.progress + 100,
-                        transparencyPercent = transparencySeek.progress,
-                        twitchEmotesEnabled = twitchCheck.isChecked,
-                        bttvEmotesEnabled = bttvCheck.isChecked,
-                        ffzEmotesEnabled = ffzCheck.isChecked,
-                        sevenTvEmotesEnabled = sevenTvCheck.isChecked,
-                        coloredUsernames = coloredNamesCheck.isChecked,
-                        fontSizeSp = fontSeek.progress + 8,
-                        badgesEnabled = badgesCheck.isChecked,
-                        slowMode = slowModeCheck.isChecked,
-                    )
-                    TwitchChatSettings.save(ctx, newSettings)
-                    applySettings(newSettings)
-                    dialog.dismiss()
-                }
             })
         })
 
@@ -553,9 +648,17 @@ internal class TwitchLiveChatUiController(
             setBackgroundColor(Color.argb(235, 16, 16, 16))
             addView(content)
         }
+
         dialog.setContentView(scroll)
         dialog.show()
-        dialog.window?.setLayout(if (isTvDevice()) dp(520) else dp(380), ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.window?.let { window ->
+            window.setLayout(if (isTvDevice()) dp(410) else dp(310), ViewGroup.LayoutParams.WRAP_CONTENT)
+            val attrs = window.attributes
+            attrs.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            attrs.x = dp(4)
+            attrs.y = 0
+            window.attributes = attrs
+        }
     }
 
 
@@ -620,11 +723,12 @@ internal class TwitchLiveChatUiController(
         max: Int,
         initial: Int,
         formatter: (Int) -> String,
+        onValueChanged: ((Int) -> Unit)? = null,
     ): SeekBar {
         val ctx = parent.context
         val label = TextView(ctx).apply {
             setTextColor(Color.WHITE)
-            textSize = 13f
+            textSize = 12f
             includeFontPadding = false
         }
         val seek = SeekBar(ctx).apply {
@@ -637,7 +741,9 @@ internal class TwitchLiveChatUiController(
         updateLabel(seek.progress + min)
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                updateLabel(progress + min)
+                val value = progress + min
+                updateLabel(value)
+                if (fromUser) onValueChanged?.invoke(value)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
@@ -646,7 +752,7 @@ internal class TwitchLiveChatUiController(
         parent.addView(seek, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { bottomMargin = dp(8) })
+        ).apply { bottomMargin = dp(4) })
         return seek
     }
 
@@ -654,25 +760,24 @@ internal class TwitchLiveChatUiController(
         return CheckBox(parent.context).apply {
             text = label
             setTextColor(Color.WHITE)
-            textSize = 14f
+            textSize = 12f
             isChecked = checked
-            parent.addView(this)
+            minHeight = 0
+            setPadding(0, 0, 0, 0)
+            parent.addView(this, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
         }
     }
 
     private fun applySettings(newSettings: TwitchChatSettingsState) {
         settings = newSettings
-        val wasVisible = overlayView()?.isVisible == true
-        val target = activeTarget ?: currentTarget()
-        if (wasVisible && target != null) {
-            releaseConnection()
-            showOverlay(target)
-        } else {
-            overlayView()?.let { overlay ->
-                styleOverlay(overlay)
-                applyOverlayPosition(overlay)
-                render()
-            }
+        overlayView()?.let { overlay ->
+            styleOverlay(overlay)
+            applyOverlayPosition(overlay)
+            if (overlay.isVisible) render()
+            overlay.bringToFront()
         }
     }
 

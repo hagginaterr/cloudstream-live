@@ -1,7 +1,6 @@
 package com.lagradost.cloudstream3.ui.player
 
 import android.content.Context
-import android.content.pm.PackageManager
 import androidx.preference.PreferenceManager
 import java.util.Locale
 
@@ -18,11 +17,10 @@ internal data class TwitchChatSettingsState(
     val badgesEnabled: Boolean,
     val slowMode: Boolean,
 ) {
-    val clampedWidthDp: Int get() = widthDp.coerceIn(180, 760)
-    val clampedHeightDp: Int get() = heightDp.coerceIn(100, 620)
+    val clampedWidthDp: Int get() = widthDp.coerceIn(220, 760)
+    val clampedHeightDp: Int get() = heightDp.coerceIn(120, 620)
     val clampedTransparencyPercent: Int get() = transparencyPercent.coerceIn(0, 95)
     val clampedFontSizeSp: Int get() = fontSizeSp.coerceIn(8, 24)
-
     val backgroundAlpha: Int
         get() = (((100 - clampedTransparencyPercent) * 255) / 100).coerceIn(12, 255)
 
@@ -37,11 +35,11 @@ internal data class TwitchChatSettingsState(
     }
 
     fun maxVisibleMessages(isTv: Boolean): Int {
-        val usableHeight = (clampedHeightDp - if (isTv) 22 else 16).coerceAtLeast(56)
-        val approximateRowHeight = (clampedFontSizeSp * if (isTv) 2.65f else 2.35f)
+        val usableHeight = (clampedHeightDp - if (isTv) 36 else 24).coerceAtLeast(48)
+        val approximateRowHeight = (clampedFontSizeSp * if (isTv) 2.4f else 2.1f)
             .toInt()
-            .coerceAtLeast(if (isTv) 28 else 22)
-        val count = (usableHeight / approximateRowHeight).coerceIn(2, if (isTv) 14 else 18)
+            .coerceAtLeast(if (isTv) 26 else 20)
+        val count = (usableHeight / approximateRowHeight).coerceIn(1, if (isTv) 16 else 20)
         return if (slowMode) count.coerceAtMost(if (isTv) 5 else 4) else count
     }
 }
@@ -60,17 +58,16 @@ internal object TwitchChatSettings {
     private const val KEY_SLOW_MODE = "twitch_chat_slow_mode_v1"
 
     fun defaultState(context: Context): TwitchChatSettingsState {
-        val isTv = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
         return TwitchChatSettingsState(
-            widthDp = if (isTv) 360 else 260,
-            heightDp = if (isTv) 230 else 170,
-            transparencyPercent = 18,
+            widthDp = 317,
+            heightDp = 148,
+            transparencyPercent = 73,
             twitchEmotesEnabled = true,
             bttvEmotesEnabled = true,
             ffzEmotesEnabled = true,
             sevenTvEmotesEnabled = true,
             coloredUsernames = true,
-            fontSizeSp = if (isTv) 12 else 11,
+            fontSizeSp = 14,
             badgesEnabled = true,
             slowMode = false,
         )
