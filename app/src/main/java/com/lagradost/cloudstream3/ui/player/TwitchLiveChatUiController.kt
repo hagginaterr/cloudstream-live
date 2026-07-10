@@ -38,6 +38,7 @@ internal class TwitchLiveChatUiController(
         const val CHAT_OPEN_PREF_KEY = "twitch_chat_overlay_open_v1"
         const val VOD_POLL_INTERVAL_MS = 2_500L
         const val VOD_REFETCH_DISTANCE_MS = 7_000L
+        const val LIVE_DVR_CHAT_THRESHOLD_MS = 20_000L
         const val SLOW_RENDER_INTERVAL_MS = 2_000L
     }
 
@@ -54,6 +55,7 @@ internal class TwitchLiveChatUiController(
     private var liveChat: TwitchLiveChat? = null
     private var vodChatJob: Job? = null
     private var slowRenderJob: Job? = null
+    private var targetRefreshJob: Job? = null
     private var statusText: String = "Live chat"
     private var latestMessages: List<TwitchLiveChat.LiveMessage> = emptyList()
     private var lastVodFetchPositionMs: Long = Long.MIN_VALUE
@@ -135,19 +137,32 @@ internal class TwitchLiveChatUiController(
             false
         }
     }
-}
-
-
-    private fun currentTarget(): ChatTarget? {
+}    private fun currentTarget(): ChatTarget? {
         val channel = TwitchLiveChat.normalizeChannelLogin(player.getTwitchChatChannelLogin())
-        if (player.isTwitchLiveStream() && channel != null) {
-            return ChatTarget(ChatMode.LIVE, channel, null)
-        }
         val vodId = player.getTwitchVodId()?.filter { it.isDigit() }?.ifBlank { null }
-        if (!player.isTwitchLiveStream() && vodId != null) {
+        val isLiveStream = player.isTwitchLiveStream()
+        val isVodStream = player.isTwitchVodStream()
+
+        if (vodId != null && (isVodStream || !isLiveStream || shouldUseVodChatForCurrentPosition())) {
             return ChatTarget(ChatMode.VOD, channel, vodId)
         }
+
+        if (isLiveStream && channel != null) {
+            return ChatTarget(ChatMode.LIVE, channel, null)
+        }
+
         return null
+    }
+
+    private fun shouldUseVodChatForCurrentPosition(): Boolean {
+        val liveDelayMs = player.getLiveDelayMs()?.coerceAtLeast(0L)
+        if (liveDelayMs != null) {
+            return liveDelayMs >= LIVE_DVR_CHAT_THRESHOLD_MS
+        }
+
+        val durationMs = player.getDuration()?.takeIf { it > 0L } ?: return false
+        val positionMs = player.getPosition()?.coerceAtLeast(0L) ?: return false
+        return durationMs - positionMs >= LIVE_DVR_CHAT_THRESHOLD_MS
     }
 
     private fun isChatOpenPreference(): Boolean {
@@ -189,6 +204,7 @@ private fun showOverlay(target: ChatTarget) {
         if (activeTarget == target && liveChat != null) return
         releaseConnection()
         activeTarget = target
+        startTargetRefreshLoop()
         val max = maxBufferedMessages()
         liveChat = TwitchLiveChat(
             scope = scope,
@@ -213,6 +229,7 @@ private fun showOverlay(target: ChatTarget) {
         if (activeTarget == target && vodChatJob != null) return
         releaseConnection()
         activeTarget = target
+        startTargetRefreshLoop()
         lastVodFetchPositionMs = Long.MIN_VALUE
         statusText = "Loading VOD chat..."
         render()
@@ -240,6 +257,25 @@ private fun showOverlay(target: ChatTarget) {
         }
     }
 
+
+    private fun startTargetRefreshLoop() {
+        if (targetRefreshJob?.isActive == true) return
+        targetRefreshJob = scope.launch {
+            while (isChatOpenPreference()) {
+                delay(VOD_POLL_INTERVAL_MS)
+                val freshTarget = currentTarget()
+                if (freshTarget == null) {
+                    releaseConnection()
+                    hideOverlay()
+                    break
+                }
+                if (overlayView()?.isVisible == true && activeTarget != null && activeTarget != freshTarget) {
+                    showOverlay(freshTarget)
+                    break
+                }
+            }
+        }
+    }
     private fun releaseConnection() {
         liveChat?.stop()
         liveChat = null
@@ -247,6 +283,8 @@ private fun showOverlay(target: ChatTarget) {
         vodChatJob = null
         slowRenderJob?.cancel()
         slowRenderJob = null
+        targetRefreshJob?.cancel()
+        targetRefreshJob = null
         activeTarget = null
         latestMessages = emptyList()
         lastVodFetchPositionMs = Long.MIN_VALUE
