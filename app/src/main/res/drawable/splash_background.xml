@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
-        <color android:color="@color/twizzle_background" />
+        <color android:color="#0F0F14" />
     </item>
     <item
-        android:width="300dp"
-        android:height="188dp"
+        android:width="320dp"
+        android:height="200dp"
         android:gravity="center">
         <bitmap
             android:gravity="fill"
