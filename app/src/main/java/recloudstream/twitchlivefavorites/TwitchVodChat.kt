@@ -203,15 +203,8 @@ object TwitchVodChat {
         val offsetMs = (offsetSeconds * 1000.0).roundToLong().coerceAtLeast(0L)
         val message = node.optJSONObject("message") ?: return null
         val commenter = node.optJSONObject("commenter")
-        val fragments = message.optJSONArray("fragments")
-        val text = buildString {
-            if (fragments != null) {
-                for (index in 0 until fragments.length()) {
-                    append(fragments.optJSONObject(index)?.optString("text").orEmpty())
-                }
-            }
-        }.ifBlank { message.optString("body", "") }
-            .let(::cleanVisibleText) .trim()
+        val replayText = parseReplayMessageText(message)
+        val text = replayText.text
         if (text.isBlank()) return null
 
         val login = commenter?.optString("login")?.ifBlank { null }
@@ -229,15 +222,144 @@ object TwitchVodChat {
             timestampLabel = formatOffset(offsetMs),
             text = text,
             badges = parseBadges(message.optJSONArray("userBadges")),
-            emotes = TwitchChatEmotes.resolveFromCache(
+            emotes = TwitchChatEmotes.resolveFromCacheWithNativeFragments(
                 text = text,
-                nativeEmotesTag = null,
+                nativeEmotes = replayText.nativeEmotes,
                 channelLogin = channelLogin,
                 channelId = null,
             ),
         )
     }
 
+    private data class ReplayMessageText(
+        val text: String,
+        val nativeEmotes: List<TwitchChatEmote>,
+    )
+
+    /**
+     * Twitch VOD comments contain ordered message fragments. Native Twitch
+     * emotes are identified by fragment.emote.emoteID (legacy GQL shape) or
+     * fragment.emote.id (newer fragment shape). Build spans while the original
+     * UTF-16 offsets are still intact, then trim and rebase them together.
+     */
+    private fun parseReplayMessageText(message: JSONObject): ReplayMessageText {
+        val fragments = message.optJSONArray("fragments")
+        if (fragments == null || fragments.length() == 0) {
+            return ReplayMessageText(
+                text = cleanReplayText(message.optString("body", "")),
+                nativeEmotes = emptyList(),
+            )
+        }
+
+        val builder = StringBuilder()
+        val nativeEmotes = mutableListOf<TwitchChatEmote>()
+        for (index in 0 until fragments.length()) {
+            val fragment = fragments.optJSONObject(index) ?: continue
+            val fragmentText = cleanReplayFragmentPreservingOffsets(
+                fragment.optString("text", ""),
+            )
+            if (fragmentText.isEmpty()) continue
+
+            val fragmentStart = builder.length
+            builder.append(fragmentText)
+            val fragmentEnd = builder.length
+            val emoteId = replayFragmentEmoteId(fragment) ?: continue
+
+            nativeEmotes += TwitchChatEmote(
+                code = fragmentText,
+                imageUrl = twitchEmoteImageUrl(emoteId),
+                start = fragmentStart,
+                endExclusive = fragmentEnd,
+                provider = "twitch",
+            )
+        }
+
+        val fragmentText = builder.toString()
+        if (fragmentText.isBlank()) {
+            return ReplayMessageText(
+                text = cleanReplayText(message.optString("body", "")),
+                nativeEmotes = emptyList(),
+            )
+        }
+        return trimReplayMessageText(fragmentText, nativeEmotes)
+    }
+
+    private fun replayFragmentEmoteId(fragment: JSONObject): String? {
+        val emote = fragment.optJSONObject("emote") ?: return null
+        return sequenceOf(
+            emote.optString("emoteID", ""),
+            emote.optString("id", ""),
+            emote.optString("emoteId", ""),
+        )
+            .map { it.trim() }
+            .firstOrNull { value ->
+                value.isNotBlank() && value.all { character ->
+                    character.isLetterOrDigit() || character == '_' || character == '-'
+                }
+            }
+    }
+
+    private fun twitchEmoteImageUrl(emoteId: String): String {
+        // Animated is attempted first; TwitchChatMessageRows falls back to the
+        // default rendition when a native emote has no animated asset.
+        return "https://static-cdn.jtvnw.net/emoticons/v2/$emoteId/animated/dark/2.0"
+    }
+
+    private fun trimReplayMessageText(
+        text: String,
+        nativeEmotes: List<TwitchChatEmote>,
+    ): ReplayMessageText {
+        var trimStart = 0
+        while (trimStart < text.length && text[trimStart].isWhitespace()) trimStart++
+
+        var trimEnd = text.length
+        while (trimEnd > trimStart && text[trimEnd - 1].isWhitespace()) trimEnd--
+
+        if (trimStart >= trimEnd) return ReplayMessageText("", emptyList())
+        val trimmedText = text.substring(trimStart, trimEnd)
+        val adjustedEmotes = nativeEmotes.mapNotNull { emote ->
+            if (
+                emote.start < trimStart ||
+                emote.endExclusive > trimEnd ||
+                emote.start >= emote.endExclusive
+            ) {
+                null
+            } else {
+                val adjustedStart = emote.start - trimStart
+                val adjustedEnd = emote.endExclusive - trimStart
+                emote.copy(
+                    code = trimmedText.substring(adjustedStart, adjustedEnd),
+                    start = adjustedStart,
+                    endExclusive = adjustedEnd,
+                )
+            }
+        }
+        return ReplayMessageText(trimmedText, adjustedEmotes)
+    }
+
+    private fun cleanReplayFragmentPreservingOffsets(value: String): String {
+        if (value.isEmpty()) return value
+        return buildString(value.length) {
+            value.forEach { character ->
+                append(
+                    if (
+                        character == '\r' ||
+                        character == '\n' ||
+                        character == '\t' ||
+                        character.isISOControl()
+                    ) {
+                        ' '
+                    } else {
+                        character
+                    },
+                )
+            }
+        }
+    }
+
+    private fun cleanReplayText(value: String): String {
+        return cleanReplayFragmentPreservingOffsets(value).trim()
+    }
     private fun parseBadges(badges: JSONArray?): List<String> {
         if (badges == null) return emptyList()
         return (0 until badges.length())

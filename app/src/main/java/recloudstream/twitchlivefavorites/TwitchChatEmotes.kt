@@ -79,16 +79,63 @@ object TwitchChatEmotes {
         return resolveMessage(text, nativeEmotesTag, definitions)
     }
 
+    /**
+     * Resolves third-party emotes while preserving native Twitch spans already
+     * supplied by the structured VOD-comment fragment payload.
+     */
+    fun resolveFromCacheWithNativeFragments(
+        text: String,
+        nativeEmotes: List<TwitchChatEmote>,
+        channelLogin: String?,
+        channelId: String?,
+    ): List<TwitchChatEmote> {
+        val definitions = mergeEmotes(getCachedGlobalEmotes(), getCachedChannelEmotes(channelLogin, channelId))
+        return resolveMessageWithNative(text, nativeEmotes, definitions)
+    }
+
     private fun resolveMessage(
         text: String,
         nativeEmotesTag: String?,
         definitions: Map<String, EmoteDefinition>,
     ): List<TwitchChatEmote> {
         if (text.isBlank() && nativeEmotesTag.isNullOrBlank()) return emptyList()
+        return resolveMessageWithNative(
+            text = text,
+            nativeEmotes = parseNativeTwitchEmotes(text, nativeEmotesTag),
+            definitions = definitions,
+        )
+    }
 
-        val native = parseNativeTwitchEmotes(text, nativeEmotesTag)
-        val thirdParty = parseThirdPartyEmotes(text, definitions, native)
-        return (native + thirdParty).sortedWith(compareBy<TwitchChatEmote> { it.start }.thenByDescending { it.endExclusive })
+    private fun resolveMessageWithNative(
+        text: String,
+        nativeEmotes: List<TwitchChatEmote>,
+        definitions: Map<String, EmoteDefinition>,
+    ): List<TwitchChatEmote> {
+        if (text.isBlank() && nativeEmotes.isEmpty()) return emptyList()
+
+        val acceptedNative = mutableListOf<TwitchChatEmote>()
+        nativeEmotes
+            .asSequence()
+            .filter { emote ->
+                emote.start >= 0 &&
+                    emote.endExclusive <= text.length &&
+                    emote.start < emote.endExclusive &&
+                    emote.imageUrl.isNotBlank()
+            }
+            .sortedWith(compareBy<TwitchChatEmote> { it.start }.thenByDescending { it.endExclusive })
+            .forEach { emote ->
+                if (!overlaps(emote.start, emote.endExclusive, acceptedNative)) {
+                    acceptedNative += emote.copy(
+                        code = text.substring(emote.start, emote.endExclusive),
+                        provider = "twitch",
+                    )
+                }
+            }
+
+        val thirdParty = parseThirdPartyEmotes(text, definitions, acceptedNative)
+        return (acceptedNative + thirdParty).sortedWith(
+            compareBy<TwitchChatEmote> { it.start }.thenByDescending { it.endExclusive },
+        )
     }
 
     private fun parseNativeTwitchEmotes(text: String, raw: String?): List<TwitchChatEmote> {
