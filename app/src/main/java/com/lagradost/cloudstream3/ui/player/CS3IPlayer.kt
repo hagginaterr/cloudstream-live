@@ -188,6 +188,7 @@ class CS3IPlayer : IPlayer {
     private var currentLink: ExtractorLink? = null
     private var currentIsTwitchStream = false
     private var currentIsTwitchLiveDvrStream = false
+    private var currentIsTwitchLiveRewindSource = false
     private var currentIsTwitchVodStream = false
     private var currentTwitchVodId: String? = null
     private var currentTwitchChatChannelLogin: String? = null
@@ -704,7 +705,13 @@ class CS3IPlayer : IPlayer {
             ?: currentPlayer.currentPosition.takeIf { it != TIME_UNSET && it >= 0L }
             ?: return null
 
-        if (!currentIsTwitchLiveDvrStream) return relativePositionMs
+        // TwitchLiveRewindEventOffsetPatch:
+        // A growing VOD EVENT playlist starts at broadcast offset zero, so its player
+        // position already is Twitch's contentOffsetSeconds. Sliding channel HLS still
+        // needs the live-window offset added below.
+        if (!currentIsTwitchLiveDvrStream || currentIsTwitchLiveRewindSource) {
+            return relativePositionMs
+        }
 
         val timeline = currentPlayer.currentTimeline
         val windowIndex = currentPlayer.currentMediaItemIndex
@@ -752,6 +759,11 @@ class CS3IPlayer : IPlayer {
             headers.entries.joinToString(" ") { (key, value) -> "$key=$value" },
         ).joinToString(" ")
         return markerText.contains("cs_twitch_live_dvr=1", ignoreCase = true)
+    }
+
+    private fun ExtractorLink.hasTwitchLiveRewindSourceMarker(): Boolean {
+        return extractorData.orEmpty()
+            .contains("cs_twitch_rewind_source=1", ignoreCase = true)
     }
     private fun maybeLogTwitchLiveDelay(reason: String) {
         if (!currentIsTwitchStream) return
@@ -2291,6 +2303,8 @@ Player.STATE_ENDED -> {
             // the dynamic HLS source into a completed VOD media source.
             currentIsTwitchLiveDvrStream =
                 link.hasTwitchLiveDvrMarker() && currentTwitchVodId != null
+            currentIsTwitchLiveRewindSource =
+                currentIsTwitchLiveDvrStream && link.hasTwitchLiveRewindSourceMarker()
             currentIsTwitchVodStream =
                 currentTwitchVodId != null && !currentIsTwitchLiveDvrStream
             currentIsTwitchStream =
@@ -2300,7 +2314,7 @@ Player.STATE_ENDED -> {
                 TAG,
                 "Twitch chat metadata: vodId=$currentTwitchVodId, " +
                     "channel=$currentTwitchChatChannelLogin, liveDvr=$currentIsTwitchLiveDvrStream, " +
-                    "liveSource=$currentIsTwitchStream",
+                    "rewindEvent=$currentIsTwitchLiveRewindSource, liveSource=$currentIsTwitchStream",
             )
         if (!retry) {
     resetTwitchReconnectState()

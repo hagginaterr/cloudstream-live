@@ -792,6 +792,7 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
         links: List<ExtractorLink>,
         explicitVodChatId: String? = null,
         liveDvr: Boolean = false,
+        liveRewindSource: Boolean = false,
     ): List<ExtractorLink> {
         val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links
         val isLiveChannelData = isTwitchReconnectableLivePlayerData(data)
@@ -811,6 +812,7 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                     ?.takeIf { it.isNotBlank() }
                 ?: pageVodChatId
             val isCurrentLiveDvr = liveDvr && isLiveChannelData && linkVodChatId != null
+            val isCurrentLiveRewindSource = liveRewindSource && isCurrentLiveDvr
 
             val carrierWithVod = if (linkVodChatId != null) {
                 appendTwitchProfileQueryParam(carrierBase, "cs_twitch_vod_id", linkVodChatId)
@@ -818,13 +820,18 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                 carrierBase
             }
 
-            // TwitchLiveDvrTransportMetadataPatch:
-            // A channel DVR link is still the dynamic live HLS source. Keep its
-            // replay-chat marker and the normal live reconnect marker together.
+            // TwitchLiveRewindEventMetadataPatch:
+            // A current-broadcast EVENT playlist is both a live media source and
+            // a VOD-timestamp source for replay chat. Keep those concerns separate.
             var carrierWithMode = carrierWithVod
             if (isCurrentLiveDvr) {
                 carrierWithMode = appendTwitchProfileQueryParam(
                     carrierWithMode, "cs_twitch_live_dvr", "1",
+                )
+            }
+            if (isCurrentLiveRewindSource) {
+                carrierWithMode = appendTwitchProfileQueryParam(
+                    carrierWithMode, "cs_twitch_rewind_source", "1",
                 )
             }
             if (isLiveChannelData) {
@@ -838,6 +845,7 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                 ?.filterNot { line ->
                     line.contains("cs_twitch_vod_id=", ignoreCase = true) ||
                         line.contains("cs_twitch_live_dvr=", ignoreCase = true) ||
+                        line.contains("cs_twitch_rewind_source=", ignoreCase = true) ||
                         line.contains("cs_twitch_reconnect=", ignoreCase = true)
                 }
                 ?.joinToString("\n")
@@ -1658,31 +1666,71 @@ private fun normalizeChannel(value: String): String {
             ?.takeIf { it.value.isNotBlank() && it.signature.isNotBlank() }
     }
 
-    private fun twitchVodMasterPlaylistUrl(videoId: String, token: TwitchPlaybackAccessToken): String {
-        val cleanId = videoId.filter { it.isDigit() }
-        val params = listOf(
+    private fun twitchVodMasterPlaylistQuery(token: TwitchPlaybackAccessToken): String {
+        return listOf(
             "allow_source=true",
             "allow_audio_only=true",
             "player=twitchweb",
             "nauthsig=${encode(token.signature)}",
             "nauth=${encode(token.value)}",
-        )
+        ).joinToString("&")
+    }
 
-        return "https://usher.ttvnw.net/vod/$cleanId.m3u8?${params.joinToString("&")}"
+    private fun twitchVodMasterPlaylistUrl(videoId: String, token: TwitchPlaybackAccessToken): String {
+        val cleanId = videoId.filter { it.isDigit() }
+        return "https://usher.ttvnw.net/vod/$cleanId.m3u8?${twitchVodMasterPlaylistQuery(token)}"
+    }
+
+    private fun twitchLiveRewindMasterPlaylistUrls(
+        videoId: String,
+        token: TwitchPlaybackAccessToken,
+    ): List<String> {
+        val cleanId = videoId.filter { it.isDigit() }
+        if (cleanId.isBlank()) return emptyList()
+        val query = twitchVodMasterPlaylistQuery(token)
+
+        // TwitchLiveRewindEventResolverPatch:
+        // Current broadcasts expose a growing VOD EVENT playlist. /vod/v2 is the
+        // current rewind endpoint; /vod remains a compatibility fallback.
+        return listOf(
+            "https://usher.ttvnw.net/vod/v2/$cleanId.m3u8?$query",
+            "https://usher.ttvnw.net/vod/$cleanId.m3u8?$query",
+        ).distinct()
     }
 
     private fun resolveTwitchPlaylistUrl(masterUrl: String, value: String): String {
         val clean = value.trim()
         if (clean.startsWith("http", ignoreCase = true)) return clean
 
-        val base = masterUrl
-            .substringBefore("?")
-            .substringBeforeLast("/", missingDelimiterValue = masterUrl)
-
-        return "$base/$clean"
+        return runCatching {
+            java.net.URI(masterUrl).resolve(clean).toString()
+        }.getOrElse {
+            val base = masterUrl
+                .substringBefore("?")
+                .substringBeforeLast("/", missingDelimiterValue = masterUrl)
+            "$base/$clean"
+        }
     }
 
-    private suspend fun parseTwitchVodMasterPlaylist(masterUrl: String, body: String): List<ExtractorLink> {
+    private fun twitchPlaylistRequestHeaders(): Map<String, String> {
+        return mapOf(
+            "Client-Id" to twitchWebClientId,
+            "User-Agent" to twitchWebUserAgent,
+            "Referer" to "https://www.twitch.tv/",
+        )
+    }
+
+    private suspend fun fetchTwitchPlaylistText(url: String): String? {
+        return runCatching {
+            app.get(url, headers = twitchPlaylistRequestHeaders()).text
+        }.getOrNull()
+    }
+
+    private suspend fun parseTwitchVodMasterPlaylist(
+        masterUrl: String,
+        body: String,
+        linkNamePrefix: String = "$name VOD",
+    ): List<ExtractorLink> {
         val links = mutableListOf<ExtractorLink>()
         var streamInfo: String? = null
 
@@ -1720,7 +1768,7 @@ private fun normalizeChannel(value: String): String {
                     links.add(
                         newExtractorLink(
                             name,
-                            "$name VOD $label",
+                            "$linkNamePrefix $label",
                             streamUrl,
                         ) {
                             this.type = ExtractorLinkType.M3U8
@@ -1738,20 +1786,70 @@ private fun normalizeChannel(value: String): String {
         return links.distinctBy { it.url }
     }
 
+    private fun isGrowingTwitchEventPlaylist(body: String): Boolean {
+        return body.contains("#EXT-X-PLAYLIST-TYPE:EVENT", ignoreCase = true) &&
+            body.contains("#EXTINF:", ignoreCase = true) &&
+            !body.contains("#EXT-X-ENDLIST", ignoreCase = true)
+    }
+
+    private suspend fun isGrowingTwitchLiveRewindVariant(link: ExtractorLink): Boolean {
+        val body = fetchTwitchPlaylistText(link.url) ?: return false
+        return isGrowingTwitchEventPlaylist(body)
+    }
+
+    private suspend fun fetchTwitchLiveRewindLinks(videoId: String): List<ExtractorLink> {
+        val cleanId = videoId.filter { it.isDigit() }
+        if (cleanId.isBlank()) return emptyList()
+        val token = fetchTwitchVodPlaybackToken(cleanId) ?: return emptyList()
+
+        for (masterUrl in twitchLiveRewindMasterPlaylistUrls(cleanId, token)) {
+            val body = fetchTwitchPlaylistText(masterUrl) ?: continue
+            if (!body.contains("#EXTM3U", ignoreCase = true)) continue
+
+            if (isGrowingTwitchEventPlaylist(body)) {
+                return listOf(
+                    newExtractorLink(
+                        name,
+                        "$name Live DVR Auto",
+                        masterUrl,
+                    ) {
+                        this.type = ExtractorLinkType.M3U8
+                        this.quality = getQualityFromName("auto")
+                        this.referer = "https://www.twitch.tv/"
+                        this.headers = mapOf("User-Agent" to twitchWebUserAgent)
+                    },
+                )
+            }
+
+            val links = parseTwitchVodMasterPlaylist(
+                masterUrl = masterUrl,
+                body = body,
+                linkNamePrefix = "$name Live DVR",
+            )
+            val probeCandidates = links
+                .filterNot { it.name.contains("Audio Only", ignoreCase = true) }
+                .sortedByDescending { it.quality }
+                .take(4)
+
+            var hasGrowingVariant = false
+            for (candidate in probeCandidates) {
+                if (isGrowingTwitchLiveRewindVariant(candidate)) {
+                    hasGrowingVariant = true
+                    break
+                }
+            }
+            if (hasGrowingVariant) {
+                return links
+            }
+        }
+
+        return emptyList()
+    }
+
     private suspend fun fetchTwitchVodLinks(videoId: String): List<ExtractorLink> {
         val token = fetchTwitchVodPlaybackToken(videoId) ?: return emptyList()
         val masterUrl = twitchVodMasterPlaylistUrl(videoId, token)
-
-        val body = runCatching {
-            app.get(
-                masterUrl,
-                headers = mapOf(
-                    "Client-Id" to twitchWebClientId,
-                    "User-Agent" to twitchWebUserAgent,
-                    "Referer" to "https://www.twitch.tv/",
-                ),
-            ).text
-        }.getOrNull() ?: return emptyList()
+        val body = fetchTwitchPlaylistText(masterUrl) ?: return emptyList()
 
         return parseTwitchVodMasterPlaylist(masterUrl, body).ifEmpty {
             listOf(
@@ -2573,12 +2671,14 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             links: List<ExtractorLink>,
             explicitVodChatId: String? = null,
             liveDvr: Boolean = false,
+            liveRewindSource: Boolean = false,
         ): Boolean {
             val annotated = annotateTwitchPlayerLinks(
                 data = data,
                 links = links,
                 explicitVodChatId = explicitVodChatId,
                 liveDvr = liveDvr,
+                liveRewindSource = liveRewindSource,
             )
             annotated.forEach { callback.invoke(it) }
             return annotated.isNotEmpty()
@@ -2609,26 +2709,43 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             return emit(fetchTwitchVodLinks(videoId), explicitVodChatId = videoId)
         }
 
-        // Resolve the real live playlist and the current archive ID in parallel.
-        // The archive ID is chat metadata only; it must not become the media URL.
+        // TwitchLiveRewindEventSelectionPatch:
+        // Resolve the normal live edge and the active archive concurrently. When
+        // Twitch exposes the archive as a growing EVENT playlist, prefer it because
+        // its seek window starts at broadcast time zero. Keep channel HLS as fallback.
         val liveResolution = coroutineScope {
             val liveLinksDeferred = async {
                 runCatching {
                     app.get("https://pwn.sh/tools/streamapi.py?url=$data").parsed<ApiResponse>()
                 }.getOrNull()
             }
-            val vodChatIdDeferred = async {
+            val currentArchiveDeferred = async {
                 fetchCurrentLivePastBroadcast(data)
-                    ?.id
-                    ?.filter { it.isDigit() }
-                    ?.takeIf { it.isNotBlank() }
             }
-            liveLinksDeferred.await() to vodChatIdDeferred.await()
+            liveLinksDeferred.await() to currentArchiveDeferred.await()
+        }
+
+        val currentVodChatId = liveResolution.second
+            ?.id
+            ?.filter { it.isDigit() }
+            ?.takeIf { it.isNotBlank() }
+        val rewindLinks = if (currentVodChatId != null) {
+            fetchTwitchLiveRewindLinks(currentVodChatId)
+        } else {
+            emptyList()
+        }
+
+        if (rewindLinks.isNotEmpty()) {
+            return emit(
+                links = rewindLinks,
+                explicitVodChatId = currentVodChatId,
+                liveDvr = true,
+                liveRewindSource = true,
+            )
         }
 
         val response = liveResolution.first ?: return false
-        val currentVodChatId = liveResolution.second
-        val links = response.urls?.map { (qualityName, streamUrl) ->
+        val liveLinks = response.urls?.map { (qualityName, streamUrl) ->
             val quality = getQualityFromName(qualityName.substringBefore("p"))
             newExtractorLink(
                 name,
@@ -2642,7 +2759,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         }.orEmpty()
 
         return emit(
-            links = links,
+            links = liveLinks,
             explicitVodChatId = currentVodChatId,
             liveDvr = currentVodChatId != null,
         )
