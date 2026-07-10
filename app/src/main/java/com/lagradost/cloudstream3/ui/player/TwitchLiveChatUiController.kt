@@ -58,6 +58,9 @@ internal class TwitchLiveChatUiController(
     private var targetRefreshJob: Job? = null
     private var statusText: String = "Live chat"
     private var latestMessages: List<TwitchLiveChat.LiveMessage> = emptyList()
+    private var liveReplaySeedMessages: List<TwitchLiveChat.LiveMessage> = emptyList()
+    private var liveIrcMessages: List<TwitchLiveChat.LiveMessage> = emptyList()
+    private var liveStartupHistoryJob: Job? = null
     private var lastVodFetchPositionMs: Long = Long.MIN_VALUE
     private var lastRenderedAtMs: Long = 0L
     private var settings: TwitchChatSettingsState = TwitchChatSettings.load(root.context)
@@ -137,30 +140,19 @@ internal class TwitchLiveChatUiController(
             false
         }
     }
-}        private fun currentTarget(): ChatTarget? {
+}            private fun currentTarget(): ChatTarget? {
         val channel = TwitchLiveChat.normalizeChannelLogin(player.getTwitchChatChannelLogin())
         val vodId = player.getTwitchVodId()?.filter { it.isDigit() }?.ifBlank { null }
-        val isLiveStream = player.isTwitchLiveStream()
-        val isVodStream = player.isTwitchVodStream()
 
-        // If the selected media source carries a VOD id, prefer replay chat unless
-        // we can positively prove that playback is still at the live edge. V17 only
-        // switched when ExoPlayer reported live-delay/duration data, which is not
-        // reliable for Twitch DVR playlists and caused the overlay to stay on live IRC.
-        if (vodId != null) {
-            val behindLiveEdge = shouldUseVodChatForCurrentPosition()
-            val definitelyAtLiveEdge = isDefinitelyAtLiveEdge()
-            if (isVodStream || !isLiveStream || behindLiveEdge || !definitelyAtLiveEdge) {
-                return ChatTarget(ChatMode.VOD, channel, vodId)
-            }
+        if (player.isTwitchLiveStream()) {
+            if (channel != null) return ChatTarget(ChatMode.LIVE, channel, vodId)
+            if (vodId != null) return ChatTarget(ChatMode.VOD, channel, vodId)
         }
 
-        if (isLiveStream && channel != null) {
-            return ChatTarget(ChatMode.LIVE, channel, null)
-        }
-
+        if (vodId != null) return ChatTarget(ChatMode.VOD, channel, vodId)
         return null
     }
+
 
         private fun shouldUseVodChatForCurrentPosition(): Boolean {
         val liveDelayMs = player.getLiveDelayMs()?.coerceAtLeast(0L)
@@ -197,15 +189,19 @@ private fun saveChatOpenPreference(open: Boolean) {
         .apply()
 }
 
-private fun showOverlay(target: ChatTarget) {
-    saveChatOpenPreference(true)
+    private fun showOverlay(target: ChatTarget) {
+        saveChatOpenPreference(true)
         settings = TwitchChatSettings.load(root.context)
         val overlay = ensureOverlay() ?: return
         overlay.isVisible = true
         overlay.bringToFront()
         latestMessages = emptyList()
+        liveReplaySeedMessages = emptyList()
+        liveIrcMessages = emptyList()
+        liveStartupHistoryJob?.cancel()
+        liveStartupHistoryJob = null
         statusText = when (target.mode) {
-            ChatMode.LIVE -> "Connecting live chat..."
+            ChatMode.LIVE -> if (target.vodId != null) "Loading recent chat..." else "Connecting live chat..."
             ChatMode.VOD -> "Loading VOD chat..."
         }
         render()
@@ -215,20 +211,25 @@ private fun showOverlay(target: ChatTarget) {
         }
     }
 
+
     private fun hideOverlay() {
         overlayView()?.isVisible = false
     }
 
-    private fun ensureLiveConnection(target: ChatTarget) {
+        private fun ensureLiveConnection(target: ChatTarget) {
         val channel = target.channel ?: return
         if (activeTarget == target && liveChat != null) return
         releaseConnection()
         activeTarget = target
-        startTargetRefreshLoop()
-        val max = maxBufferedMessages()
+        liveReplaySeedMessages = emptyList()
+        liveIrcMessages = emptyList()
+        latestMessages = emptyList()
+        statusText = if (target.vodId != null) "Loading recent chat..." else "Connecting live chat..."
+        render()
+        maybeSeedLiveStartupHistory(target)
         liveChat = TwitchLiveChat(
             scope = scope,
-            maxMessages = max,
+            maxMessages = chatBufferMaxMessages(),
             listener = object : TwitchLiveChat.Listener {
                 override fun onState(message: String) {
                     statusText = message
@@ -236,13 +237,15 @@ private fun showOverlay(target: ChatTarget) {
                 }
 
                 override fun onMessages(messages: List<TwitchLiveChat.LiveMessage>) {
-                    latestMessages = messages.takeLast(maxBufferedMessages())
+                    liveIrcMessages = messages.takeLast(chatBufferMaxMessages())
+                    latestMessages = combinedLiveMessages()
                     statusText = "Live chat"
                     renderRespectingSlowMode(force = false)
                 }
             },
         ).also { chat -> chat.start(channel) }
     }
+
 
     private fun ensureVodHistory(target: ChatTarget) {
         val vodId = target.vodId ?: return
@@ -296,6 +299,51 @@ private fun showOverlay(target: ChatTarget) {
             }
         }
     }
+        private fun clearLiveStartupBackfill() {
+        liveStartupHistoryJob?.cancel()
+        liveStartupHistoryJob = null
+        liveReplaySeedMessages = emptyList()
+        liveIrcMessages = emptyList()
+    }
+
+    private fun chatBufferMaxMessages(): Int {
+        val visible = maxVisibleMessages().coerceAtLeast(1)
+        val base = if (isTvDevice()) 220 else 180
+        return (visible * 6).coerceIn(visible, base)
+    }
+
+    private fun liveStartupBackfillSize(): Int {
+        return maxVisibleMessages().coerceIn(1, 60)
+    }
+
+    private fun combinedLiveMessages(): List<TwitchLiveChat.LiveMessage> {
+        val max = chatBufferMaxMessages()
+        if (liveReplaySeedMessages.isEmpty()) return liveIrcMessages.takeLast(max)
+        if (liveIrcMessages.isEmpty()) return liveReplaySeedMessages.takeLast(liveStartupBackfillSize())
+
+        val liveIds = liveIrcMessages.mapTo(mutableSetOf()) { it.id }
+        val seed = liveReplaySeedMessages.filter { it.id !in liveIds }
+        return (seed + liveIrcMessages).takeLast(max)
+    }
+
+    private fun maybeSeedLiveStartupHistory(target: ChatTarget) {
+        val vodId = target.vodId ?: return
+        liveStartupHistoryJob?.cancel()
+        liveStartupHistoryJob = scope.launch {
+            val seedTarget = target
+            val positionMs = player.getPosition()?.coerceAtLeast(0L) ?: 0L
+            val requested = liveStartupBackfillSize()
+            val messages = TwitchVodChat.fetchAt(vodId, positionMs, requested, target.channel)
+            if (activeTarget != seedTarget || messages.isEmpty()) return@launch
+            liveReplaySeedMessages = messages.takeLast(requested)
+            latestMessages = combinedLiveMessages()
+            if (latestMessages.isNotEmpty()) {
+                statusText = "Live chat"
+                renderRespectingSlowMode(force = true)
+            }
+        }
+    }
+
     private fun releaseConnection() {
         liveChat?.stop()
         liveChat = null
@@ -303,13 +351,16 @@ private fun showOverlay(target: ChatTarget) {
         vodChatJob = null
         slowRenderJob?.cancel()
         slowRenderJob = null
-        targetRefreshJob?.cancel()
-        targetRefreshJob = null
+        liveStartupHistoryJob?.cancel()
+        liveStartupHistoryJob = null
         activeTarget = null
         latestMessages = emptyList()
+        liveReplaySeedMessages = emptyList()
+        liveIrcMessages = emptyList()
         lastVodFetchPositionMs = Long.MIN_VALUE
         lastRenderedAtMs = 0L
     }
+
 
     private fun chatButton(): View? = root.findViewById(R.id.twitch_player_chat_button)
 
@@ -887,15 +938,28 @@ private fun showOverlay(target: ChatTarget) {
         }
     }
 
-    private fun applySettings(newSettings: TwitchChatSettingsState) {
+        private fun applySettings(newSettings: TwitchChatSettingsState) {
         settings = newSettings
+        if (activeTarget?.mode == ChatMode.LIVE) {
+            liveReplaySeedMessages = liveReplaySeedMessages.takeLast(liveStartupBackfillSize())
+            liveIrcMessages = liveIrcMessages.takeLast(chatBufferMaxMessages())
+            latestMessages = combinedLiveMessages()
+        } else {
+            latestMessages = latestMessages.takeLast(chatBufferMaxMessages())
+        }
         overlayView()?.let { overlay ->
             styleOverlay(overlay)
             applyOverlayPosition(overlay)
-            if (overlay.isVisible) render()
+            if (overlay.isVisible) {
+                render()
+                overlay.post {
+                    if (overlay.isVisible) render()
+                }
+            }
             overlay.bringToFront()
         }
     }
+
 
     private fun formatVodPosition(positionMs: Long): String {
         val totalSeconds = (positionMs.coerceAtLeast(0L) / 1000L)
