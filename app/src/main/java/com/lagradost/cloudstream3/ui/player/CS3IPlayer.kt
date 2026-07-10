@@ -185,6 +185,7 @@ class CS3IPlayer : IPlayer {
 
     private var currentLink: ExtractorLink? = null
     private var currentIsTwitchStream = false
+    private var currentIsTwitchLiveDvrStream = false
     private var currentIsTwitchVodStream = false
     private var twitchReconnectAttempt = 0
     private var twitchReconnectInFlight = false
@@ -685,10 +686,13 @@ class CS3IPlayer : IPlayer {
     }
 
     override fun isTwitchLiveStream(): Boolean = currentIsTwitchStream
+    override fun isTwitchLiveDvrStream(): Boolean = currentIsTwitchLiveDvrStream
     override fun isTwitchVodStream(): Boolean = currentIsTwitchVodStream
+
     override fun getTwitchVodId(): String? {
         return currentLink?.let { TwitchVodChat.extractVodIdFromLink(it) }
     }
+
     override fun getTwitchChatChannelLogin(): String? {
         return currentLink?.let { TwitchLiveChat.extractChannelLoginFromLink(it) }
     }
@@ -704,7 +708,7 @@ class CS3IPlayer : IPlayer {
             name,
             url,
             referer,
-            headers["User-Agent"].orEmpty()
+            headers["User-Agent"].orEmpty(),
         ).joinToString(" ").lowercase()
 
         return markerText.contains("twitch") ||
@@ -713,6 +717,17 @@ class CS3IPlayer : IPlayer {
             markerText.contains("streamapi.py")
     }
 
+    private fun ExtractorLink.hasTwitchLiveDvrMarker(): Boolean {
+        val markerText = listOf(
+            source,
+            name,
+            url,
+            referer,
+            extractorData.orEmpty(),
+            headers.entries.joinToString(" ") { (key, value) -> "$key=$value" },
+        ).joinToString(" ")
+        return markerText.contains("cs_twitch_live_dvr=1", ignoreCase = true)
+    }
     private fun maybeLogTwitchLiveDelay(reason: String) {
         if (!currentIsTwitchStream) return
 
@@ -2242,6 +2257,7 @@ Player.STATE_ENDED -> {
             }
 
             currentLink = link
+            currentIsTwitchLiveDvrStream = link.hasTwitchLiveDvrMarker()
             currentIsTwitchVodStream = TwitchVodChat.extractVodIdFromLink(link) != null
             currentIsTwitchStream = link.isTwitchLowLatencyCandidate() && !currentIsTwitchVodStream
         if (!retry) {

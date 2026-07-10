@@ -791,6 +791,7 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
         links: List<ExtractorLink>,
     ): List<ExtractorLink> {
         val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links
+        val isLiveChannelData = isTwitchReconnectableLivePlayerData(data)
         val pageVodChatId = if (isTwitchVideoUrl(data)) {
             extractVideoId(data).filter { it.isDigit() }.takeIf { it.isNotBlank() }
         } else {
@@ -809,30 +810,31 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                 carrierBase
             }
 
-            val shouldMarkReconnectable = isTwitchReconnectableLivePlayerData(data) && linkVodChatId == null
-            val carrier = if (shouldMarkReconnectable) {
-                appendTwitchProfileQueryParam(carrierWithVod, "cs_twitch_reconnect", "1")
-            } else {
-                carrierWithVod
+            val carrierWithMode = when {
+                linkVodChatId != null && isLiveChannelData -> {
+                    appendTwitchProfileQueryParam(carrierWithVod, "cs_twitch_live_dvr", "1")
+                }
+                linkVodChatId == null && isLiveChannelData -> {
+                    appendTwitchProfileQueryParam(carrierWithVod, "cs_twitch_reconnect", "1")
+                }
+                else -> carrierWithVod
             }
 
             val existing = link.extractorData
                 ?.lineSequence()
-                ?.filterNot { line -> linkVodChatId != null && line.contains("cs_twitch_reconnect=1", ignoreCase = true) }
+                ?.filterNot { line ->
+                    (linkVodChatId != null && line.contains("cs_twitch_reconnect=1", ignoreCase = true)) ||
+                        (!isLiveChannelData && line.contains("cs_twitch_live_dvr=1", ignoreCase = true))
+                }
                 ?.joinToString("\n")
                 ?.ifBlank { null }
 
-            if (existing?.contains("cs_twitch_reconnect=1", ignoreCase = true) == true && linkVodChatId == null) {
-                return@onEach
-            }
-
-            link.extractorData = listOfNotNull(existing, carrier)
+            link.extractorData = listOfNotNull(existing, carrierWithMode)
                 .distinct()
                 .joinToString("\n")
                 .ifBlank { null }
         }
-    }
-// END TwitchPlayerMetadataOnlyPatch
+    }// END TwitchPlayerMetadataOnlyPatch
 private fun buildHelixUrl(
         endpoint: String,
         repeatedKey: String? = null,

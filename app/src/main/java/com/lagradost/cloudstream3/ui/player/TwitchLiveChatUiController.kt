@@ -37,7 +37,8 @@ internal class TwitchLiveChatUiController(
         const val CORNER_PREF_KEY = "twitch_chat_overlay_corner_v1"
         const val CHAT_OPEN_PREF_KEY = "twitch_chat_overlay_open_v1"
         const val VOD_POLL_INTERVAL_MS = 2_500L
-        const val VOD_REFETCH_DISTANCE_MS = 7_000L
+        const val TARGET_REFRESH_INTERVAL_MS = 1_000L
+        const val VOD_REFETCH_DISTANCE_MS = 3_000L
         const val LIVE_DVR_CHAT_THRESHOLD_MS = 20_000L
         const val SLOW_RENDER_INTERVAL_MS = 2_000L
     }
@@ -71,98 +72,91 @@ internal class TwitchLiveChatUiController(
     }
 
     fun sync() {
-    settings = TwitchChatSettings.load(root.context)
-    updateButtonVisibility()
+        settings = TwitchChatSettings.load(root.context)
+        updateButtonVisibility()
 
-    val target = currentTarget()
-    if (target == null) {
-        if (activeTarget != null) {
-            releaseConnection()
+        val target = currentTarget()
+        if (target == null) {
+            if (activeTarget != null) {
+                releaseConnection()
+            }
+            hideOverlay()
+            return
         }
-        hideOverlay()
-        return
+
+        if (!isChatOpenPreference()) {
+            if (activeTarget != null) {
+                releaseConnection()
+            }
+            hideOverlay()
+            overlayView()?.let { overlay ->
+                styleOverlay(overlay)
+                applyOverlayPosition(overlay)
+            }
+            return
+        }
+
+        val overlay = overlayView()
+        if (activeTarget != target || overlay?.isVisible != true) {
+            showOverlay(target)
+        } else {
+            overlay.let {
+                styleOverlay(it)
+                applyOverlayPosition(it)
+                it.bringToFront()
+            }
+        }
     }
-
-    if (!isChatOpenPreference()) {
-        if (activeTarget != null) {
-            releaseConnection()
-        }
-        hideOverlay()
-        overlayView()?.let { overlay ->
-            styleOverlay(overlay)
-            applyOverlayPosition(overlay)
-        }
-        return
-    }
-
-    val overlay = overlayView()
-    if (activeTarget != target || overlay?.isVisible != true) {
-        showOverlay(target)
-    } else {
-        overlay.let {
-            styleOverlay(it)
-            applyOverlayPosition(it)
-            it.bringToFront()
-        }
-    }
-}
-
-
     fun release() {
         releaseConnection()
         removeOverlay()
     }
 
     private fun updateButtonVisibility() {
-    val button = chatButton() ?: return
-    val target = currentTarget()
-    val available = target != null
+        val button = chatButton() ?: return
+        val target = currentTarget()
+        val available = target != null
 
-    button.isVisible = controlsVisible && available
-    button.isEnabled = available
-    button.isFocusable = available
-    button.setOnClickListener {
-        val freshTarget = currentTarget() ?: return@setOnClickListener
-        if (overlayView()?.isVisible == true) {
-            saveChatOpenPreference(false)
-            hideOverlay()
-            releaseConnection()
-        } else {
-            saveChatOpenPreference(true)
-            showOverlay(freshTarget)
+        button.isVisible = controlsVisible && available
+        button.isEnabled = available
+        button.isFocusable = available
+        button.setOnClickListener {
+            val freshTarget = currentTarget() ?: return@setOnClickListener
+            if (overlayView()?.isVisible == true) {
+                saveChatOpenPreference(false)
+                hideOverlay()
+                releaseConnection()
+            } else {
+                saveChatOpenPreference(true)
+                showOverlay(freshTarget)
+            }
+        }
+        button.setOnLongClickListener {
+            if (available) {
+                showSettingsMenu()
+                true
+            } else {
+                false
+            }
         }
     }
-    button.setOnLongClickListener {
-        if (available) {
-            showSettingsMenu()
-            true
-        } else {
-            false
-        }
-    }
-}            private fun currentTarget(): ChatTarget? {
+    private fun currentTarget(): ChatTarget? {
         val channel = TwitchLiveChat.normalizeChannelLogin(player.getTwitchChatChannelLogin())
         val vodId = player.getTwitchVodId()?.filter { it.isDigit() }?.ifBlank { null }
+        val isLivePlayback = player.isTwitchLiveStream() || player.isTwitchLiveDvrStream()
 
-        if (player.isTwitchLiveStream()) {
-            if (channel != null) return ChatTarget(ChatMode.LIVE, channel, vodId)
-            if (vodId != null) return ChatTarget(ChatMode.VOD, channel, vodId)
+        if (vodId != null) {
+            return if (isLivePlayback && channel != null && isDefinitelyAtLiveEdge()) {
+                ChatTarget(ChatMode.LIVE, channel, vodId)
+            } else {
+                ChatTarget(ChatMode.VOD, channel, vodId)
+            }
         }
 
-        if (vodId != null) return ChatTarget(ChatMode.VOD, channel, vodId)
+        if (isLivePlayback && channel != null) {
+            return ChatTarget(ChatMode.LIVE, channel, null)
+        }
         return null
-    }
-
-
-        private fun shouldUseVodChatForCurrentPosition(): Boolean {
-        val liveDelayMs = player.getLiveDelayMs()?.coerceAtLeast(0L)
-        if (liveDelayMs != null) {
-            return liveDelayMs >= LIVE_DVR_CHAT_THRESHOLD_MS
-        }
-
-        val durationMs = player.getDuration()?.takeIf { it > 0L && it < Long.MAX_VALUE / 4 } ?: return false
-        val positionMs = player.getPosition()?.takeIf { it >= 0L } ?: return false
-        return durationMs - positionMs >= LIVE_DVR_CHAT_THRESHOLD_MS
     }
 
     private fun isDefinitelyAtLiveEdge(): Boolean {
@@ -176,19 +170,17 @@ internal class TwitchLiveChatUiController(
         val distanceFromEndMs = durationMs - positionMs
         return distanceFromEndMs in 0L until LIVE_DVR_CHAT_THRESHOLD_MS
     }
-
     private fun isChatOpenPreference(): Boolean {
-    return PreferenceManager.getDefaultSharedPreferences(root.context)
-        .getBoolean(CHAT_OPEN_PREF_KEY, false)
-}
+        return PreferenceManager.getDefaultSharedPreferences(root.context)
+            .getBoolean(CHAT_OPEN_PREF_KEY, false)
+    }
 
-private fun saveChatOpenPreference(open: Boolean) {
-    PreferenceManager.getDefaultSharedPreferences(root.context)
-        .edit()
-        .putBoolean(CHAT_OPEN_PREF_KEY, open)
-        .apply()
-}
-
+    private fun saveChatOpenPreference(open: Boolean) {
+        PreferenceManager.getDefaultSharedPreferences(root.context)
+            .edit()
+            .putBoolean(CHAT_OPEN_PREF_KEY, open)
+            .apply()
+    }
     private fun showOverlay(target: ChatTarget) {
         saveChatOpenPreference(true)
         settings = TwitchChatSettings.load(root.context)
@@ -205,6 +197,7 @@ private fun saveChatOpenPreference(open: Boolean) {
             ChatMode.VOD -> "Loading VOD chat..."
         }
         render()
+        startTargetRefreshLoop()
         when (target.mode) {
             ChatMode.LIVE -> ensureLiveConnection(target)
             ChatMode.VOD -> ensureVodHistory(target)
@@ -216,14 +209,12 @@ private fun saveChatOpenPreference(open: Boolean) {
         overlayView()?.isVisible = false
     }
 
-        private fun ensureLiveConnection(target: ChatTarget) {
+    private fun ensureLiveConnection(target: ChatTarget) {
         val channel = target.channel ?: return
         if (activeTarget == target && liveChat != null) return
-        releaseConnection()
+
+        stopActiveChatSources()
         activeTarget = target
-        liveReplaySeedMessages = emptyList()
-        liveIrcMessages = emptyList()
-        latestMessages = emptyList()
         statusText = if (target.vodId != null) "Loading recent chat..." else "Connecting live chat..."
         render()
         maybeSeedLiveStartupHistory(target)
@@ -245,14 +236,12 @@ private fun saveChatOpenPreference(open: Boolean) {
             },
         ).also { chat -> chat.start(channel) }
     }
-
-
     private fun ensureVodHistory(target: ChatTarget) {
         val vodId = target.vodId ?: return
         if (activeTarget == target && vodChatJob != null) return
-        releaseConnection()
+
+        stopActiveChatSources()
         activeTarget = target
-        startTargetRefreshLoop()
         lastVodFetchPositionMs = Long.MIN_VALUE
         statusText = "Loading VOD chat..."
         render()
@@ -279,33 +268,25 @@ private fun saveChatOpenPreference(open: Boolean) {
             }
         }
     }
-
-
     private fun startTargetRefreshLoop() {
         if (targetRefreshJob?.isActive == true) return
         targetRefreshJob = scope.launch {
             while (isChatOpenPreference()) {
-                delay(VOD_POLL_INTERVAL_MS)
+                delay(TARGET_REFRESH_INTERVAL_MS)
+                if (overlayView()?.isVisible != true) continue
+
                 val freshTarget = currentTarget()
                 if (freshTarget == null) {
                     releaseConnection()
                     hideOverlay()
-                    break
+                    return@launch
                 }
-                if (overlayView()?.isVisible == true && activeTarget != null && activeTarget != freshTarget) {
+                if (activeTarget != freshTarget) {
                     showOverlay(freshTarget)
-                    break
                 }
             }
         }
     }
-        private fun clearLiveStartupBackfill() {
-        liveStartupHistoryJob?.cancel()
-        liveStartupHistoryJob = null
-        liveReplaySeedMessages = emptyList()
-        liveIrcMessages = emptyList()
-    }
-
     private fun chatBufferMaxMessages(): Int {
         val visible = maxVisibleMessages().coerceAtLeast(1)
         val base = if (isTvDevice()) 220 else 180
@@ -344,7 +325,7 @@ private fun saveChatOpenPreference(open: Boolean) {
         }
     }
 
-    private fun releaseConnection() {
+    private fun stopActiveChatSources() {
         liveChat?.stop()
         liveChat = null
         vodChatJob?.cancel()
@@ -353,7 +334,6 @@ private fun saveChatOpenPreference(open: Boolean) {
         slowRenderJob = null
         liveStartupHistoryJob?.cancel()
         liveStartupHistoryJob = null
-        activeTarget = null
         latestMessages = emptyList()
         liveReplaySeedMessages = emptyList()
         liveIrcMessages = emptyList()
@@ -361,6 +341,13 @@ private fun saveChatOpenPreference(open: Boolean) {
         lastRenderedAtMs = 0L
     }
 
+    private fun releaseConnection() {
+        val refreshJob = targetRefreshJob
+        targetRefreshJob = null
+        refreshJob?.cancel()
+        stopActiveChatSources()
+        activeTarget = null
+    }
 
     private fun chatButton(): View? = root.findViewById(R.id.twitch_player_chat_button)
 

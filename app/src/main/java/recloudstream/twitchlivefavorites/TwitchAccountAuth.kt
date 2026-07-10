@@ -34,10 +34,10 @@ object TwitchAccountAuth {
     private const val REMOVE_UNFOLLOWED_KEY = "twitch_user_remove_unfollowed"
     private const val PUBLIC_CLIENT_MIGRATION_KEY = "twitch_public_client_migration_v14_client_id"
     private val tokenRefreshMutex = Mutex()
-private val refreshMutex = kotlinx.coroutines.sync.Mutex()
-private fun isAccessTokenFresh(expiresAt: Long): Boolean {
-    return expiresAt > 0L && System.currentTimeMillis() < expiresAt - 60_000L
-}
+
+    private fun isAccessTokenFresh(expiresAt: Long): Boolean {
+        return expiresAt > 0L && System.currentTimeMillis() < expiresAt - 60_000L
+    }
 
 
     data class DeviceCode(
@@ -350,19 +350,18 @@ fun isSyncOnStartupEnabled(): Boolean {
         )
     }
 
-            suspend fun getValidAccessToken(): String? {
+    suspend fun getValidAccessToken(): String? {
         restoreAccountFromDeviceBackupIfNeeded()
-        val now = System.currentTimeMillis()
         val savedAccessToken = getKey<String>(ACCESS_TOKEN_KEY)?.trim().orEmpty()
         val expiresAt = getKey<Long>(EXPIRES_AT_KEY) ?: 0L
-        if (savedAccessToken.isNotBlank() && now < expiresAt - 60_000L) {
+        if (savedAccessToken.isNotBlank() && isAccessTokenFresh(expiresAt)) {
             return savedAccessToken
         }
 
         return tokenRefreshMutex.withLock {
             val currentAccessToken = getKey<String>(ACCESS_TOKEN_KEY)?.trim().orEmpty()
             val currentExpiresAt = getKey<Long>(EXPIRES_AT_KEY) ?: 0L
-            if (currentAccessToken.isNotBlank() && System.currentTimeMillis() < currentExpiresAt - 60_000L) {
+            if (currentAccessToken.isNotBlank() && isAccessTokenFresh(currentExpiresAt)) {
                 return@withLock currentAccessToken
             }
             val refreshToken = getKey<String>(REFRESH_TOKEN_KEY)
@@ -372,7 +371,6 @@ fun isSyncOnStartupEnabled(): Boolean {
             refreshAccessToken(refreshToken)
         }
     }
-
 
     suspend fun syncFollowedFavorites(
         removeUnfollowed: Boolean = isRemoveUnfollowedEnabled(),
