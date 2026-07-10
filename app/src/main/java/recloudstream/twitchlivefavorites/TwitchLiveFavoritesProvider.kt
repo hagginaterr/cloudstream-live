@@ -557,6 +557,15 @@ private fun getSavedFavoriteChannels(): List<String> {
         val type = error.javaClass.simpleName.lowercase()
         return "429" in message || "too many requests" in message || "rate limit" in message || "ratelimit" in message || "429" in type
     }
+private fun shouldTreatAsUnauthorized(error: Throwable): Boolean {
+    val message = (error.message ?: "").lowercase()
+    val type = error.javaClass.simpleName.lowercase()
+    return "401" in message ||
+        "unauthorized" in message ||
+        "invalid access token" in message ||
+        "401" in type
+}
+
 
     private fun noteRateLimit(error: Throwable? = null) {
         // CloudStream's request wrapper may throw before exposing response headers.
@@ -1140,87 +1149,108 @@ private suspend fun fetchFollowedClipsHome(
     }
 
     private suspend fun fetchLiveFollowedStreams(userId: String): List<FavoriteChannel>? {
-        val cleanUserId = userId.trim()
-        if (cleanUserId.isBlank()) return null
-
-        if (isBackoffActive()) {
-            lastTwitchApiError = "Twitch API backoff is active. Try again in about ${secondsUntilBackoffEnds()}s."
-            return null
-        }
-
-        val token = TwitchAccountAuth.getValidAccessToken()?.trim().orEmpty()
-        if (token.isBlank()) {
-            lastTwitchApiError = "Sign in to Twitch again to load followed live channels."
-            return null
-        }
-
-        val now = nowMs()
-        val cacheKey = "followed:$cleanUserId"
-        val forceImmediateRefresh = TwitchLiveNowImmediateRefresh.consumeForUser(cleanUserId)
-        if (forceImmediateRefresh) {
-            cachedLiveExpiresAtMs = 0L
-        }
-
-        if (!forceImmediateRefresh && cacheKey == cachedLiveKey && now < cachedLiveExpiresAtMs) {
-            return cachedLiveFavorites
-        }
-
-        val streams = mutableMapOf<String, TwitchStream>()
-        var cursor: String? = null
-        var guard = 0
-
-        do {
-            val extra = mutableMapOf(
-                "user_id" to cleanUserId,
-                "first" to "100",
-            )
-            if (!cursor.isNullOrBlank()) {
-                extra["after"] = cursor.orEmpty()
-            }
-
-            val response = runCatching {
-                twitchGetWithToken<TwitchStreamsResponse>(
-                    buildHelixUrl("streams/followed", extra = extra),
-                    token,
-                )
-            }.getOrElse { error ->
-                if (shouldTreatAsRateLimit(error)) {
-                    noteRateLimit(error)
-                } else {
-                    lastTwitchApiError = "Could not load followed live channels: ${error.message ?: error.javaClass.simpleName}"
-                }
-
-                if (cacheKey == cachedLiveKey && cachedLiveUpdatedAtMs > 0L) {
-                    cachedLiveExpiresAtMs = now + failedApiRetryDelayMs
-                    return cachedLiveFavorites
-                }
-                return null
-            }
-
-            response.data.forEach { stream ->
-                val login = normalizeChannel(stream.user_login)
-                if (login.isNotBlank()) streams[login] = stream
-            }
-
-            cursor = response.pagination.cursor?.takeIf { it.isNotBlank() }
-            guard++
-        } while (!cursor.isNullOrBlank() && guard < 20)
-
-        val users = fetchUsers(streams.keys.toList())
-        val liveChannels = streams.values
-            .map { stream ->
-                val login = normalizeChannel(stream.user_login)
-                favoriteFromApi(login, users[login], stream)
-            }
-            .sortedWith(compareByDescending<FavoriteChannel> { it.viewerCount ?: 0 }.thenBy { it.displayName.lowercase() })
-
-        cachedLiveKey = cacheKey
-        cachedLiveExpiresAtMs = now + liveCacheTtlMs
-        cachedLiveUpdatedAtMs = now
-        cachedLiveFavorites = liveChannels
-        lastTwitchApiError = null
-        return liveChannels
+    val cleanUserId = userId.trim()
+    if (cleanUserId.isBlank()) return emptyList()
+    if (isBackoffActive()) {
+        lastTwitchApiError = "Twitch API backoff is active. Try again in about ${secondsUntilBackoffEnds()}s."
+        return null
     }
+
+    var token = TwitchAccountAuth.getValidAccessToken()?.trim().orEmpty()
+    if (token.isBlank()) {
+        lastTwitchApiError = "Sign in to Twitch again to load followed live channels."
+        return null
+    }
+
+    val now = nowMs()
+    val cacheKey = "followed:$cleanUserId"
+    val forceImmediateRefresh = TwitchLiveNowImmediateRefresh.consumeForUser(cleanUserId)
+    if (forceImmediateRefresh) {
+        cachedLiveExpiresAtMs = 0L
+    }
+    if (!forceImmediateRefresh && cacheKey == cachedLiveKey && now < cachedLiveExpiresAtMs) {
+        return cachedLiveFavorites
+    }
+
+    fun cachedFallback(): List<FavoriteChannel>? {
+        return if (cacheKey == cachedLiveKey && cachedLiveUpdatedAtMs > 0L) {
+            cachedLiveExpiresAtMs = now + failedApiRetryDelayMs
+            cachedLiveFavorites
+        } else {
+            null
+        }
+    }
+
+    var retriedAfterAuthFailure = false
+    suspend fun fetchPage(pageUrl: String): TwitchStreamsResponse? {
+        val firstTry = runCatching { twitchGetWithToken<TwitchStreamsResponse>(pageUrl, token) }
+        firstTry.getOrNull()?.let { return it }
+        val firstError = firstTry.exceptionOrNull()
+        if (firstError != null && shouldTreatAsRateLimit(firstError)) {
+            noteRateLimit(firstError)
+            return null
+        }
+        if (firstError != null && !retriedAfterAuthFailure && shouldTreatAsUnauthorized(firstError)) {
+            retriedAfterAuthFailure = true
+            val refreshed = TwitchAccountAuth.forceRefreshAccessToken()?.trim().orEmpty()
+            if (refreshed.isNotBlank()) {
+                token = refreshed
+                return runCatching { twitchGetWithToken<TwitchStreamsResponse>(pageUrl, token) }
+                    .onFailure { retryError ->
+                        if (shouldTreatAsRateLimit(retryError)) {
+                            noteRateLimit(retryError)
+                        } else {
+                            lastTwitchApiError = "Could not load followed live channels after refreshing Twitch: ${retryError.message ?: retryError.javaClass.simpleName}"
+                        }
+                    }
+                    .getOrNull()
+            }
+            lastTwitchApiError = "Twitch session expired. Sign in again to load followed live channels."
+            return null
+        }
+        if (firstError != null) {
+            lastTwitchApiError = "Could not load followed live channels: ${firstError.message ?: firstError.javaClass.simpleName}"
+        }
+        return null
+    }
+
+    val streams = mutableMapOf<String, TwitchStream>()
+    var cursor: String? = null
+    var guard = 0
+    do {
+        val extra = mutableMapOf(
+            "user_id" to cleanUserId,
+            "first" to "100",
+        )
+        if (!cursor.isNullOrBlank()) {
+            extra["after"] = cursor.orEmpty()
+        }
+        val pageUrl = buildHelixUrl("streams/followed", extra = extra)
+        val response = fetchPage(pageUrl) ?: return cachedFallback()
+        response.data.forEach { stream ->
+            val login = normalizeChannel(stream.user_login)
+            if (login.isNotBlank()) streams[login] = stream
+        }
+        cursor = response.pagination.cursor?.takeIf { it.isNotBlank() }
+        guard++
+    } while (!cursor.isNullOrBlank() && guard < 20)
+
+    val users = fetchUsers(streams.keys.toList())
+    val liveChannels = streams.values
+        .map { stream ->
+            val login = normalizeChannel(stream.user_login)
+            favoriteFromApi(login, users[login], stream)
+        }
+        .sortedWith(compareByDescending<FavoriteChannel> { it.viewerCount ?: 0 }.thenBy { it.displayName.lowercase() })
+
+    cachedLiveKey = cacheKey
+    cachedLiveExpiresAtMs = now + liveCacheTtlMs
+    cachedLiveUpdatedAtMs = now
+    cachedLiveFavorites = liveChannels
+    lastTwitchApiError = null
+    return liveChannels
+}
+
     private suspend fun fetchStreams(channels: List<String>): Map<String, TwitchStream>? {
         val normalized = channels
             .map { normalizeChannel(it) }

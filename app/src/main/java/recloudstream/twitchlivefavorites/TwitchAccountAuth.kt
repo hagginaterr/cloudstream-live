@@ -30,6 +30,11 @@ object TwitchAccountAuth {
     private const val LAST_SYNC_FOLLOWED_COUNT_KEY = "twitch_user_last_sync_followed_count"
     private const val SYNC_ON_STARTUP_KEY = "twitch_user_sync_on_startup"
     private const val REMOVE_UNFOLLOWED_KEY = "twitch_user_remove_unfollowed"
+private val refreshMutex = kotlinx.coroutines.sync.Mutex()
+private fun isAccessTokenFresh(expiresAt: Long): Boolean {
+    return expiresAt > 0L && System.currentTimeMillis() < expiresAt - 60_000L
+}
+
 
     data class DeviceCode(
         val deviceCode: String,
@@ -183,20 +188,27 @@ fun isSignedIn(): Boolean {
     }
 
     suspend fun forceRefreshAccessToken(): String? {
-        restoreAccountFromDeviceBackupIfNeeded()
-
-        val refreshToken = getKey<String>(REFRESH_TOKEN_KEY)
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: return getKey<String>(ACCESS_TOKEN_KEY)
-                ?.trim()
-                ?.takeIf { it.isNotBlank() }
-
-        return refreshAccessToken(refreshToken)
-            ?: getKey<String>(ACCESS_TOKEN_KEY)
-                ?.trim()
-                ?.takeIf { it.isNotBlank() }
+    restoreAccountFromDeviceBackupIfNeeded()
+    val refreshToken = getKey(REFRESH_TOKEN_KEY)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+    val currentAccessToken = getKey(ACCESS_TOKEN_KEY)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+    val currentExpiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
+    if (refreshToken.isNullOrBlank()) {
+        return currentAccessToken?.takeIf { isAccessTokenFresh(currentExpiresAt) }
     }
+
+    refreshMutex.lock()
+    return try {
+        refreshAccessToken(refreshToken)
+            ?: currentAccessToken?.takeIf { isAccessTokenFresh(currentExpiresAt) }
+    } finally {
+        refreshMutex.unlock()
+    }
+}
+
 
     fun lastImportSummary(): String? {
         val count = getKey<Int>(LAST_IMPORT_COUNT_KEY) ?: return null
@@ -320,21 +332,32 @@ fun isSyncOnStartupEnabled(): Boolean {
     }
 
     suspend fun getValidAccessToken(): String? {
-        restoreAccountFromDeviceBackupIfNeeded()
-
-        val savedAccessToken = getKey<String>(ACCESS_TOKEN_KEY)?.trim().orEmpty()
-        if (savedAccessToken.isBlank()) return null
-
-        val expiresAt = getKey<Long>(EXPIRES_AT_KEY) ?: 0L
-        if (System.currentTimeMillis() < expiresAt - 60_000L) {
-            return savedAccessToken
-        }
-
-        val refreshToken = getKey<String>(REFRESH_TOKEN_KEY)?.trim().orEmpty()
-        if (refreshToken.isBlank()) return savedAccessToken
-
-        return refreshAccessToken(refreshToken) ?: savedAccessToken
+    restoreAccountFromDeviceBackupIfNeeded()
+    val savedAccessToken = getKey(ACCESS_TOKEN_KEY)?.trim().orEmpty()
+    val expiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
+    if (savedAccessToken.isNotBlank() && isAccessTokenFresh(expiresAt)) {
+        return savedAccessToken
     }
+
+    val refreshToken = getKey(REFRESH_TOKEN_KEY)?.trim().orEmpty()
+    if (refreshToken.isBlank()) {
+        return savedAccessToken.takeIf { it.isNotBlank() && expiresAt <= 0L }
+    }
+
+    refreshMutex.lock()
+    return try {
+        val currentAccessToken = getKey(ACCESS_TOKEN_KEY)?.trim().orEmpty()
+        val currentExpiresAt = getKey(EXPIRES_AT_KEY) ?: 0L
+        if (currentAccessToken.isNotBlank() && isAccessTokenFresh(currentExpiresAt)) {
+            currentAccessToken
+        } else {
+            refreshAccessToken(refreshToken)
+        }
+    } finally {
+        refreshMutex.unlock()
+    }
+}
+
 
     suspend fun syncFollowedFavorites(
         removeUnfollowed: Boolean = isRemoveUnfollowedEnabled(),
@@ -401,23 +424,36 @@ fun isSyncOnStartupEnabled(): Boolean {
     }
 
     private suspend fun refreshAccessToken(refreshToken: String): String? {
-        val clientId = TwitchCredentials.CLIENT_ID.trim()
-        if (clientId.isBlank()) return null
+    val clientId = TwitchCredentials.CLIENT_ID.trim()
+    val cleanRefreshToken = refreshToken.trim().takeIf { it.isNotBlank() } ?: return null
+    if (clientId.isBlank()) return null
 
-        return runCatching {
-            val token = app.post(
-                OAUTH_TOKEN_URL,
-                headers = mapOf("Content-Type" to "application/x-www-form-urlencoded"),
-                data = mapOf(
-                    "client_id" to clientId,
-                    "grant_type" to "refresh_token",
-                    "refresh_token" to refreshToken,
-                ),
-            ).parsed<TwitchTokenResponse>()
-            saveToken(token)
-            token.access_token.takeIf { it.isNotBlank() }
-        }.getOrNull()
-    }
+    return runCatching {
+        // Twitch Device Code / QR sign-in can be a public-client flow.
+        // Public clients do not keep or send a client_secret when refreshing.
+        val token: TwitchTokenResponse = app.post(
+            OAUTH_TOKEN_URL,
+            headers = mapOf("Content-Type" to "application/x-www-form-urlencoded"),
+            data = mapOf(
+                "client_id" to clientId,
+                "grant_type" to "refresh_token",
+                "refresh_token" to cleanRefreshToken,
+            ),
+        ).parsed()
+        if (token.access_token.isBlank()) {
+            val detail = token.error
+                .ifBlank { token.message }
+                .ifBlank { token.error_description }
+                .ifBlank { "empty token" }
+            throw IllegalStateException("Twitch refresh failed: $detail")
+        }
+        saveToken(token)
+        token.access_token.trim().takeIf { it.isNotBlank() }
+    }.onFailure { error ->
+        logError(error)
+    }.getOrNull()
+}
+
 
     private fun saveToken(token: TwitchTokenResponse) {
         if (token.access_token.isBlank()) throw IllegalStateException("Twitch returned an empty access token.")
