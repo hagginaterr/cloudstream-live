@@ -818,14 +818,19 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                 carrierBase
             }
 
-            val carrierWithMode = when {
-                isCurrentLiveDvr -> {
-                    appendTwitchProfileQueryParam(carrierWithVod, "cs_twitch_live_dvr", "1")
-                }
-                linkVodChatId == null && isLiveChannelData -> {
-                    appendTwitchProfileQueryParam(carrierWithVod, "cs_twitch_reconnect", "1")
-                }
-                else -> carrierWithVod
+            // TwitchLiveDvrTransportMetadataPatch:
+            // A channel DVR link is still the dynamic live HLS source. Keep its
+            // replay-chat marker and the normal live reconnect marker together.
+            var carrierWithMode = carrierWithVod
+            if (isCurrentLiveDvr) {
+                carrierWithMode = appendTwitchProfileQueryParam(
+                    carrierWithMode, "cs_twitch_live_dvr", "1",
+                )
+            }
+            if (isLiveChannelData) {
+                carrierWithMode = appendTwitchProfileQueryParam(
+                    carrierWithMode, "cs_twitch_reconnect", "1",
+                )
             }
 
             val existing = link.extractorData
@@ -843,9 +848,9 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                 .joinToString("\n")
                 .ifBlank { null }
 
-            if (linkVodChatId != null || isLiveChannelData) {
-                link.referer = carrierWithMode
-            }
+            // TwitchLiveDvrTransportHeaderPatch:
+            // Keep chat/player metadata in extractorData. The resolver-supplied
+            // Referer is transport state and must not be replaced with metadata.
         }
     }
 // END TwitchPlayerMetadataOnlyPatch

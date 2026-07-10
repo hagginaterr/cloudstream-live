@@ -2286,9 +2286,16 @@ Player.STATE_ENDED -> {
                 ?.filter { it.isDigit() }
                 ?.takeIf { it.isNotBlank() }
             currentTwitchChatChannelLogin = TwitchLiveChat.extractChannelLoginFromLink(link)
-            currentIsTwitchLiveDvrStream = link.hasTwitchLiveDvrMarker() && currentTwitchVodId != null
-            currentIsTwitchVodStream = currentTwitchVodId != null
-            currentIsTwitchStream = link.isTwitchLowLatencyCandidate() && !currentIsTwitchVodStream
+            // TwitchLiveDvrTransportClassificationPatch:
+            // A VOD ID on a live link is replay-chat metadata. It must not turn
+            // the dynamic HLS source into a completed VOD media source.
+            currentIsTwitchLiveDvrStream =
+                link.hasTwitchLiveDvrMarker() && currentTwitchVodId != null
+            currentIsTwitchVodStream =
+                currentTwitchVodId != null && !currentIsTwitchLiveDvrStream
+            currentIsTwitchStream =
+                currentIsTwitchLiveDvrStream ||
+                    (link.isTwitchLowLatencyCandidate() && !currentIsTwitchVodStream)
             Log.i(
                 TAG,
                 "Twitch chat metadata: vodId=$currentTwitchVodId, " +

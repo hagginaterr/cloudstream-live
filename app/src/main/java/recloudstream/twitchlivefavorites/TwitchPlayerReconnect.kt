@@ -20,8 +20,11 @@ object TwitchPlayerReconnect {
     fun isAutoReconnectable(link: ExtractorLink?): Boolean {
         if (link == null || link.type != ExtractorLinkType.M3U8) return false
         val data = link.extractorData.orEmpty()
-        return data.contains("cs_twitch_reconnect=1", ignoreCase = true) &&
-            channelLogin(link) != null
+        // TwitchLiveDvrReconnectPatch:
+        // Live-DVR links remain live HLS even though they also carry a VOD ID for chat.
+        val markedLive = data.contains("cs_twitch_reconnect=1", ignoreCase = true) ||
+            data.contains("cs_twitch_live_dvr=1", ignoreCase = true)
+        return markedLive && channelLogin(link) != null
     }
 
     fun channelLogin(link: ExtractorLink?): String? {

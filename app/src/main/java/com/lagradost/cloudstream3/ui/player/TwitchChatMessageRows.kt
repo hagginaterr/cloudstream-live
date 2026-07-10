@@ -86,7 +86,7 @@ internal object TwitchChatMessageRows {
             setHorizontallyScrolling(false)
             setLineSpacing(0f, if (settings.clampedFontSizeSp >= 18) 1.0f else 1.04f)
             setShadowLayer(2f, 1f, 1f, Color.BLACK)
-            setPadding(0, 0, 0, dp(container, 1))
+            setPadding(0, dp(container, 1), 0, dp(container, 2))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -491,26 +491,97 @@ internal object TwitchChatMessageRows {
         }
     }
 
+    // TwitchChatWholeRowViewportPatch:
+    // Wrapping and asynchronously loaded emotes make estimated row heights unreliable.
+    // Fit measured rows and remove complete oldest rows instead of clipping one at the top.
+    private val pendingViewportFits =
+        java.util.WeakHashMap<ScrollView, ViewTreeObserver.OnPreDrawListener>()
+
+    internal fun fitAndScrollToBottom(scrollView: ScrollView) {
+        val observer = scrollView.viewTreeObserver
+        if (!observer.isAlive) return
+
+        pendingViewportFits.remove(scrollView)?.let { pending ->
+            observer.removeOnPreDrawListener(pending)
+        }
+
+        val listener = object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                val currentObserver = scrollView.viewTreeObserver
+                if (!currentObserver.isAlive) {
+                    pendingViewportFits.remove(scrollView)
+                    return true
+                }
+
+                val container = scrollView.getChildAt(0) as? LinearLayout
+                if (container == null) {
+                    currentObserver.removeOnPreDrawListener(this)
+                    pendingViewportFits.remove(scrollView)
+                    return true
+                }
+
+                val viewportHeight = (
+                    scrollView.height -
+                        scrollView.paddingTop -
+                        scrollView.paddingBottom
+                    ).coerceAtLeast(0)
+                if (viewportHeight <= 0) {
+                    currentObserver.removeOnPreDrawListener(this)
+                    pendingViewportFits.remove(scrollView)
+                    return true
+                }
+
+                var contentHeight = measuredMessageContentHeight(container)
+                var removedOldestRow = false
+                while (container.childCount > 1 && contentHeight > viewportHeight) {
+                    val oldestRow = container.getChildAt(0)
+                    contentHeight -= measuredOuterHeight(oldestRow)
+                    container.removeViewAt(0)
+                    removedOldestRow = true
+                }
+
+                if (removedOldestRow) {
+                    container.requestLayout()
+                    scrollView.requestLayout()
+                    return false
+                }
+
+                currentObserver.removeOnPreDrawListener(this)
+                pendingViewportFits.remove(scrollView)
+                val scrollRange =
+                    (container.measuredHeight - viewportHeight).coerceAtLeast(0)
+                scrollView.scrollTo(0, scrollRange)
+                return true
+            }
+        }
+
+        pendingViewportFits[scrollView] = listener
+        observer.addOnPreDrawListener(listener)
+        scrollView.requestLayout()
+    }
+
+    private fun measuredMessageContentHeight(container: LinearLayout): Int {
+        var height = container.paddingTop + container.paddingBottom
+        for (index in 0 until container.childCount) {
+            height += measuredOuterHeight(container.getChildAt(index))
+        }
+        return height
+    }
+
+    private fun measuredOuterHeight(view: View): Int {
+        val margins = view.layoutParams as? ViewGroup.MarginLayoutParams
+        return view.measuredHeight +
+            (margins?.topMargin ?: 0) +
+            (margins?.bottomMargin ?: 0)
+    }
+
     private fun scrollOwningChatToBottom(view: View) {
         var parent = view.parent
         while (parent != null && parent !is ScrollView) {
             parent = parent.parent
         }
         val scrollView = parent as? ScrollView ?: return
-        val observer = scrollView.viewTreeObserver
-        if (!observer.isAlive) return
-        observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
-            override fun onPreDraw(): Boolean {
-                val currentObserver = scrollView.viewTreeObserver
-                if (currentObserver.isAlive) {
-                    currentObserver.removeOnPreDrawListener(this)
-                }
-                val childHeight = scrollView.getChildAt(0)?.measuredHeight ?: 0
-                scrollView.scrollTo(0, max(0, childHeight - scrollView.measuredHeight))
-                return true
-            }
-        })
-        scrollView.requestLayout()
+        fitAndScrollToBottom(scrollView)
     }
 
     private fun cleanMessagePreservingOffsets(value: String): String {

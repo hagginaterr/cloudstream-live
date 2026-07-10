@@ -466,7 +466,9 @@ internal class TwitchLiveChatUiController(
         val messageContainer = LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.START or Gravity.BOTTOM
-            setPadding(0, 0, 0, dp(if (isTv) 3 else 2))
+            // TwitchChatWholeRowViewportPaddingPatch:
+            val edgePadding = dp(if (isTv) 3 else 2)
+            setPadding(0, edgePadding, 0, edgePadding)
             clipToPadding = false
             clipChildren = false
             layoutParams = FrameLayout.LayoutParams(
@@ -496,10 +498,7 @@ internal class TwitchLiveChatUiController(
             )
         }
 
-        messageScroller.post {
-            val childHeight = messageScroller.getChildAt(0)?.measuredHeight ?: 0
-            messageScroller.scrollTo(0, maxOf(0, childHeight - messageScroller.measuredHeight))
-        }
+        TwitchChatMessageRows.fitAndScrollToBottom(messageScroller)
     }
 
     private fun headerView(): View {
