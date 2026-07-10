@@ -191,8 +191,6 @@ class CS3IPlayer : IPlayer {
     private var currentIsTwitchVodStream = false
     private var currentTwitchVodId: String? = null
     private var currentTwitchChatChannelLogin: String? = null
-    private var currentTwitchVodId: String? = null
-    private var currentTwitchChatChannelLogin: String? = null
     private var twitchReconnectAttempt = 0
     private var twitchReconnectInFlight = false
     private var lastTwitchLiveDelayLogMs = 0L

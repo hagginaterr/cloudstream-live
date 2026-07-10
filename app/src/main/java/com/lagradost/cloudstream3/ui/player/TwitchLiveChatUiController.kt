@@ -469,7 +469,7 @@ internal class TwitchLiveChatUiController(
             setPadding(0, 0, 0, dp(if (isTv) 3 else 2))
             clipToPadding = false
             clipChildren = false
-            layoutParams = ScrollView.LayoutParams(
+            layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             )
