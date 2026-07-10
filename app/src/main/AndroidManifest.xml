@@ -172,7 +172,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
-            <!-- cloudstreamplayer://encodedUrl?name=Dune -->
+            <!-- twizzleplayer://encodedUrl?name=Dune (legacy cloudstreamplayer:// remains supported) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
 
@@ -180,6 +180,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data android:scheme="cloudstreamplayer" />
+
+                <data android:scheme="twizzleplayer" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -188,6 +190,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data android:scheme="cloudstreamapp" />
+
+                <data android:scheme="twizzleapp" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -196,6 +200,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data android:scheme="cloudstreamrepo" />
+
+                <data android:scheme="twizzlerepo" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -204,8 +210,10 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data android:scheme="csshare" />
+
+                <data android:scheme="twizzleshare" />
             </intent-filter>
-            <!-- Allow searching with intents: cloudstreamsearch://Your%20Name -->
+            <!-- Allow searching with intents: twizzlesearch://Your%20Name (legacy cloudstreamsearch:// remains supported) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
 
@@ -213,6 +221,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data android:scheme="cloudstreamsearch" />
+
+                <data android:scheme="twizzlesearch" />
             </intent-filter>
 
             <!--
@@ -226,6 +236,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data android:scheme="cloudstreamcontinuewatching" />
+
+                <data android:scheme="twizzlecontinuewatching" />
             </intent-filter>
 
             <intent-filter android:autoVerify="false">

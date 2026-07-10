@@ -1,4 +1,4 @@
-name: Build CloudStream Live APK
+name: Build Twizzle APK
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cloudstream-live-apk-${{ github.ref }}
+  group: twizzle-apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -92,7 +92,7 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'apk' }}
         uses: actions/upload-artifact@v4
         with:
-          name: CloudStream-Live-stable-debug
+          name: Twizzle-stable-debug
           path: app/build/outputs/apk/stable/debug/*.apk
           if-no-files-found: error
           retention-days: 14

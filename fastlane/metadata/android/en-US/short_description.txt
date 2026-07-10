@@ -1,1 +1,1 @@
-Stream and download movies, TV series and anime.
+Twitch live streams, DVR, clips, favorites and timestamped chat.

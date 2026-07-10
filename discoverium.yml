@@ -1,8 +1,8 @@
 app:
-  name: CloudStream
-  authors: recloudstream
+  name: Twizzle
+  authors: hagginaterr
   category: entertainment
-  description: Android app for streaming and downloading media.
-  icon: https://raw.githubusercontent.com/recloudstream/cloudstream/refs/heads/master/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+  description: Twitch-focused Android and Android TV app with live streams, full DVR rewind, clips, favorites, low-latency playback, and timestamp-synchronized chat.
+  icon: https://raw.githubusercontent.com/hagginaterr/cloudstream-live/built-in-twitch-provider/app/src/main/ic_launcher-playstore.png
   releases:
-    url: https://github.com/recloudstream/cloudstream/releases
+    url: https://github.com/hagginaterr/cloudstream-live/releases

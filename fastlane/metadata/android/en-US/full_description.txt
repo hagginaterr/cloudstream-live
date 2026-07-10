@@ -1,10 +1,13 @@
-CloudStream-3 lets you stream and download Movies, TV-Series and Anime.
+Twizzle is a Twitch-focused streaming app for Android phones and Android TV.
 
-The app comes without any ads and analytics and
-supports multiple trailer & movie sites, and more, e.g.
+Features include:
+- Live Twitch streams
+- Full live-DVR rewind when the current broadcast archive is available
+- Live chat at the recommended live position
+- Historical replay chat synchronized to the selected VOD timestamp
+- Native Twitch, BTTV, FFZ, and 7TV emotes
+- Twitch clips and past broadcasts
+- Favorites and low-latency playback
+- Public-client Twitch device sign-in
 
-Bookmarks
-
-Subtitle downloads
-
-Chromecast support
+Twizzle is an independent open-source fork derived from CloudStream and is not affiliated with or endorsed by Twitch.

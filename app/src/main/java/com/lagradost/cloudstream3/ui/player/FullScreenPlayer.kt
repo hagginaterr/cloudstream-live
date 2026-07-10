@@ -1235,7 +1235,7 @@ if (hasNavigated) {
             }
 
             // netflix capture back and hide ~monke
-            // This is removed due to inconsistent behavior on A36 vs A22, see https://github.com/recloudstream/cloudstream/issues/1804
+            // This is removed due to inconsistent behavior on A36 vs A22, see https://github.com/hagginaterr/cloudstream-live/issues/1804
             /*KeyEvent.KEYCODE_BACK -> {
                 if (isShowing && isLayout(TV or EMULATOR)) {
                     onClickChange()

@@ -1,111 +1,49 @@
-# CloudStream
+<p align="center">
+  <img src="docs/branding/twizzle-icon.png" width="150" alt="Twizzle icon" />
+</p>
 
-**⚠️ Warning: By default, this app doesn't provide any video sources; you have to install extensions to add functionality to the app.**
+<p align="center">
+  <img src="docs/branding/twizzle-wordmark.png" width="520" alt="Twizzle" />
+</p>
 
-[![Discord](https://invidget.switchblade.xyz/5Hus6fM)](https://discord.gg/5Hus6fM)
+# Twizzle
 
+Twizzle is a Twitch-focused Android and Android TV streaming app built for live channels, full live-DVR rewind, clips, favorites, low-latency playback, and timestamp-synchronized chat.
 
-## Table of Contents: 
-+ [About Us:](#about_us)
-+ [Installation Steps:](#install_rules)
-+ [Contributing:](#contributing)
-+ [Issues:](#issues)
-  + [Bugs Reports:](#bug_report)
-  + [Enhancement:](#enhancment)
-+ [Extension Development:](#extensions)
-+ [Language Support:](#languages)
-+ [Further Sources](#contact_and_sources)
+## Highlights
 
+- Live Twitch streams with Android phone and TV support
+- Full live-DVR rewind when a current broadcast archive is available
+- Live IRC chat at the recommended live position
+- Historical replay chat synchronized to the current VOD timestamp
+- Native Twitch, BTTV, FFZ, and 7TV emotes
+- Twitch clips and past broadcasts
+- Favorites and a Twitch-first home experience
+- Public-client Twitch device sign-in without an embedded client secret
 
-<a id="about_us"></a>
+## Builds
 
-## About us: 
+Development APKs are produced by GitHub Actions from the `built-in-twitch-provider` branch.
 
-**CloudStream is a media center that prioritizes and emphasizes complete freedom and flexibility for users and developers.** 
+- Releases: https://github.com/hagginaterr/cloudstream-live/releases
+- Build workflows: https://github.com/hagginaterr/cloudstream-live/actions
+- Issues and support: https://github.com/hagginaterr/cloudstream-live/issues
 
-CloudStream is an extension-based multimedia player with tracking support. There are extensions to view videos from: 
+## Compatibility
 
-+ [Librevox (audio-books)](https://librivox.org/) 
-+ [Youtube](https://www.youtube.com/)
-+ [Twitch](https://www.twitch.tv/)
-+ [iptv-org (A collection of publicly available IPTV (Internet Protocol television) channels from all over the world.)](https://github.com/iptv-org/iptv) 
-+ [nginx](https://nginx.org/)
-+ And more... 
+Phase 1 of the rebrand intentionally keeps the existing Android application ID, namespace, signing identity, stored preferences, and legacy deep-link schemes so existing installations can update without losing data.
 
+Twizzle deep-link aliases are available alongside the legacy schemes:
 
-**Please don't create illegal extensions or use any that host any copyrighted media.** For more details about our stance on the DMCA and EUCD, you can read about it on our organization: [reCloudStream](https://github.com/recloudstream)
+- `twizzleplayer://`
+- `twizzleapp://`
+- `twizzlerepo://`
+- `twizzleshare://`
+- `twizzlesearch://`
+- `twizzlecontinuewatching://`
 
-#### Important Copyright Note: 
+## Open-source attribution
 
-Our documentation is unmaintained and open to contributions; therefore, apps and sources, extensions in recommended sources, and recommended apps are not officially moderated or endorsed by CloudStream; if you or another copyright owner identify an extension that breaches your copyright, please let us know. 
+Twizzle is an independent fork derived from the open-source CloudStream project. CloudStream and its contributors are not affiliated with or responsible for Twizzle. Twizzle is not affiliated with or endorsed by Twitch.
 
-
-#### Features:
-+ **AdFree**, No ads whatsoever
-+ No tracking/analytics
-+ Bookmarks
-+ Phone and TV support
-+ Chromecast
-+ Extension system for personal customization
-
-
-<a id="install_rules"></a>
-
-## Installation: 
-
-Our documentation provides the steps to install and configure CloudStream for your streaming needs.
-
-[Getting Started With CloudStream:](https://recloudstream.github.io/csdocs/)
-
-<a id="contributing"></a>
-
-## Contributing:
-We **happily** accept any contributions to our project. To find out where you can start contributing towards the project, please look [at our issues tab](/cloudstream/issues)
-
-
-
-<a id="issues"></a> 
- 
-### Issues: 
-While we **actively** accept issues and pull requests, we do require you fill out an [template](https://github.com/recloudstream/cloudstream/issues/new/choose) for issues. These include the following:
-
-<a id="bug_report"></a>
-
-- [Bug Report Template: ](https://github.com/recloudstream/cloudstream/issues/new?assignees=&labels=bug&projects=&template=application-bug.yml)
-  - For bug reports, we want as much info as possible, including your downloaded version of CloudeStream, device and updated version (if possible, current API),
-    expected behavior of the program, and the actual behavior that the program did, most importantly we require clear, reproducible steps of the bug. If your bug can't be       reproduced, it is unlikely we'll work on your issue.
-    
-<a id="enhancment"></a>
-  
-- [Feature Request Template: ](https://github.com/recloudstream/cloudstream/issues/new?assignees=&labels=enhancement&projects=&template=feature-request.yml)
-  - Before adding a feature request, please check to see if a feature request already has been requested.  
-
-
-### Extensions:
- 
-**Further details on creating extensions for CloudStream are found in our documentation.**
-
-[Guide: For Extension Developers](https://recloudstream.github.io/csdocs/devs/gettingstarted/) 
-
-<a id="contact_and_sources"></a>
-
-## Further Sources: 
-
-As well as providing clear install steps, our [website](https://dweb.link/ipns/cloudstream.on.fleek.co/) includes a wide variety of other tools, such as: 
-- [Troubleshooting](https://recloudstream.github.io/csdocs/troubleshooting/)
-- [Further CloudStream Repositories](https://recloudstream.github.io/csdocs/repositories/) 
-- Set-Up for other devices, such as:
-  - [Android TV](https://recloudstream.github.io/csdocs/other-devices/tv/)
-  - [Windows](https://recloudstream.github.io/csdocs/other-devices/windows/)
-  - [Linux](https://recloudstream.github.io/csdocs/other-devices/linux/)
-- And more...
-
-<a id="languages"> </a>  
-
-### Supported languages:
-
-Even if you can't contribute to the code or documentation, we always look for those who can contribute to translation and language support. Your contribution is exceptionally appreciated; you can check our translation from the figure below. 
-
-<a href="https://hosted.weblate.org/engage/cloudstream/">
-  <img src="https://hosted.weblate.org/widgets/cloudstream/-/app/multi-auto.svg" alt="Translation status" />
-</a>
+The project remains licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE).

@@ -341,7 +341,7 @@ tasks.withType<KotlinJvmCompile> {
 }
 
 dokka {
-    moduleName = "App"
+    moduleName = "Twizzle"
     dokkaSourceSets {
         configureEach {
             suppress = name != "prereleaseDebug"
@@ -354,7 +354,7 @@ dokka {
 
             sourceLink {
                 localDirectory = file("..")
-                remoteUrl("https://github.com/recloudstream/cloudstream/tree/master")
+                remoteUrl("https://github.com/hagginaterr/cloudstream-live/tree/built-in-twitch-provider")
                 remoteLineSuffix = "#L"
             }
         }
