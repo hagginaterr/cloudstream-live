@@ -189,7 +189,7 @@ private fun showOverlay(target: ChatTarget) {
         if (activeTarget == target && liveChat != null) return
         releaseConnection()
         activeTarget = target
-        val max = maxVisibleMessages()
+        val max = maxBufferedMessages()
         liveChat = TwitchLiveChat(
             scope = scope,
             maxMessages = max,
@@ -200,7 +200,7 @@ private fun showOverlay(target: ChatTarget) {
                 }
 
                 override fun onMessages(messages: List<TwitchLiveChat.LiveMessage>) {
-                    latestMessages = messages.takeLast(maxVisibleMessages())
+                    latestMessages = messages.takeLast(maxBufferedMessages())
                     statusText = "Live chat"
                     renderRespectingSlowMode(force = false)
                 }
@@ -223,7 +223,7 @@ private fun showOverlay(target: ChatTarget) {
                     abs(positionMs - lastVodFetchPositionMs) >= VOD_REFETCH_DISTANCE_MS
                 if (shouldFetch) {
                     lastVodFetchPositionMs = positionMs
-                    val max = maxVisibleMessages()
+                    val max = maxBufferedMessages()
                     val messages = TwitchVodChat.fetchAt(vodId, positionMs, max, target.channel)
                     if (activeTarget == target) {
                         latestMessages = messages.takeLast(max)
@@ -283,8 +283,8 @@ private fun showOverlay(target: ChatTarget) {
         overlay.gravity = Gravity.START
         overlay.setBackgroundColor(Color.argb(settings.backgroundAlpha, 0, 0, 0))
         overlay.setPadding(dp(12), dp(8), dp(12), dp(8))
-        overlay.clipToPadding = false
-        overlay.clipChildren = false
+        overlay.clipToPadding = true
+        overlay.clipChildren = true
         overlay.isFocusable = false
         overlay.isClickable = false
     }
@@ -410,9 +410,32 @@ private fun showOverlay(target: ChatTarget) {
             ellipsize = TextUtils.TruncateAt.END
             includeFontPadding = false
         }
-    }
+    }    private fun maxVisibleMessages(): Int = visibleMessageLimit(overlayView())
 
-    private fun maxVisibleMessages(): Int = settings.maxVisibleMessages(isTvDevice())
+    private fun maxBufferedMessages(): Int = if (isTvDevice()) 220 else 180
+
+    private fun visibleMessageLimit(overlay: LinearLayout?): Int {
+        val isTv = isTvDevice()
+        val layoutHeightPx = overlay?.layoutParams?.height ?: 0
+        val measuredHeightPx = overlay?.height ?: 0
+        val heightPx = when {
+            layoutHeightPx > 0 -> layoutHeightPx
+            measuredHeightPx > 0 -> measuredHeightPx
+            else -> overlayHeight()
+        }.coerceAtLeast(dp(96))
+        val verticalPaddingPx = (overlay?.paddingTop ?: dp(8)) + (overlay?.paddingBottom ?: dp(8))
+        val usableHeightPx = (heightPx - verticalPaddingPx).coerceAtLeast(dp(48))
+        val scaledDensity = root.context.resources.displayMetrics.scaledDensity
+        val fontPx = (settings.clampedFontSizeSp * scaledDensity).coerceAtLeast(dp(if (isTv) 12 else 10).toFloat())
+        val lineHeightPx = fontPx * if (settings.clampedFontSizeSp >= 18) 1.08f else 1.12f
+        val rowGapPx = dp(if (isTv) 4 else 3)
+        val averageLinesPerRow = if (settings.badgesEnabled) 1.46f else 1.36f
+        val rowHeightPx = (lineHeightPx * averageLinesPerRow + rowGapPx)
+            .toInt()
+            .coerceAtLeast(dp(if (isTv) 22 else 18))
+        val visibleCount = (usableHeightPx / rowHeightPx).coerceAtLeast(1)
+        return visibleCount.coerceIn(1, if (isTv) 30 else 36)
+    }
 
     private fun isTvDevice(): Boolean {
         return root.context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
