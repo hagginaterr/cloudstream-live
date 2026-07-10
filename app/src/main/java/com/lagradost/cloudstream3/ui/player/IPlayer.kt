@@ -215,6 +215,7 @@ interface IPlayer {
     fun getTwitchChatChannelLogin(): String? = null
     fun isTwitchVodStream(): Boolean = false
     fun getTwitchVodId(): String? = null
+    fun getTwitchVodContentPositionMs(): Long? = getPosition()
     fun getIsPlaying(): Boolean
     /** Current player duration in milliseconds */
     fun getDuration(): Long?

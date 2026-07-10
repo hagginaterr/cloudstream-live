@@ -251,6 +251,7 @@ private val cachedGameNames: MutableMap<String, Pair<Long, String>> = mutableMap
 
     private data class TwitchVideo(
         val id: String = "",
+        val stream_id: String = "",
         val user_id: String = "",
         val user_login: String = "",
         val user_name: String = "",
@@ -789,9 +790,14 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
     private suspend fun annotateTwitchPlayerLinks(
         data: String,
         links: List<ExtractorLink>,
+        explicitVodChatId: String? = null,
+        liveDvr: Boolean = false,
     ): List<ExtractorLink> {
         val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links
         val isLiveChannelData = isTwitchReconnectableLivePlayerData(data)
+        val cleanExplicitVodId = explicitVodChatId
+            ?.filter { it.isDigit() }
+            ?.takeIf { it.isNotBlank() }
         val pageVodChatId = if (isTwitchVideoUrl(data)) {
             extractVideoId(data).filter { it.isDigit() }.takeIf { it.isNotBlank() }
         } else {
@@ -799,10 +805,12 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
         }
 
         return links.onEach { link ->
-            val linkVodChatId = TwitchVodChat.extractVodIdFromLink(link)
-                ?.filter { it.isDigit() }
-                ?.takeIf { it.isNotBlank() }
+            val linkVodChatId = cleanExplicitVodId
+                ?: TwitchVodChat.extractVodIdFromLink(link)
+                    ?.filter { it.isDigit() }
+                    ?.takeIf { it.isNotBlank() }
                 ?: pageVodChatId
+            val isCurrentLiveDvr = liveDvr && isLiveChannelData && linkVodChatId != null
 
             val carrierWithVod = if (linkVodChatId != null) {
                 appendTwitchProfileQueryParam(carrierBase, "cs_twitch_vod_id", linkVodChatId)
@@ -811,7 +819,7 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
             }
 
             val carrierWithMode = when {
-                linkVodChatId != null && isLiveChannelData -> {
+                isCurrentLiveDvr -> {
                     appendTwitchProfileQueryParam(carrierWithVod, "cs_twitch_live_dvr", "1")
                 }
                 linkVodChatId == null && isLiveChannelData -> {
@@ -823,8 +831,9 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
             val existing = link.extractorData
                 ?.lineSequence()
                 ?.filterNot { line ->
-                    (linkVodChatId != null && line.contains("cs_twitch_reconnect=1", ignoreCase = true)) ||
-                        (!isLiveChannelData && line.contains("cs_twitch_live_dvr=1", ignoreCase = true))
+                    line.contains("cs_twitch_vod_id=", ignoreCase = true) ||
+                        line.contains("cs_twitch_live_dvr=", ignoreCase = true) ||
+                        line.contains("cs_twitch_reconnect=", ignoreCase = true)
                 }
                 ?.joinToString("\n")
                 ?.ifBlank { null }
@@ -833,8 +842,13 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                 .distinct()
                 .joinToString("\n")
                 .ifBlank { null }
+
+            if (linkVodChatId != null || isLiveChannelData) {
+                link.referer = carrierWithMode
+            }
         }
-    }// END TwitchPlayerMetadataOnlyPatch
+    }
+// END TwitchPlayerMetadataOnlyPatch
 private fun buildHelixUrl(
         endpoint: String,
         repeatedKey: String? = null,
@@ -2510,36 +2524,49 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         val generousStartWindowMs = 2L * 60L * 60L * 1000L
         val tightStartWindowMs = 35L * 60L * 1000L
 
-        return response.data
+        val archives = response.data
             .asSequence()
             .filter { video ->
                 video.id.any { it.isDigit() } &&
-                        (video.type.isBlank() || video.type.equals("archive", ignoreCase = true))
+                    (video.type.isBlank() || video.type.equals("archive", ignoreCase = true))
             }
             .sortedByDescending { video ->
                 twitchIsoToMillis(video.created_at)
                     ?: twitchIsoToMillis(video.published_at)
                     ?: 0L
             }
-            .firstOrNull { video ->
-                val videoStartedAtMs = twitchIsoToMillis(video.created_at)
-                    ?: twitchIsoToMillis(video.published_at)
-                    ?: return@firstOrNull true
+            .toList()
 
-                when {
-                    streamStartedAtMs == null -> true
-                    kotlin.math.abs(videoStartedAtMs - streamStartedAtMs) <= tightStartWindowMs -> true
-                    videoStartedAtMs <= now && videoStartedAtMs >= streamStartedAtMs - generousStartWindowMs -> true
-                    else -> false
-                }
+        archives.firstOrNull { video ->
+            stream.id.isNotBlank() && video.stream_id == stream.id
+        }?.let { return it }
+
+        return archives.firstOrNull { video ->
+            val videoStartedAtMs = twitchIsoToMillis(video.created_at)
+                ?: twitchIsoToMillis(video.published_at)
+                ?: return@firstOrNull true
+
+            when {
+                streamStartedAtMs == null -> true
+                kotlin.math.abs(videoStartedAtMs - streamStartedAtMs) <= tightStartWindowMs -> true
+                videoStartedAtMs <= now && videoStartedAtMs >= streamStartedAtMs - generousStartWindowMs -> true
+                else -> false
             }
+        }
     }
 
-    private suspend fun fetchCurrentLivePastBroadcastLinks(channelOrUrl: String): List<ExtractorLink> {
-        val currentVod = fetchCurrentLivePastBroadcast(channelOrUrl) ?: return emptyList()
+    private data class TwitchLiveDvrLinkSet(
+        val vodId: String,
+        val links: List<ExtractorLink>,
+    )
+
+    private suspend fun fetchCurrentLivePastBroadcastLinks(channelOrUrl: String): TwitchLiveDvrLinkSet? {
+        val currentVod = fetchCurrentLivePastBroadcast(channelOrUrl) ?: return null
         val videoId = currentVod.id.filter { it.isDigit() }
-        if (videoId.isBlank()) return emptyList()
-        return fetchTwitchVodLinks(videoId)
+        if (videoId.isBlank()) return null
+        val links = fetchTwitchVodLinks(videoId)
+        if (links.isEmpty()) return null
+        return TwitchLiveDvrLinkSet(videoId, links)
     }
     override suspend fun loadLinks(
         data: String,
@@ -2549,8 +2576,17 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
     ): Boolean {
         if (!data.startsWith("http", ignoreCase = true)) return false
 
-        suspend fun emit(links: List<ExtractorLink>): Boolean {
-            val annotated = annotateTwitchPlayerLinks(data, links)
+        suspend fun emit(
+            links: List<ExtractorLink>,
+            explicitVodChatId: String? = null,
+            liveDvr: Boolean = false,
+        ): Boolean {
+            val annotated = annotateTwitchPlayerLinks(
+                data = data,
+                links = links,
+                explicitVodChatId = explicitVodChatId,
+                liveDvr = liveDvr,
+            )
             annotated.forEach { callback.invoke(it) }
             return annotated.isNotEmpty()
         }
@@ -2576,12 +2612,17 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
         }
 
         if (isTwitchVideoUrl(data)) {
-            return emit(fetchTwitchVodLinks(extractVideoId(data)))
+            val videoId = extractVideoId(data).filter { it.isDigit() }
+            return emit(fetchTwitchVodLinks(videoId), explicitVodChatId = videoId)
         }
 
-        val liveDvrLinks = fetchCurrentLivePastBroadcastLinks(data)
-        if (liveDvrLinks.isNotEmpty()) {
-            return emit(liveDvrLinks)
+        val liveDvrLinkSet = fetchCurrentLivePastBroadcastLinks(data)
+        if (liveDvrLinkSet != null) {
+            return emit(
+                links = liveDvrLinkSet.links,
+                explicitVodChatId = liveDvrLinkSet.vodId,
+                liveDvr = true,
+            )
         }
 
         val response = runCatching {

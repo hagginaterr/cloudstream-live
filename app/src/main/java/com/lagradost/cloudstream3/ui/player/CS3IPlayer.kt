@@ -1,8 +1,9 @@
 @file:Suppress("DEPRECATION")
 
-package com.lagradost.cloudstream3.ui.player import recloudstream.twitchlivefavorites.TwitchVodChat
-import recloudstream.twitchlivefavorites.TwitchLiveChat
+package com.lagradost.cloudstream3.ui.player
 
+import recloudstream.twitchlivefavorites.TwitchLiveChat
+import recloudstream.twitchlivefavorites.TwitchVodChat
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -31,6 +32,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.Timeline
 import androidx.media3.common.VideoSize
 // import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
@@ -187,6 +189,8 @@ class CS3IPlayer : IPlayer {
     private var currentIsTwitchStream = false
     private var currentIsTwitchLiveDvrStream = false
     private var currentIsTwitchVodStream = false
+    private var currentTwitchVodId: String? = null
+    private var currentTwitchChatChannelLogin: String? = null
     private var twitchReconnectAttempt = 0
     private var twitchReconnectInFlight = false
     private var lastTwitchLiveDelayLogMs = 0L
@@ -689,12 +693,33 @@ class CS3IPlayer : IPlayer {
     override fun isTwitchLiveDvrStream(): Boolean = currentIsTwitchLiveDvrStream
     override fun isTwitchVodStream(): Boolean = currentIsTwitchVodStream
 
-    override fun getTwitchVodId(): String? {
-        return currentLink?.let { TwitchVodChat.extractVodIdFromLink(it) }
-    }
+    override fun getTwitchVodId(): String? = currentTwitchVodId
 
-    override fun getTwitchChatChannelLogin(): String? {
-        return currentLink?.let { TwitchLiveChat.extractChannelLoginFromLink(it) }
+    override fun getTwitchChatChannelLogin(): String? = currentTwitchChatChannelLogin
+
+    override fun getTwitchVodContentPositionMs(): Long? {
+        val currentPlayer = exoPlayer ?: return null
+        val relativePositionMs = currentPlayer.contentPosition
+            .takeIf { it != TIME_UNSET && it >= 0L }
+            ?: currentPlayer.currentPosition.takeIf { it != TIME_UNSET && it >= 0L }
+            ?: return null
+
+        if (!currentIsTwitchLiveDvrStream) return relativePositionMs
+
+        val timeline = currentPlayer.currentTimeline
+        val windowIndex = currentPlayer.currentMediaItemIndex
+        if (timeline.isEmpty || windowIndex !in 0 until timeline.windowCount) {
+            return relativePositionMs
+        }
+
+        val window = Timeline.Window()
+        timeline.getWindow(windowIndex, window)
+        val windowOffsetUs = window.positionInFirstPeriodUs
+        if (windowOffsetUs == TIME_UNSET || windowOffsetUs <= 0L) {
+            return relativePositionMs
+        }
+
+        return ((windowOffsetUs / 1000L) + relativePositionMs).coerceAtLeast(0L)
     }
 
     override fun getLiveDelayMs(): Long? {
@@ -2257,9 +2282,19 @@ Player.STATE_ENDED -> {
             }
 
             currentLink = link
-            currentIsTwitchLiveDvrStream = link.hasTwitchLiveDvrMarker()
-            currentIsTwitchVodStream = TwitchVodChat.extractVodIdFromLink(link) != null
+            currentTwitchVodId = TwitchVodChat.extractVodIdFromLink(link)
+                ?.filter { it.isDigit() }
+                ?.takeIf { it.isNotBlank() }
+            currentTwitchChatChannelLogin = TwitchLiveChat.extractChannelLoginFromLink(link)
+            currentIsTwitchLiveDvrStream = link.hasTwitchLiveDvrMarker() && currentTwitchVodId != null
+            currentIsTwitchVodStream = currentTwitchVodId != null
             currentIsTwitchStream = link.isTwitchLowLatencyCandidate() && !currentIsTwitchVodStream
+            Log.i(
+                TAG,
+                "Twitch chat metadata: vodId=$currentTwitchVodId, " +
+                    "channel=$currentTwitchChatChannelLogin, liveDvr=$currentIsTwitchLiveDvrStream, " +
+                    "liveSource=$currentIsTwitchStream",
+            )
         if (!retry) {
     resetTwitchReconnectState()
 }

@@ -159,6 +159,13 @@ internal class TwitchLiveChatUiController(
         return null
     }
 
+    private fun currentVodContentPositionMs(): Long {
+        return player.getTwitchVodContentPositionMs()
+            ?.coerceAtLeast(0L)
+            ?: player.getPosition()?.coerceAtLeast(0L)
+            ?: 0L
+    }
+
     private fun isDefinitelyAtLiveEdge(): Boolean {
         val liveDelayMs = player.getLiveDelayMs()?.coerceAtLeast(0L)
         if (liveDelayMs != null) {
@@ -247,7 +254,7 @@ internal class TwitchLiveChatUiController(
         render()
         vodChatJob = scope.launch {
             while (activeTarget == target) {
-                val positionMs = player.getPosition()?.coerceAtLeast(0L) ?: 0L
+                val positionMs = currentVodContentPositionMs()
                 val shouldFetch = lastVodFetchPositionMs == Long.MIN_VALUE ||
                     abs(positionMs - lastVodFetchPositionMs) >= VOD_REFETCH_DISTANCE_MS
                 if (shouldFetch) {
@@ -312,7 +319,7 @@ internal class TwitchLiveChatUiController(
         liveStartupHistoryJob?.cancel()
         liveStartupHistoryJob = scope.launch {
             val seedTarget = target
-            val positionMs = player.getPosition()?.coerceAtLeast(0L) ?: 0L
+            val positionMs = currentVodContentPositionMs()
             val requested = liveStartupBackfillSize()
             val messages = TwitchVodChat.fetchAt(vodId, positionMs, requested, target.channel)
             if (activeTarget != seedTarget || messages.isEmpty()) return@launch

@@ -27,7 +27,8 @@ import kotlin.math.roundToLong
  */
 object TwitchVodChat {
     private const val GQL_URL = "https://gql.twitch.tv/gql"
-    private const val TWITCH_WEB_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
+    private const val TWITCH_WEB_CLIENT_ID = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp"
+    private const val TWITCH_FALLBACK_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
     private const val TWITCH_WEB_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
@@ -37,10 +38,10 @@ object TwitchVodChat {
 
     private val client: OkHttpClient by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         OkHttpClient.Builder()
-            .callTimeout(4, TimeUnit.SECONDS)
-            .connectTimeout(3, TimeUnit.SECONDS)
-            .readTimeout(3, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
+            .callTimeout(15, TimeUnit.SECONDS)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(12, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
     }
 
@@ -89,27 +90,72 @@ object TwitchVodChat {
     ): List<TwitchLiveChat.LiveMessage> {
         val cleanId = vodId.filter { it.isDigit() }
         if (cleanId.isBlank()) return emptyList()
+        val targetPositionMs = positionMs.coerceAtLeast(0L)
         val cappedMax = maxMessages.coerceIn(1, 60)
-        val offsetSeconds = (positionMs.coerceAtLeast(0L) / 1000.0).roundToLong()
+
         return withContext(Dispatchers.IO) {
             try { TwitchChatEmotes.loadForChannel(channelLogin, null) } catch (_: Throwable) {}
-            runCatching {
+
+            val queryPositionsMs = listOf(
+                (targetPositionMs - 12_000L).coerceAtLeast(0L),
+                (targetPositionMs - 45_000L).coerceAtLeast(0L),
+                (targetPositionMs - 180_000L).coerceAtLeast(0L),
+            ).distinct()
+            val collected = LinkedHashMap<String, TwitchLiveChat.LiveMessage>()
+
+            for (queryPositionMs in queryPositionsMs) {
+                val page = fetchPage(
+                    videoId = cleanId,
+                    offsetSeconds = (queryPositionMs / 1000.0).roundToLong(),
+                    playerPositionMs = targetPositionMs,
+                    channelLogin = channelLogin,
+                )
+                page.forEach { message -> collected[message.id] = message }
+                if (collected.size >= cappedMax) break
+            }
+
+            collected.values
+                .asSequence()
+                .filter { message ->
+                    val upperBound = if (targetPositionMs <= 5_000L) 8_000L else targetPositionMs + 2_000L
+                    message.timestampMs <= upperBound
+                }
+                .sortedBy { it.timestampMs }
+                .toList()
+                .takeLast(cappedMax)
+        }
+    }
+
+    private fun fetchPage(
+        videoId: String,
+        offsetSeconds: Long,
+        playerPositionMs: Long,
+        channelLogin: String?,
+    ): List<TwitchLiveChat.LiveMessage> {
+        val clientIds = listOf(TWITCH_WEB_CLIENT_ID, TWITCH_FALLBACK_CLIENT_ID).distinct()
+        for (clientId in clientIds) {
+            val result = runCatching {
                 val request = Request.Builder()
                     .url(GQL_URL)
-                    .header("Client-ID", TWITCH_WEB_CLIENT_ID)
+                    .header("Client-ID", clientId)
+                    .header("Accept", "application/json")
                     .header("Content-Type", "application/json")
+                    .header("Origin", "https://www.twitch.tv")
                     .header("User-Agent", TWITCH_WEB_USER_AGENT)
-                    .header("Referer", "https://www.twitch.tv/")
-                    .post(buildRequestJson(cleanId, offsetSeconds).toRequestBody(jsonMediaType))
+                    .header("Referer", "https://www.twitch.tv/videos/$videoId")
+                    .post(buildRequestJson(videoId, offsetSeconds).toRequestBody(jsonMediaType))
                     .build()
 
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use emptyList()
+                    if (!response.isSuccessful) return@use null
                     val body = response.body?.string().orEmpty()
-                    parseResponse(body, cleanId, positionMs, cappedMax, channelLogin)
+                    if (body.isBlank()) return@use null
+                    parseResponse(body, videoId, playerPositionMs, channelLogin)
                 }
-            }.getOrElse { emptyList() }
+            }.getOrNull()
+            if (result != null) return result
         }
+        return emptyList()
     }
 
     private fun buildRequestJson(videoId: String, offsetSeconds: Long): String {
@@ -131,30 +177,24 @@ object TwitchVodChat {
         body: String,
         videoId: String,
         playerPositionMs: Long,
-        cappedMax: Int,
         channelLogin: String?,
-    ): List<TwitchLiveChat.LiveMessage> {
+    ): List<TwitchLiveChat.LiveMessage>? {
         val root = runCatching { JSONArray(body).optJSONObject(0) }.getOrNull()
             ?: runCatching { JSONObject(body) }.getOrNull()
-            ?: return emptyList()
+            ?: return null
         val edges = root.optJSONObject("data")
             ?.optJSONObject("video")
             ?.optJSONObject("comments")
             ?.optJSONArray("edges")
-            ?: return emptyList()
+            ?: return null
 
-        val lowerBound = playerPositionMs - 45_000L
-        val upperBound = playerPositionMs + 45_000L
-        val parsed = (0 until edges.length())
+        val lowerBound = (playerPositionMs - 10L * 60L * 1000L).coerceAtLeast(0L)
+        val upperBound = if (playerPositionMs <= 5_000L) 8_000L else playerPositionMs + 2_000L
+        return (0 until edges.length())
             .mapNotNull { index -> edges.optJSONObject(index)?.optJSONObject("node") }
             .mapNotNull { node -> parseNode(videoId, node, channelLogin) }
-            .filter { message ->
-                val offsetMs = message.timestampMs
-                offsetMs in lowerBound..upperBound || playerPositionMs <= 5_000L
-            }
+            .filter { message -> message.timestampMs in lowerBound..upperBound }
             .sortedBy { it.timestampMs }
-
-        return parsed.take(cappedMax)
     }
 
     private fun parseNode(videoId: String, node: JSONObject, channelLogin: String?): TwitchLiveChat.LiveMessage? {
