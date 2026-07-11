@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -51,6 +52,7 @@ class TwitchLiveChat(
     companion object {
         private const val IRC_WS_URL = "wss://irc-ws.chat.twitch.tv:443"
         private const val USER_AGENT = "CloudStream Live Twitch Chat"
+        private const val EMOTE_REFRESH_INTERVAL_MS = 15L * 60L * 1000L
         private val loginPattern = Regex("^[a-z0-9_]{3,25}$", RegexOption.IGNORE_CASE)
         private val blockedLoginWords = setOf(
             "twitch", "twitchtv", "twitchcom", "wwwtwitchtv", "wwwtwitchcom",
@@ -120,6 +122,7 @@ class TwitchLiveChat(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val messages = mutableListOf<LiveMessage>()
     private var connectJob: Job? = null
+    private var emoteRefreshJob: Job? = null
     @Volatile private var activeChannel: String? = null
     @Volatile private var webSocket: WebSocket? = null
     @Volatile private var activeChannelId: String? = null
@@ -156,9 +159,8 @@ class TwitchLiveChat(
                 postState("Sign out and sign back in to load live chat")
                 return@launch
             }
-            scope.launch(Dispatchers.IO) {
-                try { TwitchChatEmotes.loadForChannel(channel, null) } catch (_: Throwable) {}
-            }
+            startEmoteRefreshLoop(channel)
+
 
             if (activeChannel != channel) return@launch
 
@@ -208,6 +210,8 @@ class TwitchLiveChat(
     fun stop() {
         connectJob?.cancel()
         connectJob = null
+        emoteRefreshJob?.cancel()
+        emoteRefreshJob = null
         val socket = webSocket
         webSocket = null
         activeChannel = null
@@ -216,6 +220,18 @@ class TwitchLiveChat(
         synchronized(messages) { messages.clear() }
     }
 
+    // TwitchChatEmoteRefreshLoopV32: refresh provider definitions without reconnecting IRC.
+    private fun startEmoteRefreshLoop(channel: String) {
+        emoteRefreshJob?.cancel()
+        emoteRefreshJob = scope.launch(Dispatchers.IO) {
+            while (activeChannel == channel) {
+                runCatching {
+                    TwitchChatEmotes.refreshForChannel(channel, activeChannelId)
+                }
+                delay(EMOTE_REFRESH_INTERVAL_MS)
+            }
+        }
+    }
     private fun handleRawLine(socket: WebSocket, raw: String, expectedChannel: String) {
         if (raw.isBlank()) return
         if (raw.startsWith("PING", ignoreCase = true)) {
@@ -263,7 +279,7 @@ class TwitchLiveChat(
         if (roomId != null && activeChannelId != roomId) {
             activeChannelId = roomId
             scope.launch(Dispatchers.IO) {
-                try { TwitchChatEmotes.loadForChannel(expectedChannel, roomId) } catch (_: Throwable) {}
+                try { TwitchChatEmotes.refreshForChannel(expectedChannel, roomId) } catch (_: Throwable) {}
             }
         }
 

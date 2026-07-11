@@ -69,6 +69,11 @@ object TwitchChatEmotes {
         Resolver(mergeEmotes(getGlobalEmotes(), getChannelEmotes(channelLogin, channelId)))
     }
 
+    /** Refreshes channel definitions even when the current cache has not expired yet. */
+    suspend fun refreshForChannel(channelLogin: String?, channelId: String?): Resolver = withContext(Dispatchers.IO) {
+        Resolver(mergeEmotes(getGlobalEmotes(), getChannelEmotes(channelLogin, channelId, forceRefresh = true)))
+    }
+
     fun resolveFromCache(
         text: String,
         nativeEmotesTag: String?,
@@ -206,8 +211,15 @@ object TwitchChatEmotes {
         return emotes.any { start < it.endExclusive && endExclusive > it.start }
     }
 
+    // TwitchChatStaleWhileRefreshV32: keep last-known definitions while refreshing.
+    /**
+     * Rendering must never lose a previously loaded emote set just because its
+     * refresh deadline elapsed. The live IRC parser is synchronous, so it uses
+     * the last known definitions while the background refresh loop replaces
+     * them with a newer set.
+     */
     private fun getCachedGlobalEmotes(): Map<String, EmoteDefinition> = synchronized(lock) {
-        globalCache?.takeIf { it.expiresAtMs > now() }?.value.orEmpty()
+        globalCache?.value.orEmpty()
     }
 
     private fun getCachedChannelEmotes(channelLogin: String?, channelId: String?): Map<String, EmoteDefinition> {
@@ -216,15 +228,17 @@ object TwitchChatEmotes {
 
         synchronized(lock) {
             keys.forEach { key ->
-                channelCache[key]?.takeIf { it.expiresAtMs > now() }?.value?.let { return it }
+                channelCache[key]?.value?.let { return it }
             }
         }
         return emptyMap()
     }
 
     private fun getGlobalEmotes(): Map<String, EmoteDefinition> {
-        synchronized(lock) {
-            globalCache?.takeIf { it.expiresAtMs > now() }?.value?.let { return it }
+        val stale = synchronized(lock) {
+            val cached = globalCache
+            if (cached != null && cached.expiresAtMs > now()) return cached.value
+            cached?.value.orEmpty()
         }
 
         val fresh = mergeEmotes(
@@ -232,40 +246,71 @@ object TwitchChatEmotes {
             fetchFfzGlobalSafe(),
             fetchSevenTvGlobalSafe(),
         )
+        val selected = fresh.ifEmpty { stale }
 
         synchronized(lock) {
-            globalCache = CacheEntry(fresh, now() + if (fresh.isEmpty()) FAILURE_TTL_MS else GLOBAL_TTL_MS)
+            globalCache = CacheEntry(
+                selected,
+                now() + if (fresh.isEmpty()) FAILURE_TTL_MS else GLOBAL_TTL_MS,
+            )
         }
-        return fresh
+        return selected
     }
 
-    private suspend fun getChannelEmotes(channelLogin: String?, channelId: String?): Map<String, EmoteDefinition> {
+    private suspend fun getChannelEmotes(
+        channelLogin: String?,
+        channelId: String?,
+        forceRefresh: Boolean = false,
+    ): Map<String, EmoteDefinition> {
         val login = TwitchLiveChat.normalizeChannelLogin(channelLogin)
         val id = channelId?.filter { it.isDigit() }?.takeIf { it.isNotBlank() }
         val initialKeys = channelCacheKeys(login, id)
+        var stale = emptyMap<String, EmoteDefinition>()
+
         synchronized(lock) {
+            val nowMs = now()
+            val preferredFreshKeys = if (id != null) listOf("id:$id") else initialKeys
+            if (!forceRefresh) {
+                preferredFreshKeys.forEach { key ->
+                    channelCache[key]?.takeIf { it.expiresAtMs > nowMs }?.value?.let { return it }
+                }
+            }
             initialKeys.forEach { key ->
-                channelCache[key]?.takeIf { it.expiresAtMs > now() }?.value?.let { return it }
+                val cached = channelCache[key]?.value.orEmpty()
+                if (stale.isEmpty() && cached.isNotEmpty()) stale = cached
             }
         }
 
         val resolvedId = id ?: login?.let { getChannelId(it) }
-        if (login == null && resolvedId == null) return emptyMap()
+        if (login == null && resolvedId == null) return stale
+
+        val resolvedKeys = channelCacheKeys(login, resolvedId ?: id)
+        if (stale.isEmpty()) {
+            synchronized(lock) {
+                resolvedKeys.forEach { key ->
+                    val cached = channelCache[key]?.value.orEmpty()
+                    if (stale.isEmpty() && cached.isNotEmpty()) stale = cached
+                }
+            }
+        }
 
         val fresh = mergeEmotes(
             resolvedId?.let { fetchBttvChannelSafe(it) }.orEmpty(),
             fetchFfzChannelSafe(login, resolvedId),
             resolvedId?.let { fetchSevenTvChannelSafe(it) }.orEmpty(),
         )
+        val selected = fresh.ifEmpty { stale }
 
-        val keys = channelCacheKeys(login, resolvedId ?: id)
-        if (keys.isNotEmpty()) {
+        if (resolvedKeys.isNotEmpty()) {
             synchronized(lock) {
-                val entry = CacheEntry(fresh, now() + if (fresh.isEmpty()) FAILURE_TTL_MS else CHANNEL_TTL_MS)
-                keys.forEach { key -> channelCache[key] = entry }
+                val entry = CacheEntry(
+                    selected,
+                    now() + if (fresh.isEmpty()) FAILURE_TTL_MS else CHANNEL_TTL_MS,
+                )
+                resolvedKeys.forEach { key -> channelCache[key] = entry }
             }
         }
-        return fresh
+        return selected
     }
 
     private suspend fun getChannelId(channelLogin: String): String? {
