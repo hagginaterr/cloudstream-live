@@ -43,7 +43,10 @@ internal class TwitchLiveChatUiController(
         const val VOD_POLL_INTERVAL_MS = 2_500L
         const val TARGET_REFRESH_INTERVAL_MS = 500L
         const val VOD_REFETCH_DISTANCE_MS = 3_000L
-        const val LIVE_DVR_CHAT_THRESHOLD_MS = 20_000L
+        // Historical replay chat is intentionally delayed until playback is at least
+        // two minutes behind Media3's recommended live position. Short live drift,
+        // buffering corrections, and the stable target live offset must remain on IRC.
+        const val LIVE_DVR_VOD_CHAT_THRESHOLD_MS = 120_000L
         const val SLOW_RENDER_INTERVAL_MS = 2_000L
         const val NORMAL_RENDER_INTERVAL_MS = 80L
         const val CHAT_SCROLL_DURATION_MS = 180L
@@ -159,11 +162,18 @@ internal class TwitchLiveChatUiController(
         val isLivePlayback = player.isTwitchLiveStream() || player.isTwitchLiveDvrStream()
 
         if (vodId != null) {
-            return if (isLivePlayback && channel != null && isDefinitelyAtLiveEdge()) {
-                ChatTarget(ChatMode.LIVE, channel, vodId)
-            } else {
-                ChatTarget(ChatMode.VOD, channel, vodId)
+            if (isLivePlayback) {
+                // A live-DVR source stays on IRC unless the player can positively
+                // confirm that playback is at least two minutes behind the stable
+                // Media3 live position. Unknown timeline/live-offset data defaults
+                // to live chat so brief manifest drift cannot activate replay chat.
+                return if (isConfirmedAtLeastVodChatThresholdBehindLive()) {
+                    ChatTarget(ChatMode.VOD, channel, vodId)
+                } else {
+                    channel?.let { ChatTarget(ChatMode.LIVE, it, vodId) }
+                }
             }
+            return ChatTarget(ChatMode.VOD, channel, vodId)
         }
 
         if (isLivePlayback && channel != null) {
@@ -181,18 +191,15 @@ internal class TwitchLiveChatUiController(
 
 
 
-    private fun isDefinitelyAtLiveEdge(): Boolean {
-        if (player.isTwitchAtRecommendedLivePosition()) return true
+    private fun isConfirmedAtLeastVodChatThresholdBehindLive(): Boolean {
+        if (player.isTwitchAtRecommendedLivePosition()) return false
 
-        val liveDelayMs = player.getLiveDelayMs()?.coerceAtLeast(0L)
-        if (liveDelayMs != null) {
-            return liveDelayMs < LIVE_DVR_CHAT_THRESHOLD_MS
-        }
+        val distanceBehindRecommendedLiveMs =
+            player.getTwitchDistanceBehindRecommendedLivePositionMs()
+                ?.coerceAtLeast(0L)
+                ?: return false
 
-        val durationMs = player.getDuration()?.takeIf { it > 0L && it < Long.MAX_VALUE / 4 } ?: return false
-        val positionMs = player.getPosition()?.takeIf { it >= 0L } ?: return false
-        val distanceFromEndMs = durationMs - positionMs
-        return distanceFromEndMs in 0L until LIVE_DVR_CHAT_THRESHOLD_MS
+        return distanceBehindRecommendedLiveMs >= LIVE_DVR_VOD_CHAT_THRESHOLD_MS
     }
     private fun isChatOpenPreference(): Boolean {
         return PreferenceManager.getDefaultSharedPreferences(root.context)

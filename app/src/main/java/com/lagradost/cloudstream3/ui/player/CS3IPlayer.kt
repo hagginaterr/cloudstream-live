@@ -739,6 +739,36 @@ class CS3IPlayer : IPlayer {
         return if (liveOffset == TIME_UNSET) null else liveOffset
     }
 
+    override fun getTwitchDistanceBehindRecommendedLivePositionMs(): Long? {
+        if (!currentIsTwitchStream && !currentIsTwitchLiveDvrStream) return null
+
+        val currentPlayer = exoPlayer ?: return null
+        val timeline = currentPlayer.currentTimeline
+        val windowIndex = currentPlayer.currentMediaItemIndex
+        var targetLiveOffsetMs = TWITCH_LIVE_TARGET_OFFSET_MS
+
+        if (!timeline.isEmpty && windowIndex in 0 until timeline.windowCount) {
+            val window = Timeline.Window()
+            timeline.getWindow(windowIndex, window)
+            window.liveConfiguration?.targetOffsetMs
+                ?.takeIf { it != TIME_UNSET && it >= 0L }
+                ?.let { targetLiveOffsetMs = it }
+
+            val recommendedPositionMs = window.defaultPositionMs
+            val playbackPositionMs = currentPlayer.contentPosition
+                .takeIf { it != TIME_UNSET && it >= 0L }
+                ?: currentPlayer.currentPosition.takeIf { it != TIME_UNSET && it >= 0L }
+
+            if (recommendedPositionMs != TIME_UNSET && playbackPositionMs != null) {
+                return (recommendedPositionMs - playbackPositionMs).coerceAtLeast(0L)
+            }
+        }
+
+        val liveOffsetMs = currentPlayer.currentLiveOffset
+        if (liveOffsetMs == TIME_UNSET) return null
+        return (liveOffsetMs - targetLiveOffsetMs).coerceAtLeast(0L)
+    }
+
     override fun isTwitchAtRecommendedLivePosition(): Boolean {
         if (!currentIsTwitchStream && !currentIsTwitchLiveDvrStream) return false
         if (SystemClock.elapsedRealtime() < twitchLiveChatOverrideUntilElapsedMs) return true
