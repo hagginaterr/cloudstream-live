@@ -819,6 +819,7 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
         explicitVodChatId: String? = null,
         liveDvr: Boolean = false,
         liveRewindSource: Boolean = false,
+        liveAudioUrl: String? = null,
     ): List<ExtractorLink> {
         val carrierBase = twitchPlayerMetadataCarrierUrl(data) ?: return links
         val isLiveChannelData = isTwitchReconnectableLivePlayerData(data)
@@ -839,6 +840,13 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                 ?: pageVodChatId
             val isCurrentLiveDvr = liveDvr && isLiveChannelData && linkVodChatId != null
             val isCurrentLiveRewindSource = liveRewindSource && isCurrentLiveDvr
+            // TwitchHybridLiveAudioPatch:
+            // The growing VOD EVENT playlist keeps the full rewind timeline, but its
+            // audio is the broadcaster's VOD mix. Carry the ordinary live audio-only
+            // rendition separately so the player can use it near live without losing rewind.
+            val cleanLiveAudioUrl = liveAudioUrl
+                ?.trim()
+                ?.takeIf { isCurrentLiveRewindSource && it.startsWith("http", ignoreCase = true) }
 
             val carrierWithVod = if (linkVodChatId != null) {
                 appendTwitchProfileQueryParam(carrierBase, "cs_twitch_vod_id", linkVodChatId)
@@ -860,6 +868,11 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                     carrierWithMode, "cs_twitch_rewind_source", "1",
                 )
             }
+            if (cleanLiveAudioUrl != null) {
+                carrierWithMode = appendTwitchProfileQueryParam(
+                    carrierWithMode, "cs_twitch_live_audio_url", cleanLiveAudioUrl,
+                )
+            }
             if (isLiveChannelData) {
                 carrierWithMode = appendTwitchProfileQueryParam(
                     carrierWithMode, "cs_twitch_reconnect", "1",
@@ -872,6 +885,7 @@ private fun isTwitchReconnectableLivePlayerData(data: String): Boolean {
                     line.contains("cs_twitch_vod_id=", ignoreCase = true) ||
                         line.contains("cs_twitch_live_dvr=", ignoreCase = true) ||
                         line.contains("cs_twitch_rewind_source=", ignoreCase = true) ||
+                        line.contains("cs_twitch_live_audio_url=", ignoreCase = true) ||
                         line.contains("cs_twitch_reconnect=", ignoreCase = true)
                 }
                 ?.joinToString("\n")
@@ -2806,6 +2820,30 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
     }
 
 
+    // Prefer Twitch's audio_only rendition. If the resolver does not expose one,
+    // use the lowest-bandwidth live rendition and let Media3 disable its video track.
+    private fun selectTwitchLiveAudioUrl(urls: Map<String, String>?): String? {
+        val entries = urls.orEmpty()
+            .asSequence()
+            .filter { (_, url) -> url.startsWith("http", ignoreCase = true) }
+            .toList()
+        if (entries.isEmpty()) return null
+
+        entries.firstOrNull { (label, _) ->
+            val normalized = label.lowercase().replace("-", "_").replace(" ", "_")
+            normalized.contains("audio_only") || normalized == "audio" || normalized.startsWith("audio_")
+        }?.value?.let { return it }
+
+        return entries.minByOrNull { (label, _) ->
+            Regex("(\\d{2,4})p", RegexOption.IGNORE_CASE)
+                .find(label)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+                ?: Int.MAX_VALUE
+        }?.value
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -2819,6 +2857,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             explicitVodChatId: String? = null,
             liveDvr: Boolean = false,
             liveRewindSource: Boolean = false,
+            liveAudioUrl: String? = null,
         ): Boolean {
             val annotated = annotateTwitchPlayerLinks(
                 data = data,
@@ -2826,6 +2865,7 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
                 explicitVodChatId = explicitVodChatId,
                 liveDvr = liveDvr,
                 liveRewindSource = liveRewindSource,
+                liveAudioUrl = liveAudioUrl,
             )
             annotated.forEach { callback.invoke(it) }
             return annotated.isNotEmpty()
@@ -2881,6 +2921,8 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
             ?.id
             ?.filter { it.isDigit() }
             ?.takeIf { it.isNotBlank() }
+        val liveResponse = liveResolution.first
+        val liveAudioUrl = selectTwitchLiveAudioUrl(liveResponse?.urls)
         val rewindLinks = if (currentVodChatId != null) {
             fetchTwitchLiveRewindLinks(currentVodChatId)
         } else {
@@ -2893,10 +2935,11 @@ private suspend fun channelLoadResponse(url: String): LoadResponse {
                 explicitVodChatId = currentVodChatId,
                 liveDvr = true,
                 liveRewindSource = true,
+                liveAudioUrl = liveAudioUrl,
             )
         }
 
-        val response = liveResolution.first ?: return false
+        val response = liveResponse ?: return false
         val liveLinks = response.urls?.map { (qualityName, streamUrl) ->
             val quality = getQualityFromName(qualityName.substringBefore("p"))
             newExtractorLink(
