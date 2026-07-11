@@ -2689,13 +2689,13 @@ if (currentIsTwitchStream) {
                 interceptor = interceptor, // Backwards compatibility, needs a new api to work properly
             )
 
-            val twitchLiveAudioSource = twitchLiveAudioUrl
-                ?.takeIf {
-                    currentIsTwitchLiveRewindSource &&
-                        !twitchMergedLiveAudioDisabledForCurrentLink
-                }
-                ?.let { createTwitchMergedLiveAudioSource(it) }
-            twitchMergedLiveAudioAvailable = twitchLiveAudioSource != null
+            // TwitchNativeDvrAudioHotfix:
+            // Do not merge a rolling live-audio HLS timeline with the growing
+            // Twitch VOD/EVENT timeline. Media3 must prepare every child in a
+            // MergingMediaSource, and incompatible live windows can buffer forever.
+            // The DVR source carries its own synchronized audio for live and rewind.
+            val twitchLiveAudioSource: MediaSource? = null
+            twitchMergedLiveAudioAvailable = false
             twitchUsingMergedLiveAudio = false
 
             subtitleHelper.setActiveSubtitles(activeSubtitles.toSet())
