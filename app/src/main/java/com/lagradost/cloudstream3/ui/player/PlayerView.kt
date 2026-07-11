@@ -16,7 +16,9 @@ import android.os.Looper
 import android.text.format.DateUtils
 import android.util.AttributeSet
 import android.util.Log
+import android.view.TextureView
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
 import android.widget.FrameLayout
@@ -168,6 +170,8 @@ class PlayerView @JvmOverloads constructor(
     var hasPipModeSupport: Boolean = true
     var currentPlayerStatus: CSPlayerLoading = CSPlayerLoading.IsBuffering
     var mMediaSession: MediaSession? = null
+    private var videoOverlayTextureView: TextureView? = null
+    private var videoOverlayPlayer: ExoPlayer? = null
     private var pipReceiver: BroadcastReceiver? = null
 
     /** Auto-hide */
@@ -479,6 +483,7 @@ class PlayerView @JvmOverloads constructor(
 
         mMediaSession?.release()
         mMediaSession = null
+        releaseVideoOverlay()
         exoPlayerView?.player = null
 
         SubtitlesFragment.applyStyleEvent -= subStyleListener
@@ -610,6 +615,57 @@ class PlayerView @JvmOverloads constructor(
             exoPlayerView?.performClick()
         }
         callbacks?.playerUpdated(player)
+    }
+
+    private fun updateVideoOverlay(player: Any?, visible: Boolean) {
+        val newPlayer = player as? ExoPlayer
+        if (newPlayer == null) {
+            val textureView = videoOverlayTextureView
+            if (textureView != null) {
+                videoOverlayPlayer?.clearVideoTextureView(textureView)
+                textureView.alpha = 0f
+                textureView.isVisible = false
+            }
+            videoOverlayPlayer = null
+            return
+        }
+
+        val textureView = videoOverlayTextureView ?: run {
+            val contentFrame = exoPlayerView
+                ?.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
+                ?: return
+            TextureView(context).apply {
+                isOpaque = true
+                isClickable = false
+                isFocusable = false
+                alpha = 0f
+                isVisible = true
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                contentFrame.addView(this)
+            }.also { videoOverlayTextureView = it }
+        }
+
+        if (videoOverlayPlayer !== newPlayer) {
+            videoOverlayPlayer?.clearVideoTextureView(textureView)
+            videoOverlayPlayer = newPlayer
+            newPlayer.setVideoTextureView(textureView)
+        }
+        textureView.isVisible = true
+        textureView.alpha = if (visible) 1f else 0f
+        textureView.bringToFront()
+    }
+
+    private fun releaseVideoOverlay() {
+        val textureView = videoOverlayTextureView ?: return
+        videoOverlayPlayer?.clearVideoTextureView(textureView)
+        videoOverlayPlayer = null
+        textureView.alpha = 0f
+        textureView.isVisible = false
+        (textureView.parent as? ViewGroup)?.removeView(textureView)
+        videoOverlayTextureView = null
     }
 
     private fun onSubStyleChanged(style: SaveCaptionStyle) {
@@ -751,6 +807,7 @@ class PlayerView @JvmOverloads constructor(
                 callbacks?.playerDimensionsLoaded(event.width, event.height)
             }
             is PlayerAttachedEvent -> playerUpdated(event.player)
+            is PlayerVideoOverlayEvent -> updateVideoOverlay(event.player, event.visible)
             is SubtitlesUpdatedEvent -> callbacks?.subtitlesChanged()
             is TimestampSkippedEvent -> callbacks?.onTimestampSkipped(event.timestamp)
             is TimestampInvokedEvent -> callbacks?.onTimestamp(event.timestamp)

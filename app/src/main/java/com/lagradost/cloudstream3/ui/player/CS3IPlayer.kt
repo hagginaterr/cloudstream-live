@@ -147,23 +147,19 @@ private const val TWITCH_LIVE_DELAY_LOG_INTERVAL_MS = 5_000L
 private const val TWITCH_RECONNECT_MAX_ATTEMPTS = 5
 private const val TWITCH_RECONNECT_INITIAL_DELAY_MS = 1_500L
 private const val TWITCH_RECONNECT_MAX_DELAY_MS = 12_000L
-// TwitchIndependentLiveAudioSyncPatch:
-// Keep the rewind-capable DVR source on the main player. Near live, prepare a
-// separate audio-only player and make it audible only after both HLS windows map
-// to the same absolute program time. Any uncertainty immediately falls back to
-// the main player's synchronized VOD audio.
-private const val TWITCH_LIVE_AUDIO_ENTER_THRESHOLD_MS = 30_000L
-private const val TWITCH_LIVE_AUDIO_EXIT_THRESHOLD_MS = 45_000L
-private const val TWITCH_LIVE_AUDIO_SYNC_INTERVAL_MS = 500L
-private const val TWITCH_LIVE_AUDIO_ACTIVATE_TOLERANCE_MS = 200L
-private const val TWITCH_LIVE_AUDIO_PRIME_CORRECTION_THRESHOLD_MS = 300L
-private const val TWITCH_LIVE_AUDIO_ACTIVE_FALLBACK_THRESHOLD_MS = 400L
-private const val TWITCH_LIVE_AUDIO_SOFT_SYNC_LIMIT_MS = 1_000L
-private const val TWITCH_LIVE_AUDIO_MAX_SPEED_CORRECTION = 0.015f
-private const val TWITCH_LIVE_AUDIO_STABLE_SAMPLES_REQUIRED = 3
-private const val TWITCH_LIVE_AUDIO_UNMAPPABLE_SAMPLES_LIMIT = 8
-private const val TWITCH_LIVE_AUDIO_SEEK_RESTART_DELAY_MS = 500L
-private const val TWITCH_LIVE_AUDIO_RETRY_DELAY_MS = 30_000L
+// TwitchDualLivePlayerPatch:
+// Keep the rewind-capable DVR/VOD source on the main player at all times. Near
+// the live edge, prepare a second complete ordinary-live A/V player and render
+// it on a video overlay only after its first frame is ready. The main player
+// remains the UI, seek-bar, chat, and media-session clock so rewinding never
+// loses the full broadcast timeline.
+private const val TWITCH_LIVE_PLAYER_ENTER_THRESHOLD_MS = 30_000L
+private const val TWITCH_LIVE_PLAYER_EXIT_THRESHOLD_MS = 45_000L
+private const val TWITCH_LIVE_PLAYER_MONITOR_INTERVAL_MS = 500L
+private const val TWITCH_LIVE_PLAYER_SEEK_RESTART_DELAY_MS = 500L
+private const val TWITCH_LIVE_PLAYER_RETRY_DELAY_MS = 30_000L
+private const val TWITCH_LIVE_PLAYER_MAX_HANDOFF_OFFSET_DELTA_MS = 5_000L
+private const val TWITCH_LIVE_PLAYER_MAX_RESYNC_ATTEMPTS = 2
 
 /** toleranceBeforeUs – The maximum time that the actual position seeked to may precede the
  * requested seek position, in microseconds. Must be non-negative. */
@@ -216,24 +212,24 @@ class CS3IPlayer : IPlayer {
     private var twitchReconnectInFlight = false
     private var lastTwitchLiveDelayLogMs = 0L
     private var twitchLiveChatOverrideUntilElapsedMs = 0L
-    private var twitchLiveAudioPlayer: ExoPlayer? = null
-    private var twitchLiveAudioUrl: String? = null
-    private var twitchLiveAudioContext: Context? = null
-    private var twitchLiveAudioActive = false
-    private var twitchLiveAudioUserMuted = false
-    private var twitchLiveAudioFailedUntilElapsedMs = 0L
-    private var twitchLiveAudioStableSamples = 0
-    private var twitchLiveAudioWaitingForVideo = false
-    private var twitchLiveAudioForwardSeekPending = false
-    private var twitchLiveAudioUnmappableSamples = 0
-    private var twitchLiveAudioSmoothedDriftMs: Double? = null
-    private var twitchLiveAudioMode = "VOD"
-    private val twitchLiveAudioHandler = Handler(Looper.getMainLooper())
-    private val twitchLiveAudioMonitor = object : Runnable {
+    private var twitchLivePlayer: ExoPlayer? = null
+    private var twitchLiveAvUrl: String? = null
+    private var twitchLivePlayerContext: Context? = null
+    private var twitchLivePlayerActive = false
+    private var twitchLivePlayerFirstFrameRendered = false
+    private var twitchLivePlayerUserMuted = false
+    private var twitchLivePlayerFailedUntilElapsedMs = 0L
+    private var twitchLivePlayerResyncAttempts = 0
+    private var twitchLivePlayerMode = "VOD"
+    private val twitchLivePlayerHandler = Handler(Looper.getMainLooper())
+    private val twitchLivePlayerMonitor = object : Runnable {
         override fun run() {
-            updateTwitchLiveAudioState()
-            if (twitchLiveAudioUrl != null && currentIsTwitchLiveRewindSource) {
-                twitchLiveAudioHandler.postDelayed(this, TWITCH_LIVE_AUDIO_SYNC_INTERVAL_MS)
+            updateTwitchDualPlayerState()
+            if (twitchLiveAvUrl != null && currentIsTwitchLiveRewindSource) {
+                twitchLivePlayerHandler.postDelayed(
+                    this,
+                    TWITCH_LIVE_PLAYER_MONITOR_INTERVAL_MS,
+                )
             }
         }
     }
@@ -665,8 +661,8 @@ class CS3IPlayer : IPlayer {
     private fun releasePlayer(saveTime: Boolean = true) {
         Log.i(TAG, "releasePlayer")
         clearTwitchRecommendedLivePositionOverride()
-        releaseTwitchLiveAudioPlayer(
-            restoreMainAudio = false,
+        releaseTwitchLivePlayer(
+            restoreDvrPlayback = false,
             clearConfiguration = true,
             reason = "main-player-release",
         )
@@ -736,9 +732,7 @@ class CS3IPlayer : IPlayer {
 
     override fun setPlaybackSpeed(speed: Float) {
         exoPlayer?.setPlaybackSpeed(speed)
-        twitchLiveAudioPlayer?.setPlaybackSpeed(speed)
-        twitchLiveAudioStableSamples = 0
-        twitchLiveAudioSmoothedDriftMs = null
+        twitchLivePlayer?.setPlaybackSpeed(speed)
         playBackSpeed = speed
     }
 
@@ -883,8 +877,8 @@ class CS3IPlayer : IPlayer {
             .contains("cs_twitch_rewind_source=1", ignoreCase = true)
     }
 
-    private fun ExtractorLink.twitchLiveAudioUrl(): String? {
-        val match = Regex("(?i)(?:^|[?&\\n])cs_twitch_live_audio_url=([^&\\n]+)")
+    private fun ExtractorLink.twitchLiveAvUrl(): String? {
+        val match = Regex("(?i)(?:^|[?&\\n])cs_twitch_live_av_url=([^&\\n]+)")
             .find(extractorData.orEmpty())
             ?: return null
         return runCatching { Uri.decode(match.groupValues[1]) }
@@ -893,289 +887,178 @@ class CS3IPlayer : IPlayer {
             ?.takeIf { it.startsWith("http", ignoreCase = true) }
     }
 
-    private fun setTwitchLiveAudioMode(mode: String, reason: String? = null) {
-        if (mode == twitchLiveAudioMode) return
-        twitchLiveAudioMode = mode
+    private fun setTwitchDualPlayerMode(mode: String, reason: String? = null) {
+        if (mode == twitchLivePlayerMode) return
+        twitchLivePlayerMode = mode
         Log.i(
             TAG,
-            "Twitch audio mode: $mode" +
+            "Twitch playback mode: $mode" +
                 if (reason.isNullOrBlank()) "" else " reason=$reason",
         )
     }
 
-    private fun restoreMainAudioAfterLiveOverlay() {
+    private fun setTwitchLiveVideoOverlay(player: ExoPlayer?, visible: Boolean) {
+        event(PlayerVideoOverlayEvent(player = player, visible = visible))
+    }
+
+    private fun restoreDvrAudioAfterLivePlayer() {
         val main = exoPlayer ?: return
-        main.volume = if (twitchLiveAudioUserMuted) {
+        main.volume = if (twitchLivePlayerUserMuted) {
             0f
         } else {
             lastMuteVolume.coerceAtLeast(0.01f)
         }
     }
 
-    private fun resetTwitchLiveAudioAlignment() {
-        twitchLiveAudioStableSamples = 0
-        twitchLiveAudioWaitingForVideo = false
-        twitchLiveAudioForwardSeekPending = false
-        twitchLiveAudioUnmappableSamples = 0
-        twitchLiveAudioSmoothedDriftMs = null
-        twitchLiveAudioPlayer?.setPlaybackSpeed(playBackSpeed)
+    private fun setTwitchLivePlayerActive(
+        active: Boolean,
+        reason: String? = null,
+    ) {
+        val main = exoPlayer ?: return
+        val live = twitchLivePlayer
+        if (active) {
+            if (live == null ||
+                live.playbackState != Player.STATE_READY ||
+                !twitchLivePlayerFirstFrameRendered
+            ) return
+
+            if (!twitchLivePlayerActive) {
+                twitchLivePlayerUserMuted = main.volume <= 0f
+                if (!twitchLivePlayerUserMuted) {
+                    lastMuteVolume = main.volume.coerceAtLeast(0.01f)
+                }
+                twitchLivePlayerActive = true
+            }
+
+            main.volume = 0f
+            live.volume = if (twitchLivePlayerUserMuted) {
+                0f
+            } else {
+                lastMuteVolume.coerceAtLeast(0.01f)
+            }
+            live.playWhenReady = main.isPlaying
+            setTwitchLiveVideoOverlay(live, visible = true)
+            setTwitchDualPlayerMode("LIVE", reason)
+        } else {
+            val wasActive = twitchLivePlayerActive
+            twitchLivePlayerActive = false
+            live?.volume = 0f
+            setTwitchLiveVideoOverlay(live, visible = false)
+            if (wasActive) {
+                restoreDvrAudioAfterLivePlayer()
+            }
+            setTwitchDualPlayerMode("VOD", reason)
+        }
     }
 
-    private fun releaseTwitchLiveAudioPlayer(
-        restoreMainAudio: Boolean = true,
+    private fun releaseTwitchLivePlayer(
+        restoreDvrPlayback: Boolean = true,
         clearConfiguration: Boolean = false,
         reason: String = "released",
     ) {
         if (clearConfiguration) {
-            twitchLiveAudioHandler.removeCallbacks(twitchLiveAudioMonitor)
+            twitchLivePlayerHandler.removeCallbacks(twitchLivePlayerMonitor)
         }
-        val wasActive = twitchLiveAudioActive
-        val hadPlayer = twitchLiveAudioPlayer != null
-        twitchLiveAudioActive = false
-        twitchLiveAudioPlayer?.let { audioPlayer ->
-            runCatching { audioPlayer.volume = 0f }
-            runCatching { audioPlayer.pause() }
-            runCatching { audioPlayer.stop() }
-            runCatching { audioPlayer.release() }
+
+        val wasActive = twitchLivePlayerActive
+        val hadPlayer = twitchLivePlayer != null
+        val live = twitchLivePlayer
+        twitchLivePlayerActive = false
+        twitchLivePlayerFirstFrameRendered = false
+        twitchLivePlayerResyncAttempts = 0
+
+        setTwitchLiveVideoOverlay(null, visible = false)
+        live?.let { player ->
+            runCatching { player.volume = 0f }
+            runCatching { player.pause() }
+            runCatching { player.stop() }
+            runCatching { player.release() }
         }
-        twitchLiveAudioPlayer = null
-        resetTwitchLiveAudioAlignment()
-        if (restoreMainAudio && wasActive) {
-            restoreMainAudioAfterLiveOverlay()
+        twitchLivePlayer = null
+
+        if (restoreDvrPlayback && wasActive) {
+            restoreDvrAudioAfterLivePlayer()
         }
-        if (hadPlayer || wasActive || twitchLiveAudioMode != "VOD") {
-            setTwitchLiveAudioMode("VOD", reason)
+        if (hadPlayer || wasActive || twitchLivePlayerMode != "VOD") {
+            setTwitchDualPlayerMode("VOD", reason)
         }
+
         if (clearConfiguration) {
-            twitchLiveAudioUrl = null
-            twitchLiveAudioContext = null
-            twitchLiveAudioFailedUntilElapsedMs = 0L
-            twitchLiveAudioUserMuted = false
+            twitchLiveAvUrl = null
+            twitchLivePlayerContext = null
+            twitchLivePlayerFailedUntilElapsedMs = 0L
+            twitchLivePlayerUserMuted = false
         }
     }
 
-    private fun setTwitchLiveAudioActive(
-        active: Boolean,
-        driftMs: Long? = null,
-        inactiveMode: String = "VOD",
-        reason: String? = null,
-    ) {
+    private fun getKnownLiveOffset(player: Player): Long? {
+        val offset = player.currentLiveOffset
+        return offset.takeIf { it != TIME_UNSET && it >= 0L }
+    }
+
+    private fun getTwitchLiveOffsetDeltaMs(): Long? {
+        val mainOffset = exoPlayer?.let(::getKnownLiveOffset) ?: return null
+        val liveOffset = twitchLivePlayer?.let(::getKnownLiveOffset) ?: return null
+        return kotlin.math.abs(liveOffset - mainOffset)
+    }
+
+    private fun maybeActivateTwitchLivePlayer() {
         val main = exoPlayer ?: return
-        val audioPlayer = twitchLiveAudioPlayer
-        if (active) {
-            if (audioPlayer == null || audioPlayer.playbackState != Player.STATE_READY) return
-            if (!twitchLiveAudioActive) {
-                twitchLiveAudioUserMuted = main.volume <= 0f
-                if (!twitchLiveAudioUserMuted) {
-                    lastMuteVolume = main.volume.coerceAtLeast(0.01f)
-                }
-                twitchLiveAudioActive = true
-            }
+        val live = twitchLivePlayer ?: return
+        if (main.playbackState != Player.STATE_READY ||
+            live.playbackState != Player.STATE_READY ||
+            !twitchLivePlayerFirstFrameRendered
+        ) {
+            setTwitchDualPlayerMode("LIVE_PRIMING", "awaiting-ready-frame")
+            return
+        }
+
+        if (twitchLivePlayerActive) {
             main.volume = 0f
-            audioPlayer.volume = if (twitchLiveAudioUserMuted) {
+            live.volume = if (twitchLivePlayerUserMuted) {
                 0f
             } else {
                 lastMuteVolume.coerceAtLeast(0.01f)
             }
-            setTwitchLiveAudioMode("LIVE", driftMs?.let { "driftMs=$it" })
-        } else {
-            val wasActive = twitchLiveAudioActive
-            twitchLiveAudioActive = false
-            audioPlayer?.volume = 0f
-            if (wasActive) {
-                restoreMainAudioAfterLiveOverlay()
-            }
-            setTwitchLiveAudioMode(inactiveMode, reason)
+            live.playWhenReady = main.isPlaying
+            setTwitchLiveVideoOverlay(live, visible = true)
+            return
         }
-    }
 
-    private fun getAbsolutePlaybackTimeMs(player: Player): Long? {
-        val timeline = player.currentTimeline
-        val windowIndex = player.currentMediaItemIndex
-        if (timeline.isEmpty || windowIndex !in 0 until timeline.windowCount) return null
-
-        val window = Timeline.Window()
-        timeline.getWindow(windowIndex, window)
-        val windowStartTimeMs = window.windowStartTimeMs
-        val positionMs = player.currentPosition
-        if (windowStartTimeMs == TIME_UNSET || windowStartTimeMs <= 0L) return null
-        if (positionMs == TIME_UNSET || positionMs < 0L) return null
-        return windowStartTimeMs + positionMs
-    }
-
-    private fun getTwitchLiveAudioDriftMs(): Long? {
-        val main = exoPlayer ?: return null
-        val audioPlayer = twitchLiveAudioPlayer ?: return null
-        if (main.playbackState != Player.STATE_READY ||
-            audioPlayer.playbackState != Player.STATE_READY
-        ) return null
-
-        val mainTimeMs = getAbsolutePlaybackTimeMs(main) ?: return null
-        val audioTimeMs = getAbsolutePlaybackTimeMs(audioPlayer) ?: return null
-        // Positive means ordinary live audio is ahead of the DVR video.
-        // Negative means ordinary live audio is behind the DVR video.
-        return audioTimeMs - mainTimeMs
-    }
-
-    private fun smoothTwitchLiveAudioDrift(rawDriftMs: Long): Long {
-        val previous = twitchLiveAudioSmoothedDriftMs
-        val smoothed = if (previous == null) {
-            rawDriftMs.toDouble()
-        } else {
-            (previous * 0.70) + (rawDriftMs.toDouble() * 0.30)
-        }
-        twitchLiveAudioSmoothedDriftMs = smoothed
-        return smoothed.toLong()
-    }
-
-    private fun correctedTwitchLiveAudioSpeed(driftMs: Long): Float {
-        val normalized = (driftMs.toFloat() / TWITCH_LIVE_AUDIO_SOFT_SYNC_LIMIT_MS.toFloat())
-            .coerceIn(-1f, 1f)
-        // Positive drift means audio is ahead, so slow it slightly. Negative drift
-        // means audio is behind, so speed it up slightly.
-        val correction = -normalized * TWITCH_LIVE_AUDIO_MAX_SPEED_CORRECTION
-        return (playBackSpeed * (1f + correction)).coerceAtLeast(0.1f)
-    }
-
-    private fun synchronizeTwitchLiveAudio() {
-        val main = exoPlayer ?: return
-        val audioPlayer = twitchLiveAudioPlayer ?: return
-        if (main.playbackState != Player.STATE_READY ||
-            audioPlayer.playbackState != Player.STATE_READY
+        val offsetDeltaMs = getTwitchLiveOffsetDeltaMs()
+        if (offsetDeltaMs != null &&
+            offsetDeltaMs > TWITCH_LIVE_PLAYER_MAX_HANDOFF_OFFSET_DELTA_MS &&
+            twitchLivePlayerResyncAttempts < TWITCH_LIVE_PLAYER_MAX_RESYNC_ATTEMPTS
         ) {
-            setTwitchLiveAudioActive(
-                active = false,
-                inactiveMode = "LIVE_PRIMING",
-                reason = "player-not-ready",
+            twitchLivePlayerResyncAttempts++
+            twitchLivePlayerFirstFrameRendered = false
+            setTwitchLiveVideoOverlay(live, visible = false)
+            live.volume = 0f
+            Log.i(
+                TAG,
+                "Twitch live player resync attempt=$twitchLivePlayerResyncAttempts " +
+                    "offsetDeltaMs=$offsetDeltaMs",
             )
+            live.seekToDefaultPosition()
+            live.playWhenReady = main.isPlaying
             return
         }
 
-        val rawDriftMs = getTwitchLiveAudioDriftMs()
-        if (rawDriftMs == null) {
-            twitchLiveAudioStableSamples = 0
-            twitchLiveAudioUnmappableSamples++
-            setTwitchLiveAudioActive(
-                active = false,
-                inactiveMode = "LIVE_PRIMING",
-                reason = "awaiting-absolute-timestamps",
-            )
-            if (twitchLiveAudioUnmappableSamples >= TWITCH_LIVE_AUDIO_UNMAPPABLE_SAMPLES_LIMIT) {
-                Log.w(
-                    TAG,
-                    "Twitch live audio has no usable absolute timeline; using VOD audio.",
-                )
-                twitchLiveAudioFailedUntilElapsedMs =
-                    SystemClock.elapsedRealtime() + TWITCH_LIVE_AUDIO_RETRY_DELAY_MS
-                releaseTwitchLiveAudioPlayer(
-                    restoreMainAudio = true,
-                    reason = "missing-absolute-timeline",
-                )
-            }
-            return
+        val reason = when {
+            offsetDeltaMs == null -> "full-av-ready offsetDeltaMs=unknown"
+            offsetDeltaMs <= TWITCH_LIVE_PLAYER_MAX_HANDOFF_OFFSET_DELTA_MS ->
+                "full-av-ready offsetDeltaMs=$offsetDeltaMs"
+            else -> "full-av-forced-handoff offsetDeltaMs=$offsetDeltaMs"
         }
-        twitchLiveAudioUnmappableSamples = 0
-        val driftMs = smoothTwitchLiveAudioDrift(rawDriftMs)
-        val correctionThresholdMs = if (twitchLiveAudioActive) {
-            TWITCH_LIVE_AUDIO_ACTIVE_FALLBACK_THRESHOLD_MS
-        } else {
-            TWITCH_LIVE_AUDIO_PRIME_CORRECTION_THRESHOLD_MS
-        }
-
-        if (driftMs <= -correctionThresholdMs) {
-            // Audio is behind. It is safe to seek it forward while muted, but never
-            // seek it backward because that would replay audio the viewer already heard.
-            setTwitchLiveAudioActive(
-                active = false,
-                inactiveMode = "LIVE_PRIMING",
-                reason = "audio-behind-driftMs=$driftMs",
-            )
-            twitchLiveAudioStableSamples = 0
-            twitchLiveAudioWaitingForVideo = false
-            audioPlayer.volume = 0f
-            audioPlayer.setPlaybackSpeed(playBackSpeed)
-
-            if (!twitchLiveAudioForwardSeekPending) {
-                val targetPositionMs = audioPlayer.currentPosition + (-driftMs)
-                val durationMs = audioPlayer.duration
-                val boundedTargetPositionMs = if (durationMs == TIME_UNSET) {
-                    targetPositionMs
-                } else {
-                    minOf(targetPositionMs, durationMs)
-                }
-                twitchLiveAudioForwardSeekPending = true
-                twitchLiveAudioSmoothedDriftMs = null
-                if (boundedTargetPositionMs > audioPlayer.currentPosition) {
-                    audioPlayer.seekTo(boundedTargetPositionMs)
-                    Log.i(TAG, "Twitch live audio forward correction: driftMs=$driftMs")
-                } else {
-                    twitchLiveAudioFailedUntilElapsedMs =
-                        SystemClock.elapsedRealtime() + TWITCH_LIVE_AUDIO_RETRY_DELAY_MS
-                    releaseTwitchLiveAudioPlayer(
-                        restoreMainAudio = true,
-                        reason = "forward-correction-unavailable",
-                    )
-                }
-            }
-            return
-        }
-        twitchLiveAudioForwardSeekPending = false
-
-        if (driftMs >= correctionThresholdMs) {
-            // Audio is ahead. Pause it while the video catches up; a backward seek
-            // would repeat already-heard audio.
-            setTwitchLiveAudioActive(
-                active = false,
-                inactiveMode = "LIVE_PRIMING",
-                reason = "audio-ahead-driftMs=$driftMs",
-            )
-            twitchLiveAudioStableSamples = 0
-            audioPlayer.volume = 0f
-            audioPlayer.setPlaybackSpeed(playBackSpeed)
-            if (!twitchLiveAudioWaitingForVideo) {
-                twitchLiveAudioWaitingForVideo = true
-                audioPlayer.pause()
-            }
-            return
-        }
-
-        if (twitchLiveAudioWaitingForVideo) {
-            if (driftMs > TWITCH_LIVE_AUDIO_ACTIVATE_TOLERANCE_MS) return
-            twitchLiveAudioWaitingForVideo = false
-        }
-        audioPlayer.playWhenReady = main.isPlaying
-        audioPlayer.setPlaybackSpeed(correctedTwitchLiveAudioSpeed(driftMs))
-
-        val closeEnough =
-            kotlin.math.abs(driftMs) <= TWITCH_LIVE_AUDIO_ACTIVATE_TOLERANCE_MS
-        if (closeEnough) {
-            twitchLiveAudioStableSamples++
-        } else {
-            twitchLiveAudioStableSamples = 0
-        }
-
-        if (!twitchLiveAudioActive &&
-            twitchLiveAudioStableSamples >= TWITCH_LIVE_AUDIO_STABLE_SAMPLES_REQUIRED
-        ) {
-            setTwitchLiveAudioActive(active = true, driftMs = driftMs)
-        } else if (twitchLiveAudioActive) {
-            // Keep the main player muted while the secondary player remains verified.
-            main.volume = 0f
-            audioPlayer.volume = if (twitchLiveAudioUserMuted) {
-                0f
-            } else {
-                lastMuteVolume.coerceAtLeast(0.01f)
-            }
-        }
+        setTwitchLivePlayerActive(active = true, reason = reason)
     }
 
-    private fun createTwitchLiveAudioPlayer(context: Context, url: String) {
-        if (twitchLiveAudioPlayer != null) return
-        if (SystemClock.elapsedRealtime() < twitchLiveAudioFailedUntilElapsedMs) return
+    private fun createTwitchLivePlayer(context: Context, url: String) {
+        if (twitchLivePlayer != null) return
+        if (SystemClock.elapsedRealtime() < twitchLivePlayerFailedUntilElapsedMs) return
 
         val trackSelector = DefaultTrackSelector(context).apply {
             parameters = buildUponParameters()
-                .setTrackTypeDisabled(TRACK_TYPE_VIDEO, true)
                 .setTrackTypeDisabled(TRACK_TYPE_TEXT, true)
                 .build()
         }
@@ -1192,65 +1075,79 @@ class CS3IPlayer : IPlayer {
                 DefaultMediaSourceFactory(dataSource)
                     .setLiveTargetOffsetMs(TWITCH_LIVE_TARGET_OFFSET_MS),
             )
-            // The main player is the master clock. Disable the secondary player's
-            // automatic live-speed controller so the two players do not chase
-            // different offsets; measured corrections are applied below.
             .setLivePlaybackSpeedControl(
                 DefaultLivePlaybackSpeedControl.Builder()
-                    .setFallbackMaxPlaybackSpeed(1.0f)
-                    .setFallbackMinPlaybackSpeed(1.0f)
+                    .setFallbackMaxPlaybackSpeed(1.03f)
+                    .setFallbackMinPlaybackSpeed(0.97f)
                     .build(),
             )
             .setLoadControl(
                 createPlaybackLoadControl(
                     context = context,
                     isTwitchLowLatency = true,
-                    requestedTargetBufferBytes = 4L * 1024L * 1024L,
+                    requestedTargetBufferBytes = 16L * 1024L * 1024L,
                     requestedVideoBufferMs = TWITCH_MAX_BUFFER_MS.toLong(),
                 ),
             )
             .build()
 
-        twitchLiveAudioPlayer = player
-        resetTwitchLiveAudioAlignment()
+        twitchLivePlayer = player
+        twitchLivePlayerFirstFrameRendered = false
+        twitchLivePlayerResyncAttempts = 0
         player.volume = 0f
-        setTwitchLiveAudioMode("LIVE_PRIMING", "within-live-window")
+        player.setPlaybackSpeed(playBackSpeed)
+        setTwitchLiveVideoOverlay(player, visible = false)
+        setTwitchDualPlayerMode("LIVE_PRIMING", "within-live-window")
+
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) {
-                    player.playWhenReady = exoPlayer?.isPlaying == true
-                    synchronizeTwitchLiveAudio()
-                } else {
-                    setTwitchLiveAudioActive(
-                        active = false,
-                        inactiveMode = "LIVE_PRIMING",
-                        reason = "secondary-state-$playbackState",
-                    )
+                when (playbackState) {
+                    Player.STATE_READY -> {
+                        player.playWhenReady = exoPlayer?.isPlaying == true
+                        maybeActivateTwitchLivePlayer()
+                    }
+                    Player.STATE_BUFFERING -> {
+                        if (twitchLivePlayerActive) {
+                            Log.w(TAG, "Twitch full live player buffered; returning to DVR playback.")
+                            twitchLivePlayerFailedUntilElapsedMs =
+                                SystemClock.elapsedRealtime() + TWITCH_LIVE_PLAYER_RETRY_DELAY_MS
+                            twitchLivePlayerHandler.post {
+                                releaseTwitchLivePlayer(
+                                    restoreDvrPlayback = true,
+                                    reason = "live-player-buffering",
+                                )
+                            }
+                        }
+                    }
+                    Player.STATE_ENDED -> {
+                        twitchLivePlayerHandler.post {
+                            releaseTwitchLivePlayer(
+                                restoreDvrPlayback = true,
+                                reason = "live-player-ended",
+                            )
+                        }
+                    }
                 }
             }
 
-            override fun onPositionDiscontinuity(
-                oldPosition: Player.PositionInfo,
-                newPosition: Player.PositionInfo,
-                reason: Int,
-            ) {
-                twitchLiveAudioForwardSeekPending = false
-                twitchLiveAudioStableSamples = 0
-                twitchLiveAudioSmoothedDriftMs = null
+            override fun onRenderedFirstFrame() {
+                twitchLivePlayerFirstFrameRendered = true
+                maybeActivateTwitchLivePlayer()
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                Log.w(TAG, "Twitch live-audio player failed; returning to VOD audio.", error)
-                twitchLiveAudioFailedUntilElapsedMs =
-                    SystemClock.elapsedRealtime() + TWITCH_LIVE_AUDIO_RETRY_DELAY_MS
-                twitchLiveAudioHandler.post {
-                    releaseTwitchLiveAudioPlayer(
-                        restoreMainAudio = true,
-                        reason = "secondary-player-error",
+                Log.w(TAG, "Twitch full live player failed; returning to DVR playback.", error)
+                twitchLivePlayerFailedUntilElapsedMs =
+                    SystemClock.elapsedRealtime() + TWITCH_LIVE_PLAYER_RETRY_DELAY_MS
+                twitchLivePlayerHandler.post {
+                    releaseTwitchLivePlayer(
+                        restoreDvrPlayback = true,
+                        reason = "live-player-error",
                     )
                 }
             }
         })
+
         val mediaItem = getMediaItemBuilder(MimeTypes.APPLICATION_M3U8)
             .setUri(url)
             .setLiveConfiguration(
@@ -1258,8 +1155,8 @@ class CS3IPlayer : IPlayer {
                     .setTargetOffsetMs(TWITCH_LIVE_TARGET_OFFSET_MS)
                     .setMinOffsetMs(TWITCH_LIVE_MIN_OFFSET_MS)
                     .setMaxOffsetMs(TWITCH_LIVE_MAX_OFFSET_MS)
-                    .setMinPlaybackSpeed(1.0f)
-                    .setMaxPlaybackSpeed(1.0f)
+                    .setMinPlaybackSpeed(0.97f)
+                    .setMaxPlaybackSpeed(1.03f)
                     .build(),
             )
             .build()
@@ -1285,21 +1182,21 @@ class CS3IPlayer : IPlayer {
         return (recommendedPositionMs - safePositionOverrideMs).coerceAtLeast(0L)
     }
 
-    private fun updateTwitchLiveAudioState(positionOverrideMs: Long? = null) {
+    private fun updateTwitchDualPlayerState(positionOverrideMs: Long? = null) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            twitchLiveAudioHandler.post { updateTwitchLiveAudioState(positionOverrideMs) }
+            twitchLivePlayerHandler.post { updateTwitchDualPlayerState(positionOverrideMs) }
             return
         }
 
-        val url = twitchLiveAudioUrl
-        val context = twitchLiveAudioContext
+        val url = twitchLiveAvUrl
+        val context = twitchLivePlayerContext
         val main = exoPlayer
         if (
             url == null || context == null || main == null ||
             !currentIsTwitchLiveDvrStream || !currentIsTwitchLiveRewindSource
         ) {
-            releaseTwitchLiveAudioPlayer(
-                restoreMainAudio = true,
+            releaseTwitchLivePlayer(
+                restoreDvrPlayback = true,
                 reason = "not-a-rewindable-live-source",
             )
             return
@@ -1307,69 +1204,58 @@ class CS3IPlayer : IPlayer {
 
         val behindMs = distanceBehindRecommendedLiveMs(positionOverrideMs)
         if (behindMs == null) {
-            releaseTwitchLiveAudioPlayer(
-                restoreMainAudio = true,
+            releaseTwitchLivePlayer(
+                restoreDvrPlayback = true,
                 reason = "unknown-live-position",
             )
             return
         }
 
-        val alreadyPrimingOrLive = twitchLiveAudioPlayer != null || twitchLiveAudioActive
+        val alreadyPrimingOrLive = twitchLivePlayer != null || twitchLivePlayerActive
         val thresholdMs = if (alreadyPrimingOrLive) {
-            TWITCH_LIVE_AUDIO_EXIT_THRESHOLD_MS
+            TWITCH_LIVE_PLAYER_EXIT_THRESHOLD_MS
         } else {
-            TWITCH_LIVE_AUDIO_ENTER_THRESHOLD_MS
+            TWITCH_LIVE_PLAYER_ENTER_THRESHOLD_MS
         }
         if (behindMs > thresholdMs) {
-            releaseTwitchLiveAudioPlayer(
-                restoreMainAudio = true,
+            releaseTwitchLivePlayer(
+                restoreDvrPlayback = true,
                 reason = "rewound-behindLiveMs=$behindMs",
             )
             return
         }
 
-        if (SystemClock.elapsedRealtime() < twitchLiveAudioFailedUntilElapsedMs) {
-            setTwitchLiveAudioActive(
-                active = false,
-                inactiveMode = "VOD",
-                reason = "retry-backoff",
-            )
+        if (SystemClock.elapsedRealtime() < twitchLivePlayerFailedUntilElapsedMs) {
+            if (twitchLivePlayerActive) {
+                setTwitchLivePlayerActive(active = false, reason = "retry-backoff")
+            }
             return
         }
 
-        createTwitchLiveAudioPlayer(context, url)
-        val audioPlayer = twitchLiveAudioPlayer ?: return
-        if (main.playbackState == Player.STATE_READY &&
-            audioPlayer.playbackState == Player.STATE_READY
-        ) {
-            synchronizeTwitchLiveAudio()
-        } else {
-            setTwitchLiveAudioActive(
-                active = false,
-                inactiveMode = "LIVE_PRIMING",
-                reason = "preparing",
+        createTwitchLivePlayer(context, url)
+        maybeActivateTwitchLivePlayer()
+    }
+
+    private fun prepareDvrForTwitchSeek(reason: String) {
+        if (twitchLivePlayer != null || twitchLivePlayerActive) {
+            releaseTwitchLivePlayer(
+                restoreDvrPlayback = true,
+                reason = reason,
             )
         }
     }
 
-    private fun restartTwitchLiveAudioAfterMainSeek() {
-        setTwitchLiveAudioActive(
-            active = false,
-            inactiveMode = "VOD",
-            reason = "main-player-seek",
-        )
-        releaseTwitchLiveAudioPlayer(
-            restoreMainAudio = true,
-            reason = "main-player-seek",
-        )
-        twitchLiveAudioHandler.removeCallbacks(twitchLiveAudioMonitor)
-        if (twitchLiveAudioUrl != null && currentIsTwitchLiveRewindSource) {
-            twitchLiveAudioHandler.postDelayed(
-                twitchLiveAudioMonitor,
-                TWITCH_LIVE_AUDIO_SEEK_RESTART_DELAY_MS,
+    private fun restartTwitchLivePlayerAfterMainSeek() {
+        prepareDvrForTwitchSeek("main-player-seek")
+        twitchLivePlayerHandler.removeCallbacks(twitchLivePlayerMonitor)
+        if (twitchLiveAvUrl != null && currentIsTwitchLiveRewindSource) {
+            twitchLivePlayerHandler.postDelayed(
+                twitchLivePlayerMonitor,
+                TWITCH_LIVE_PLAYER_SEEK_RESTART_DELAY_MS,
             )
         }
     }
+
     private fun maybeLogTwitchLiveDelay(reason: String) {
         if (!currentIsTwitchStream) return
 
@@ -1816,7 +1702,7 @@ companion object {
     ) {
         val position = writePosition ?: exoPlayer?.currentPosition
         maybeLogTwitchLiveDelay("position")
-        updateTwitchLiveAudioState(position)
+        updateTwitchDualPlayerState(position)
 
         getCurrentTimestamp(position)?.let { timestamp ->
             event(TimestampInvokedEvent(timestamp, source))
@@ -1849,11 +1735,13 @@ companion object {
     }
 
     override fun seekTime(time: Long, source: PlayerEventSource) {
+        prepareDvrForTwitchSeek("seek-time")
         clearTwitchRecommendedLivePositionOverride()
         exoPlayer?.seekTime(time, source)
     }
 
     override fun seekTo(time: Long, source: PlayerEventSource) {
+        prepareDvrForTwitchSeek("seek-to")
         val player = exoPlayer ?: return
         if (isMediaSeekable) {
             val targetPosition = time.coerceAtLeast(0L)
@@ -1916,17 +1804,17 @@ companion object {
                     }
 
                     CSPlayerEvent.ToggleMute -> {
-                        if (twitchLiveAudioActive) {
-                            val liveAudio = twitchLiveAudioPlayer
-                            if (twitchLiveAudioUserMuted) {
-                                twitchLiveAudioUserMuted = false
-                                liveAudio?.volume = lastMuteVolume.coerceAtLeast(0.01f)
+                        if (twitchLivePlayerActive) {
+                            val livePlayer = twitchLivePlayer
+                            if (twitchLivePlayerUserMuted) {
+                                twitchLivePlayerUserMuted = false
+                                livePlayer?.volume = lastMuteVolume.coerceAtLeast(0.01f)
                             } else {
-                                liveAudio?.volume
+                                livePlayer?.volume
                                     ?.takeIf { it > 0f }
                                     ?.let { lastMuteVolume = it }
-                                twitchLiveAudioUserMuted = true
-                                liveAudio?.volume = 0f
+                                twitchLivePlayerUserMuted = true
+                                livePlayer?.volume = 0f
                             }
                             volume = 0f
                         } else if (volume <= 0) {
@@ -2460,7 +2348,7 @@ companion object {
                         event(EmbeddedSubtitlesFetchedEvent(tracks = exoPlayerReportedTracks))
                         event(TracksChangedEvent())
                         event(SubtitlesUpdatedEvent())
-                        updateTwitchLiveAudioState()
+                        updateTwitchDualPlayerState()
                     }
                 }
 
@@ -2554,9 +2442,8 @@ super.onPlayerError(error)
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     super.onIsPlayingChanged(isPlaying)
-                    twitchLiveAudioPlayer?.playWhenReady =
-                        isPlaying && !twitchLiveAudioWaitingForVideo
-                    updateTwitchLiveAudioState()
+                    twitchLivePlayer?.playWhenReady = isPlaying
+                    updateTwitchDualPlayerState()
                     if (isPlaying) {
                         event(RequestAudioFocusEvent())
                         onRenderFirst()
@@ -2572,7 +2459,7 @@ super.onPlayerError(error)
                     if (reason == Player.DISCONTINUITY_REASON_SEEK ||
                         reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT
                     ) {
-                        restartTwitchLiveAudioAfterMainSeek()
+                        restartTwitchLivePlayerAfterMainSeek()
                     }
                 }
 
@@ -2953,8 +2840,8 @@ Player.STATE_ENDED -> {
                 ?.filter { it.isDigit() }
                 ?.takeIf { it.isNotBlank() }
             currentTwitchChatChannelLogin = TwitchLiveChat.extractChannelLoginFromLink(link)
-            twitchLiveAudioUrl = link.twitchLiveAudioUrl()
-            twitchLiveAudioContext = twitchLiveAudioUrl?.let { context.applicationContext }
+            twitchLiveAvUrl = link.twitchLiveAvUrl()
+            twitchLivePlayerContext = twitchLiveAvUrl?.let { context.applicationContext }
             // TwitchLiveDvrTransportClassificationPatch:
             // A VOD ID on a live link is replay-chat metadata. It must not turn
             // the dynamic HLS source into a completed VOD media source.
@@ -2972,7 +2859,7 @@ Player.STATE_ENDED -> {
                 "Twitch chat metadata: vodId=$currentTwitchVodId, " +
                     "channel=$currentTwitchChatChannelLogin, liveDvr=$currentIsTwitchLiveDvrStream, " +
                     "rewindEvent=$currentIsTwitchLiveRewindSource, liveSource=$currentIsTwitchStream, " +
-                    "liveAudio=${twitchLiveAudioUrl != null}",
+                    "liveAv=${twitchLiveAvUrl != null}",
             )
 
         if (!retry) {
@@ -3072,9 +2959,9 @@ if (currentIsTwitchStream) {
                 onlineSource = onlineSourceFactory
             )
 
-            twitchLiveAudioHandler.removeCallbacks(twitchLiveAudioMonitor)
-            if (twitchLiveAudioUrl != null && currentIsTwitchLiveRewindSource) {
-                twitchLiveAudioHandler.post(twitchLiveAudioMonitor)
+            twitchLivePlayerHandler.removeCallbacks(twitchLivePlayerMonitor)
+            if (twitchLiveAvUrl != null && currentIsTwitchLiveRewindSource) {
+                twitchLivePlayerHandler.post(twitchLivePlayerMonitor)
             }
         } catch (t: Throwable) {
             Log.e(TAG, "loadOnlinePlayer error", t)

@@ -119,6 +119,14 @@ data class PlayerAttachedEvent(
     override val source: PlayerEventSource = PlayerEventSource.Player
 ) : PlayerEvent()
 
+/** Render a secondary player on top of the main player's video surface without
+ * replacing the main player used by controls, seek bar, chat, or media session. */
+data class PlayerVideoOverlayEvent(
+    val player: Any?,
+    val visible: Boolean,
+    override val source: PlayerEventSource = PlayerEventSource.Player,
+) : PlayerEvent()
+
 /** Event from player to inform that subtitles have updated in some way */
 data class SubtitlesUpdatedEvent(
     override val source: PlayerEventSource = PlayerEventSource.Player
