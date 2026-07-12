@@ -326,6 +326,8 @@ class HomeViewModel : ViewModel() {
     }
 
     fun refreshLiveNowOnly() {
+        // TwitchLiveNowResumeRefreshPatch: every real row check resets the five-minute age.
+        TwitchLiveNowImmediateRefresh.markLiveNowChecked()
         liveNowRefreshJob?.cancel()
         liveNowRefreshJob = ioSafe {
             val twitchName = "Twitch"
@@ -402,6 +404,11 @@ class HomeViewModel : ViewModel() {
         _preview.postValue(Resource.Failure(false, "Home preview disabled"))
         // cancel the current preview expand as that is no longer relevant
         addJob?.cancel()
+
+        // A normal Twitch Home load also counts as a fresh Live Now check.
+        if (api.name.equals("Twitch", ignoreCase = true)) {
+            TwitchLiveNowImmediateRefresh.markLiveNowChecked()
+        }
 
         when (val data = repo?.getMainPage(1, null)) {
             is Resource.Success -> {

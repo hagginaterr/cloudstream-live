@@ -627,14 +627,29 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
         homeViewModel.refreshLiveNowOnly()
     }
 
-    private fun startTwitchLiveNowLifecycleRefresh() {
-        if (!isLayout(TV or EMULATOR)) return
+    private fun refreshTwitchLiveNowRowIfStale() {
+        val apiName = currentApiName ?: homeViewModel.apiName.value ?: "Twitch"
+        if (!apiName.equals("Twitch", ignoreCase = true)) return
+        if (TwitchHomeRefreshFocus.isFocusReapplySuppressed()) return
 
+        val currentPage = homeViewModel.page.value
+        if (currentPage !is Resource.Success) return
+        if (!TwitchLiveNowImmediateRefresh.tryMarkLiveNowCheckedIfStale()) return
+
+        Log.i(TAG, "Twitch Live Now is at least five minutes old; refreshing on Home STARTED.")
+        homeViewModel.refreshLiveNowOnly()
+    }
+
+    private fun startTwitchLiveNowLifecycleRefresh() {
+        // TwitchLiveNowResumeRefreshPatch: STARTED runs on soft app returns and after leaving a stream.
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) {
-                    delay(TwitchLiveNowImmediateRefresh.REFRESH_INTERVAL_MS)
-                    refreshTwitchLiveNowRow()
+                    refreshTwitchLiveNowRowIfStale()
+                    val waitMs = TwitchLiveNowImmediateRefresh
+                        .millisUntilLiveNowCheckDue()
+                        .coerceIn(1_000L, TwitchLiveNowImmediateRefresh.REFRESH_INTERVAL_MS)
+                    delay(waitMs)
                 }
             }
         }
