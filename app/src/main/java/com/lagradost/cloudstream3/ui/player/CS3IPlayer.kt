@@ -147,12 +147,12 @@ private const val TWITCH_LIVE_DELAY_LOG_INTERVAL_MS = 5_000L
 private const val TWITCH_RECONNECT_MAX_ATTEMPTS = 5
 private const val TWITCH_RECONNECT_INITIAL_DELAY_MS = 1_500L
 private const val TWITCH_RECONNECT_MAX_DELAY_MS = 12_000L
-// TwitchDualLivePlayerStabilityPatch:
+// TwitchDualLivePlayerGracefulFallbackPatch:
 // Keep the rewind-capable DVR/VOD source on the main player at all times. Near
 // the live edge, prepare a second complete ordinary-live A/V player and render
-// it on a video overlay only after its first frame is ready. The main player
-// remains the UI, seek-bar, chat, and media-session clock so rewinding never
-// loses the full broadcast timeline.
+// it on a video overlay only after its first frame is ready. Brief live-player
+// buffering keeps the last live frame visible while DVR video warms underneath;
+// only a sustained buffer triggers a frame-safe, audio-crossfaded fallback.
 private const val TWITCH_LIVE_PLAYER_ENTER_THRESHOLD_MS = 30_000L
 private const val TWITCH_LIVE_PLAYER_EXIT_THRESHOLD_MS = 45_000L
 private const val TWITCH_LIVE_PLAYER_MONITOR_INTERVAL_MS = 500L
@@ -162,8 +162,12 @@ private const val TWITCH_LIVE_PLAYER_MAX_HANDOFF_OFFSET_DELTA_MS = 5_000L
 private const val TWITCH_LIVE_PLAYER_MAX_RESYNC_ATTEMPTS = 2
 private const val TWITCH_LIVE_PLAYER_MIN_HANDOFF_BUFFER_MS = 5_000L
 private const val TWITCH_LIVE_PLAYER_READY_STABILITY_MS = 2_000L
-private const val TWITCH_LIVE_PLAYER_REHANDOFF_COOLDOWN_MS = 10_000L
+private const val TWITCH_LIVE_PLAYER_RECOVERY_STABILITY_MS = 8_000L
+private const val TWITCH_LIVE_PLAYER_REHANDOFF_COOLDOWN_MS = 15_000L
+private const val TWITCH_LIVE_PLAYER_BUFFERING_GRACE_MS = 2_000L
 private const val TWITCH_LIVE_PLAYER_BUFFERING_ABORT_MS = 15_000L
+private const val TWITCH_LIVE_PLAYER_AUDIO_CROSSFADE_MS = 250L
+private const val TWITCH_LIVE_PLAYER_AUDIO_CROSSFADE_STEP_MS = 50L
 
 /** toleranceBeforeUs – The maximum time that the actual position seeked to may precede the
  * requested seek position, in microseconds. Must be non-negative. */
@@ -227,6 +231,12 @@ class CS3IPlayer : IPlayer {
     private var twitchLivePlayerReadySinceElapsedMs = 0L
     private var twitchLivePlayerBufferingSinceElapsedMs = 0L
     private var twitchLivePlayerNextHandoffElapsedMs = 0L
+    private var twitchLivePlayerFallbackPending = false
+    private var twitchLivePlayerFallbackGraceExpired = false
+    private var twitchDvrFallbackFirstFrameRendered = false
+    private var twitchLivePlayerRecoveringFromFallback = false
+    private var twitchLivePlayerFallbackGeneration = 0
+    private var twitchLivePlayerAudioFadeGeneration = 0
     private var twitchDvrVideoDisabledForLive = false
     private var twitchLivePlayerMode = "VOD"
     private val twitchLivePlayerHandler = Handler(Looper.getMainLooper())
@@ -909,13 +919,61 @@ class CS3IPlayer : IPlayer {
         event(PlayerVideoOverlayEvent(player = player, visible = visible))
     }
 
-    private fun restoreDvrAudioAfterLivePlayer() {
-        val main = exoPlayer ?: return
-        main.volume = if (twitchLivePlayerUserMuted) {
+    private fun getTwitchAudibleVolume(): Float {
+        return if (twitchLivePlayerUserMuted) {
             0f
         } else {
             lastMuteVolume.coerceAtLeast(0.01f)
         }
+    }
+
+    private fun restoreDvrAudioAfterLivePlayer() {
+        val main = exoPlayer ?: return
+        main.volume = getTwitchAudibleVolume()
+    }
+
+    private fun cancelTwitchAudioCrossfade() {
+        twitchLivePlayerAudioFadeGeneration++
+    }
+
+    private fun crossfadeTwitchAudio(
+        toLive: Boolean,
+        onComplete: (() -> Unit)? = null,
+    ) {
+        val main = exoPlayer ?: return
+        val live = twitchLivePlayer
+        val generation = ++twitchLivePlayerAudioFadeGeneration
+        val startedAt = SystemClock.elapsedRealtime()
+        val startMainVolume = main.volume
+        val startLiveVolume = live?.volume ?: 0f
+        val audibleVolume = getTwitchAudibleVolume()
+        val targetMainVolume = if (toLive) 0f else audibleVolume
+        val targetLiveVolume = if (toLive) audibleVolume else 0f
+
+        val fade = object : Runnable {
+            override fun run() {
+                if (generation != twitchLivePlayerAudioFadeGeneration) return
+                val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                val progress = (elapsedMs.toFloat() / TWITCH_LIVE_PLAYER_AUDIO_CROSSFADE_MS)
+                    .coerceIn(0f, 1f)
+                main.volume = startMainVolume +
+                    ((targetMainVolume - startMainVolume) * progress)
+                live?.volume = startLiveVolume +
+                    ((targetLiveVolume - startLiveVolume) * progress)
+
+                if (progress < 1f) {
+                    twitchLivePlayerHandler.postDelayed(
+                        this,
+                        TWITCH_LIVE_PLAYER_AUDIO_CROSSFADE_STEP_MS,
+                    )
+                } else {
+                    main.volume = targetMainVolume
+                    live?.volume = targetLiveVolume
+                    onComplete?.invoke()
+                }
+            }
+        }
+        twitchLivePlayerHandler.post(fade)
     }
 
     private fun setTwitchDvrVideoEnabled(enabled: Boolean) {
@@ -937,6 +995,104 @@ class CS3IPlayer : IPlayer {
         )
     }
 
+    private fun resetTwitchBufferedFallbackState() {
+        twitchLivePlayerFallbackGeneration++
+        twitchLivePlayerFallbackPending = false
+        twitchLivePlayerFallbackGraceExpired = false
+        twitchDvrFallbackFirstFrameRendered = false
+    }
+
+    private fun cancelTwitchBufferedFallbackBecauseLiveRecovered() {
+        if (!twitchLivePlayerFallbackPending) return
+        val bufferingDurationMs = twitchLivePlayerBufferingSinceElapsedMs
+            .takeIf { it > 0L }
+            ?.let { SystemClock.elapsedRealtime() - it }
+            ?: 0L
+        resetTwitchBufferedFallbackState()
+        twitchLivePlayerBufferingSinceElapsedMs = 0L
+        setTwitchDvrVideoEnabled(enabled = false)
+        Log.i(
+            TAG,
+            "Twitch live player recovered within buffering grace after ${bufferingDurationMs}ms; " +
+                "continuing live playback without a DVR handoff.",
+        )
+    }
+
+    private fun maybeCompleteTwitchBufferedFallback(reason: String) {
+        if (!twitchLivePlayerFallbackPending ||
+            !twitchLivePlayerFallbackGraceExpired ||
+            !twitchDvrFallbackFirstFrameRendered
+        ) return
+
+        val main = exoPlayer ?: return
+        val live = twitchLivePlayer
+        resetTwitchBufferedFallbackState()
+        twitchLivePlayerActive = false
+        twitchLivePlayerRecoveringFromFallback = true
+        twitchLivePlayerReadySinceElapsedMs = 0L
+        twitchLivePlayerNextHandoffElapsedMs =
+            SystemClock.elapsedRealtime() + TWITCH_LIVE_PLAYER_REHANDOFF_COOLDOWN_MS
+        setTwitchDualPlayerMode("VOD", reason)
+        Log.w(
+            TAG,
+            "Twitch buffering grace expired and DVR rendered a frame; crossfading to DVR playback.",
+        )
+        crossfadeTwitchAudio(toLive = false) {
+            if (!twitchLivePlayerActive) {
+                setTwitchLiveVideoOverlay(live, visible = false)
+                live?.volume = 0f
+                main.volume = getTwitchAudibleVolume()
+            }
+        }
+    }
+
+    private fun beginTwitchLiveBufferingGrace() {
+        if (!twitchLivePlayerActive || twitchLivePlayerFallbackPending) return
+        val live = twitchLivePlayer ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (twitchLivePlayerBufferingSinceElapsedMs == 0L) {
+            twitchLivePlayerBufferingSinceElapsedMs = now
+        }
+        twitchLivePlayerFallbackPending = true
+        twitchLivePlayerFallbackGraceExpired = false
+        twitchDvrFallbackFirstFrameRendered = false
+        val generation = ++twitchLivePlayerFallbackGeneration
+
+        // Keep the live TextureView visible so its last frame remains on screen while
+        // the hidden DVR decoder is warmed underneath it.
+        setTwitchDvrVideoEnabled(enabled = true)
+        setTwitchLiveVideoOverlay(live, visible = true)
+        Log.w(
+            TAG,
+            "Twitch full live player buffered; holding the last live frame for " +
+                "${TWITCH_LIVE_PLAYER_BUFFERING_GRACE_MS}ms while warming DVR video.",
+        )
+
+        twitchLivePlayerHandler.postDelayed(
+            {
+                if (generation != twitchLivePlayerFallbackGeneration ||
+                    !twitchLivePlayerFallbackPending
+                ) return@postDelayed
+
+                if (live.playbackState == Player.STATE_READY) {
+                    cancelTwitchBufferedFallbackBecauseLiveRecovered()
+                    return@postDelayed
+                }
+
+                twitchLivePlayerFallbackGraceExpired = true
+                maybeCompleteTwitchBufferedFallback("live-player-buffering-grace-expired")
+            },
+            TWITCH_LIVE_PLAYER_BUFFERING_GRACE_MS,
+        )
+    }
+
+    private fun onTwitchDvrRenderedFirstFrame() {
+        if (!twitchLivePlayerFallbackPending) return
+        twitchDvrFallbackFirstFrameRendered = true
+        Log.i(TAG, "Twitch DVR fallback frame is ready behind the live overlay.")
+        maybeCompleteTwitchBufferedFallback("live-player-buffering-dvr-frame-ready")
+    }
+
     private fun setTwitchLivePlayerActive(
         active: Boolean,
         reason: String? = null,
@@ -949,31 +1105,49 @@ class CS3IPlayer : IPlayer {
                 !twitchLivePlayerFirstFrameRendered
             ) return
 
-            if (!twitchLivePlayerActive) {
-                twitchLivePlayerUserMuted = main.volume <= 0f
-                if (!twitchLivePlayerUserMuted) {
-                    lastMuteVolume = main.volume.coerceAtLeast(0.01f)
+            if (twitchLivePlayerActive) {
+                live.playWhenReady = main.isPlaying
+                setTwitchLiveVideoOverlay(live, visible = true)
+                if (!twitchLivePlayerFallbackPending) {
+                    main.volume = 0f
+                    live.volume = getTwitchAudibleVolume()
+                    setTwitchDvrVideoEnabled(enabled = false)
                 }
-                twitchLivePlayerActive = true
+                return
             }
 
-            main.volume = 0f
-            live.volume = if (twitchLivePlayerUserMuted) {
-                0f
-            } else {
-                lastMuteVolume.coerceAtLeast(0.01f)
+            twitchLivePlayerUserMuted = main.volume <= 0f
+            if (!twitchLivePlayerUserMuted) {
+                lastMuteVolume = main.volume.coerceAtLeast(0.01f)
             }
+            resetTwitchBufferedFallbackState()
+            twitchLivePlayerActive = true
+            twitchLivePlayerRecoveringFromFallback = false
             live.playWhenReady = main.isPlaying
+            setTwitchDvrVideoEnabled(enabled = true)
             setTwitchLiveVideoOverlay(live, visible = true)
-            setTwitchDvrVideoEnabled(enabled = false)
             setTwitchDualPlayerMode("LIVE", reason)
+            crossfadeTwitchAudio(toLive = true) {
+                if (twitchLivePlayerActive && !twitchLivePlayerFallbackPending) {
+                    setTwitchDvrVideoEnabled(enabled = false)
+                }
+            }
         } else {
             val wasActive = twitchLivePlayerActive
+            resetTwitchBufferedFallbackState()
             twitchLivePlayerActive = false
-            live?.volume = 0f
+            twitchLivePlayerRecoveringFromFallback = false
             setTwitchDvrVideoEnabled(enabled = true)
-            setTwitchLiveVideoOverlay(live, visible = false)
             if (wasActive) {
+                crossfadeTwitchAudio(toLive = false) {
+                    if (!twitchLivePlayerActive) {
+                        setTwitchLiveVideoOverlay(live, visible = false)
+                        live?.volume = 0f
+                    }
+                }
+            } else {
+                live?.volume = 0f
+                setTwitchLiveVideoOverlay(live, visible = false)
                 restoreDvrAudioAfterLivePlayer()
             }
             setTwitchDualPlayerMode("VOD", reason)
@@ -998,6 +1172,9 @@ class CS3IPlayer : IPlayer {
         twitchLivePlayerReadySinceElapsedMs = 0L
         twitchLivePlayerBufferingSinceElapsedMs = 0L
         twitchLivePlayerNextHandoffElapsedMs = 0L
+        resetTwitchBufferedFallbackState()
+        twitchLivePlayerRecoveringFromFallback = false
+        cancelTwitchAudioCrossfade()
 
         setTwitchDvrVideoEnabled(enabled = true)
         setTwitchLiveVideoOverlay(null, visible = false)
@@ -1041,23 +1218,21 @@ class CS3IPlayer : IPlayer {
         val now = SystemClock.elapsedRealtime()
 
         if (twitchLivePlayerActive) {
-            if (live.playbackState != Player.STATE_READY) {
-                twitchLivePlayerNextHandoffElapsedMs =
-                    now + TWITCH_LIVE_PLAYER_REHANDOFF_COOLDOWN_MS
-                setTwitchLivePlayerActive(
-                    active = false,
-                    reason = "live-player-not-ready-state-${live.playbackState}",
-                )
+            if (live.playbackState == Player.STATE_BUFFERING) {
+                beginTwitchLiveBufferingGrace()
                 return
+            }
+            if (live.playbackState != Player.STATE_READY) {
+                beginTwitchLiveBufferingGrace()
+                return
+            }
+            if (twitchLivePlayerFallbackPending) {
+                cancelTwitchBufferedFallbackBecauseLiveRecovered()
             }
 
             twitchLivePlayerBufferingSinceElapsedMs = 0L
             main.volume = 0f
-            live.volume = if (twitchLivePlayerUserMuted) {
-                0f
-            } else {
-                lastMuteVolume.coerceAtLeast(0.01f)
-            }
+            live.volume = getTwitchAudibleVolume()
             live.playWhenReady = main.isPlaying
             setTwitchLiveVideoOverlay(live, visible = true)
             setTwitchDvrVideoEnabled(enabled = false)
@@ -1103,16 +1278,22 @@ class CS3IPlayer : IPlayer {
             (live.bufferedPosition - live.currentPosition).coerceAtLeast(0L),
         )
         val readyDurationMs = now - twitchLivePlayerReadySinceElapsedMs
+        val requiredReadyDurationMs = if (twitchLivePlayerRecoveringFromFallback) {
+            TWITCH_LIVE_PLAYER_RECOVERY_STABILITY_MS
+        } else {
+            TWITCH_LIVE_PLAYER_READY_STABILITY_MS
+        }
         val cooldownRemainingMs =
             (twitchLivePlayerNextHandoffElapsedMs - now).coerceAtLeast(0L)
         if (bufferedAheadMs < TWITCH_LIVE_PLAYER_MIN_HANDOFF_BUFFER_MS ||
-            readyDurationMs < TWITCH_LIVE_PLAYER_READY_STABILITY_MS ||
+            readyDurationMs < requiredReadyDurationMs ||
             cooldownRemainingMs > 0L
         ) {
             setTwitchDualPlayerMode(
                 "LIVE_PRIMING",
                 "warming-buffer bufferedAheadMs=$bufferedAheadMs " +
-                    "readyMs=$readyDurationMs cooldownMs=$cooldownRemainingMs",
+                    "readyMs=$readyDurationMs requiredReadyMs=$requiredReadyDurationMs " +
+                    "cooldownMs=$cooldownRemainingMs",
             )
             return
         }
@@ -1192,6 +1373,9 @@ class CS3IPlayer : IPlayer {
         twitchLivePlayerReadySinceElapsedMs = 0L
         twitchLivePlayerBufferingSinceElapsedMs = 0L
         twitchLivePlayerNextHandoffElapsedMs = 0L
+        resetTwitchBufferedFallbackState()
+        twitchLivePlayerRecoveringFromFallback = false
+        cancelTwitchAudioCrossfade()
         player.volume = 0f
         player.setPlaybackSpeed(playBackSpeed)
         setTwitchLiveVideoOverlay(player, visible = false)
@@ -1204,28 +1388,22 @@ class CS3IPlayer : IPlayer {
                         if (twitchLivePlayerReadySinceElapsedMs == 0L) {
                             twitchLivePlayerReadySinceElapsedMs = SystemClock.elapsedRealtime()
                         }
+                        if (twitchLivePlayerActive &&
+                            twitchLivePlayerFallbackPending
+                        ) {
+                            cancelTwitchBufferedFallbackBecauseLiveRecovered()
+                        }
                         twitchLivePlayerBufferingSinceElapsedMs = 0L
                         player.playWhenReady = exoPlayer?.isPlaying == true
                         maybeActivateTwitchLivePlayer()
                     }
                     Player.STATE_BUFFERING -> {
-                        val now = SystemClock.elapsedRealtime()
                         twitchLivePlayerReadySinceElapsedMs = 0L
                         if (twitchLivePlayerBufferingSinceElapsedMs == 0L) {
-                            twitchLivePlayerBufferingSinceElapsedMs = now
+                            twitchLivePlayerBufferingSinceElapsedMs = SystemClock.elapsedRealtime()
                         }
                         if (twitchLivePlayerActive) {
-                            Log.w(
-                                TAG,
-                                "Twitch full live player buffered; immediately restoring DVR " +
-                                    "while the live player recovers in the background.",
-                            )
-                            twitchLivePlayerNextHandoffElapsedMs =
-                                now + TWITCH_LIVE_PLAYER_REHANDOFF_COOLDOWN_MS
-                            setTwitchLivePlayerActive(
-                                active = false,
-                                reason = "live-player-buffering",
-                            )
+                            beginTwitchLiveBufferingGrace()
                         }
                     }
                     Player.STATE_ENDED -> {
@@ -1913,6 +2091,7 @@ companion object {
                     }
 
                     CSPlayerEvent.ToggleMute -> {
+                        cancelTwitchAudioCrossfade()
                         if (twitchLivePlayerActive) {
                             val livePlayer = twitchLivePlayer
                             if (twitchLivePlayerUserMuted) {
@@ -2614,6 +2793,7 @@ Player.STATE_ENDED -> {
                 override fun onRenderedFirstFrame() {
                     super.onRenderedFirstFrame()
                     onRenderFirst()
+                    onTwitchDvrRenderedFirstFrame()
                     maybeLogTwitchLiveDelay("first-frame")
                     updatedTime(source = PlayerEventSource.Player)
                 }
