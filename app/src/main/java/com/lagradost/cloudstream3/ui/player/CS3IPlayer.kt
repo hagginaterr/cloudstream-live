@@ -147,12 +147,12 @@ private const val TWITCH_LIVE_DELAY_LOG_INTERVAL_MS = 5_000L
 private const val TWITCH_RECONNECT_MAX_ATTEMPTS = 5
 private const val TWITCH_RECONNECT_INITIAL_DELAY_MS = 1_500L
 private const val TWITCH_RECONNECT_MAX_DELAY_MS = 12_000L
-// TwitchDualLivePlayerGracefulFallbackPatch:
+// TwitchDualLivePlayerLowOverlapHandoffPatch:
 // Keep the rewind-capable DVR/VOD source on the main player at all times. Near
-// the live edge, prepare a second complete ordinary-live A/V player and render
-// it on a video overlay only after its first frame is ready. Brief live-player
-// buffering keeps the last live frame visible while DVR video warms underneath;
-// only a sustained buffer triggers a frame-safe, audio-crossfaded fallback.
+// the live edge, prepare a second complete ordinary-live A/V player, but keep the
+// simultaneous full-video warmup short. Once a small healthy live buffer is ready,
+// switch video immediately and crossfade audio. Brief live buffering retains the
+// last live frame without starting DVR video until the grace period expires.
 private const val TWITCH_LIVE_PLAYER_ENTER_THRESHOLD_MS = 30_000L
 private const val TWITCH_LIVE_PLAYER_EXIT_THRESHOLD_MS = 45_000L
 private const val TWITCH_LIVE_PLAYER_MONITOR_INTERVAL_MS = 500L
@@ -160,8 +160,8 @@ private const val TWITCH_LIVE_PLAYER_SEEK_RESTART_DELAY_MS = 500L
 private const val TWITCH_LIVE_PLAYER_RETRY_DELAY_MS = 30_000L
 private const val TWITCH_LIVE_PLAYER_MAX_HANDOFF_OFFSET_DELTA_MS = 5_000L
 private const val TWITCH_LIVE_PLAYER_MAX_RESYNC_ATTEMPTS = 2
-private const val TWITCH_LIVE_PLAYER_MIN_HANDOFF_BUFFER_MS = 5_000L
-private const val TWITCH_LIVE_PLAYER_READY_STABILITY_MS = 2_000L
+private const val TWITCH_LIVE_PLAYER_MIN_HANDOFF_BUFFER_MS = 2_500L
+private const val TWITCH_LIVE_PLAYER_READY_STABILITY_MS = 750L
 private const val TWITCH_LIVE_PLAYER_RECOVERY_STABILITY_MS = 8_000L
 private const val TWITCH_LIVE_PLAYER_REHANDOFF_COOLDOWN_MS = 15_000L
 private const val TWITCH_LIVE_PLAYER_BUFFERING_GRACE_MS = 2_000L
@@ -1058,14 +1058,15 @@ class CS3IPlayer : IPlayer {
         twitchDvrFallbackFirstFrameRendered = false
         val generation = ++twitchLivePlayerFallbackGeneration
 
-        // Keep the live TextureView visible so its last frame remains on screen while
-        // the hidden DVR decoder is warmed underneath it.
-        setTwitchDvrVideoEnabled(enabled = true)
+        // Keep the live TextureView and its last frame visible. DVR audio and the
+        // timeline clock continue, but DVR video remains disabled during the grace
+        // period so a transient buffer cannot start a second video pipeline.
+        setTwitchDvrVideoEnabled(enabled = false)
         setTwitchLiveVideoOverlay(live, visible = true)
         Log.w(
             TAG,
             "Twitch full live player buffered; holding the last live frame for " +
-                "${TWITCH_LIVE_PLAYER_BUFFERING_GRACE_MS}ms while warming DVR video.",
+                "${TWITCH_LIVE_PLAYER_BUFFERING_GRACE_MS}ms without starting DVR video.",
         )
 
         twitchLivePlayerHandler.postDelayed(
@@ -1080,6 +1081,11 @@ class CS3IPlayer : IPlayer {
                 }
 
                 twitchLivePlayerFallbackGraceExpired = true
+                setTwitchDvrVideoEnabled(enabled = true)
+                Log.w(
+                    TAG,
+                    "Twitch buffering grace expired; warming DVR video behind the retained live frame.",
+                )
                 maybeCompleteTwitchBufferedFallback("live-player-buffering-grace-expired")
             },
             TWITCH_LIVE_PLAYER_BUFFERING_GRACE_MS,
@@ -1124,14 +1130,10 @@ class CS3IPlayer : IPlayer {
             twitchLivePlayerActive = true
             twitchLivePlayerRecoveringFromFallback = false
             live.playWhenReady = main.isPlaying
-            setTwitchDvrVideoEnabled(enabled = true)
             setTwitchLiveVideoOverlay(live, visible = true)
+            setTwitchDvrVideoEnabled(enabled = false)
             setTwitchDualPlayerMode("LIVE", reason)
-            crossfadeTwitchAudio(toLive = true) {
-                if (twitchLivePlayerActive && !twitchLivePlayerFallbackPending) {
-                    setTwitchDvrVideoEnabled(enabled = false)
-                }
-            }
+            crossfadeTwitchAudio(toLive = true)
         } else {
             val wasActive = twitchLivePlayerActive
             resetTwitchBufferedFallbackState()
